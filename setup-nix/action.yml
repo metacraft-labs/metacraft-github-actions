@@ -1,0 +1,71 @@
+name: Setup Nix Environment
+description: >
+  Install Nix, configure nix.conf with access-tokens and netrc for private
+  GitHub repos, set up Git URL rewrites for authenticated submodule cloning,
+  and optionally configure Cachix.
+
+inputs:
+  gh-token:
+    description: GitHub token for accessing private repos
+    required: true
+  cachix-cache:
+    description: Cachix cache name (leave empty to skip Cachix setup)
+    required: false
+    default: ""
+  cachix-auth-token:
+    description: Cachix auth token
+    required: false
+    default: ""
+  substituters:
+    description: Additional Nix substituters
+    required: false
+    default: ""
+  trusted-public-keys:
+    description: Additional trusted public keys for Nix substituters
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Nix
+      uses: cachix/install-nix-action@v27
+
+    - name: Configure Nix and Git authentication
+      shell: bash
+      run: |
+        mkdir -p $HOME/.config/nix
+
+        cat << EOF > "$HOME/.config/nix/nix.conf"
+          accept-flake-config = true
+          allow-import-from-derivation = true
+          substituters = https://cache.nixos.org ${{inputs.substituters}}
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
+          netrc-file = $HOME/.config/nix/netrc
+          access-tokens = github.com=${{inputs.gh-token}}
+        EOF
+
+        # Create netrc for Nix's internal git fetcher (needed for
+        # ?submodules=1 flake references that clone via git)
+        {
+          if [[ -n "${{inputs.cachix-cache}}" ]]; then
+            echo "machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}"
+          fi
+          echo "machine github.com login x-access-token password ${{inputs.gh-token}}"
+        } > "$HOME/.config/nix/netrc"
+
+        # Rewrite all GitHub URLs to authenticated HTTPS for submodule cloning.
+        # Submodules may use SSH or HTTPS URLs in .gitmodules, so we cover all styles:
+        #   git@github.com:org/repo.git    -> https://token@github.com/org/repo.git
+        #   ssh://git@github.com/org/repo  -> https://token@github.com/org/repo
+        #   https://github.com/org/repo    -> https://token@github.com/org/repo
+        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "git@github.com:"
+        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "ssh://git@github.com/"
+        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "https://github.com/"
+
+    - name: Setup Cachix
+      if: inputs.cachix-cache != ''
+      uses: cachix/cachix-action@v15
+      with:
+        name: ${{inputs.cachix-cache}}
+        authToken: ${{inputs.cachix-auth-token}}

@@ -1,0 +1,68 @@
+name: Clone Repository
+description: >
+  Authenticated git clone with optional submodule URL rewriting.
+  Handles private repos, self-hosted runner stale state cleanup,
+  and Nix-compatible .gitmodules SSH-to-HTTPS conversion.
+
+inputs:
+  repo:
+    description: "GitHub repository in owner/name format (e.g. metacraft-labs/codetracer)"
+    required: true
+  ref:
+    description: "Git ref to checkout (commit SHA, branch name, or tag)"
+    required: true
+  path:
+    description: "Local directory to clone into"
+    required: true
+  gh-token:
+    description: "GitHub token for authenticated clone"
+    required: true
+  submodules:
+    description: "Initialize and update submodules with explicit URL rewriting (true/false)"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Clone ${{inputs.repo}}
+      shell: bash
+      run: |
+        echo "Cloning ${{inputs.repo}} at ref: ${{inputs.ref}}"
+
+        # Clean stale state (self-hosted runners reuse workspaces)
+        rm -rf "${{inputs.path}}"
+
+        git clone \
+          "https://x-access-token:${{inputs.gh-token}}@github.com/${{inputs.repo}}.git" \
+          "${{inputs.path}}"
+
+        cd "${{inputs.path}}"
+        git checkout "${{inputs.ref}}"
+
+        if [[ "${{inputs.submodules}}" == "true" ]]; then
+          # Explicitly rewrite submodule URLs with token.
+          # url.insteadOf may not apply to URLs already written to
+          # .git/config by submodule init.
+          git submodule init
+          for url in $(git config --get-regexp '^submodule\..*\.url$' \
+                       | grep -E 'git@github\.com:|https://github\.com/' \
+                       | cut -d' ' -f1); do
+            old_url=$(git config --get "$url")
+            new_url=$(echo "$old_url" \
+              | sed "s|git@github.com:|https://x-access-token:${{inputs.gh-token}}@github.com/|" \
+              | sed "s|https://github.com/|https://x-access-token:${{inputs.gh-token}}@github.com/|")
+            echo "Rewriting submodule URL: $url"
+            git config "$url" "$new_url"
+          done
+          git submodule update --recursive
+
+          # Rewrite .gitmodules SSH URLs to HTTPS so Nix's internal git
+          # fetcher (which does not honor url.insteadOf) can resolve
+          # submodules when evaluating flakes with ?submodules=1
+          sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
+          sed -i 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
+          git add .gitmodules
+          git -c user.name="CI" -c user.email="ci@local" commit --no-gpg-sign \
+            -m "CI: rewrite submodule URLs to HTTPS" || true
+        fi
