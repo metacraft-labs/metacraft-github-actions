@@ -59,9 +59,15 @@ runs:
 
           # Rewrite .gitmodules SSH URLs to HTTPS so Nix's internal git
           # fetcher (which does not honor url.insteadOf) can resolve
-          # submodules when evaluating flakes with ?submodules=1
-          sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
-          sed -i 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
+          # submodules when evaluating flakes with ?submodules=1.
+          # Use sed -i'' (no space) for cross-platform compat (macOS BSD + GNU).
+          if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' 's|git@github.com:|https://github.com/|g' .gitmodules
+            sed -i '' 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
+          else
+            sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
+            sed -i 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
+          fi
           git add .gitmodules
           git -c user.name="CI" -c user.email="ci@local" commit --no-gpg-sign \
             -m "CI: rewrite submodule URLs to HTTPS" || true
