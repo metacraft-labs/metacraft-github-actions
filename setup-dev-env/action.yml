@@ -1,0 +1,236 @@
+name: Setup Dev Environment
+description: >
+  Materialise the repository's already-declared deterministic dev
+  environment on a CI runner. After this action, subsequent
+  steps invoke `dev-exec <cmd>` to run any command inside the
+  same env a developer uses locally (`nix develop -c <cmd>`, the
+  Windows `. .\env.ps1; <cmd>` equivalent, or `repro exec --
+  <cmd>` once reprobuild is available).
+
+  This action is the CI-side replay of the contract documented in
+  https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md
+
+inputs:
+  env-flavor:
+    description: >
+      Which env flavor to materialise:
+        - "nix"          → install Nix, ensure `nix develop`
+                            resolves; `dev-exec` becomes
+                            `nix develop --command <cmd>`.
+        - "windows-diy"  → source `env.ps1` at the repo root and
+                            persist the resulting environment to
+                            `$GITHUB_ENV`; `dev-exec` becomes a
+                            passthrough since the env is already
+                            in-process for subsequent steps.
+        - "reprobuild"   → install the `repro` CLI, run
+                            `repro build` to materialise the
+                            cached env; `dev-exec` becomes
+                            `repro exec -- <cmd>`.
+    required: true
+  gh-token:
+    description: >
+      GitHub token used to authenticate Nix flake input fetches
+      and (where applicable) the Cachix substituter. Required
+      for `env-flavor: nix` because nix inputs reach private
+      Metacraft Labs repos.
+    required: false
+    default: ""
+  cachix-cache:
+    description: >
+      Cachix cache name to enable as a substituter (nix flavor
+      only). Leave empty to skip Cachix.
+    required: false
+    default: ""
+  cachix-auth-token:
+    description: >
+      Cachix auth token for the named cache. Required if
+      `cachix-cache` is set and the cache is private.
+    required: false
+    default: ""
+  flake-override-inputs:
+    description: >
+      Newline-separated `INPUT_NAME=PATH` entries. Each is
+      translated to `--override-input INPUT_NAME path:PATH` and
+      prepended to every `nix develop` invocation made by
+      `dev-exec`. Use this for sibling-repo overrides cloned
+      adjacent to the host repo (e.g.
+      `codetracer-trace-format=../codetracer-trace-format`).
+    required: false
+    default: ""
+  env-ps1-path:
+    description: >
+      Path to the Windows DIY env script (windows-diy flavor
+      only). Defaults to `./env.ps1` at the calling workflow's
+      working directory.
+    required: false
+    default: "./env.ps1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate env-flavor
+      shell: bash
+      run: |
+        case "${{ inputs.env-flavor }}" in
+          nix|windows-diy|reprobuild) ;;
+          *)
+            echo "::error::env-flavor must be one of: nix, windows-diy, reprobuild (got '${{ inputs.env-flavor }}')" >&2
+            exit 1
+            ;;
+        esac
+
+    # ------------------------------------------------------------------
+    # env-flavor: nix
+    # ------------------------------------------------------------------
+
+    - name: Setup Nix
+      if: ${{ inputs.env-flavor == 'nix' }}
+      uses: metacraft-labs/metacraft-github-actions/setup-nix@main
+      with:
+        gh-token: ${{ inputs.gh-token }}
+        cachix-cache: ${{ inputs.cachix-cache }}
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+
+    - name: Install dev-exec wrapper (nix)
+      if: ${{ inputs.env-flavor == 'nix' }}
+      shell: bash
+      env:
+        FLAKE_OVERRIDE_INPUTS: ${{ inputs.flake-override-inputs }}
+      run: |
+        set -euo pipefail
+
+        # Translate flake-override-inputs into nix CLI flags.
+        OVERRIDE_FLAGS=""
+        if [ -n "$FLAKE_OVERRIDE_INPUTS" ]; then
+          while IFS= read -r entry; do
+            [ -z "$entry" ] && continue
+            name="${entry%%=*}"
+            path="${entry#*=}"
+            OVERRIDE_FLAGS="$OVERRIDE_FLAGS --override-input $name path:$path"
+          done <<< "$FLAKE_OVERRIDE_INPUTS"
+        fi
+
+        mkdir -p "$HOME/.local/bin"
+        cat > "$HOME/.local/bin/dev-exec" <<EOF
+        #!/usr/bin/env bash
+        # dev-exec (nix flavor): re-play the local dev env's
+        # invocation contract.  This is the CI-side equivalent of
+        # 'nix develop --command <cmd>' that a developer runs
+        # locally.  Override flags below come from the
+        # 'flake-override-inputs' input of setup-dev-env.
+        set -euo pipefail
+        exec nix develop$OVERRIDE_FLAGS --command bash -c '"\$@"' bash "\$@"
+        EOF
+        chmod +x "$HOME/.local/bin/dev-exec"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+        echo "::group::dev-exec wrapper (nix)"
+        cat "$HOME/.local/bin/dev-exec"
+        echo "::endgroup::"
+
+    # ------------------------------------------------------------------
+    # env-flavor: windows-diy
+    # ------------------------------------------------------------------
+
+    - name: Source env.ps1 + persist env (windows-diy)
+      if: ${{ inputs.env-flavor == 'windows-diy' }}
+      shell: pwsh
+      env:
+        ENV_PS1_PATH: ${{ inputs.env-ps1-path }}
+      run: |
+        # Source the project's env.ps1 in a fresh PowerShell so we
+        # can capture the env-var delta and persist it to
+        # GITHUB_ENV / GITHUB_PATH for subsequent steps.  This is
+        # the Windows analog of `nix develop`: the env script is
+        # the deterministic env declaration the developer uses
+        # locally.
+        if (-not (Test-Path $env:ENV_PS1_PATH)) {
+          Write-Host "::error::env.ps1 not found at $env:ENV_PS1_PATH"
+          exit 1
+        }
+
+        # Snapshot env BEFORE sourcing.
+        $before = @{}
+        Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+
+        # Source the env script in this shell.
+        . $env:ENV_PS1_PATH
+
+        # Diff env vars; persist new + changed entries to GITHUB_ENV.
+        Get-ChildItem env: | ForEach-Object {
+          $name  = $_.Name
+          $value = $_.Value
+          if ((-not $before.ContainsKey($name)) -or ($before[$name] -ne $value)) {
+            # PATH gets special handling: append to GITHUB_PATH
+            # entry-by-entry so the actions runner aggregates
+            # correctly across steps.
+            if ($name -eq "PATH" -or $name -eq "Path") {
+              $beforePath = if ($before.ContainsKey($name)) { $before[$name] } else { "" }
+              $oldEntries = $beforePath.Split([IO.Path]::PathSeparator)
+              $newEntries = $value.Split([IO.Path]::PathSeparator)
+              foreach ($e in $newEntries) {
+                if ($e -and ($oldEntries -notcontains $e)) {
+                  Add-Content -Path $env:GITHUB_PATH -Value $e
+                }
+              }
+            } else {
+              # Escape multi-line values via heredoc syntax.
+              if ($value -match "`n") {
+                $eof = "EOF_$(Get-Random)"
+                Add-Content -Path $env:GITHUB_ENV -Value "$name<<$eof"
+                Add-Content -Path $env:GITHUB_ENV -Value $value
+                Add-Content -Path $env:GITHUB_ENV -Value $eof
+              } else {
+                Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
+              }
+            }
+          }
+        }
+
+    - name: Install dev-exec wrapper (windows-diy)
+      if: ${{ inputs.env-flavor == 'windows-diy' }}
+      shell: pwsh
+      run: |
+        # On Windows the env from env.ps1 is already in
+        # $GITHUB_ENV / $GITHUB_PATH thanks to the previous step,
+        # so subsequent steps inherit it.  `dev-exec` is a
+        # passthrough that invokes the command via Git Bash for
+        # parity with the nix path's bash-c invocation.
+        $binDir = "$env:USERPROFILE\.local\bin"
+        New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+
+        @'
+        #!/usr/bin/env bash
+        # dev-exec (windows-diy flavor): the env is already
+        # in-process for this step thanks to setup-dev-env
+        # persisting env.ps1's delta to GITHUB_ENV.  Just exec
+        # the requested command.
+        set -euo pipefail
+        exec "$@"
+        '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec"
+
+        # Git Bash on the runner looks at PATH; ensure the wrapper
+        # is reachable for bash-shelled steps.
+        Add-Content -Path $env:GITHUB_PATH -Value $binDir
+
+    # ------------------------------------------------------------------
+    # env-flavor: reprobuild
+    # ------------------------------------------------------------------
+
+    - name: Install dev-exec wrapper (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      shell: bash
+      run: |
+        # Placeholder until the `repro` CLI's CI distribution
+        # story is finalised.  When unblocked, this step will:
+        #   1. Install `repro` (curl|sh from the reprobuild
+        #      release URL, or a pinned binary cached on the
+        #      self-hosted runner pool).
+        #   2. Run `repro build` to materialise the env.
+        #   3. Install `dev-exec` that wraps `repro exec --`.
+        #
+        # Repositories that opt 'reprobuild' into their CI matrix
+        # before the reprobuild rollout completes will hit this
+        # error and know to defer the matrix entry.
+        echo "::error::env-flavor 'reprobuild' is not yet implemented in setup-dev-env. See https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md#4-migration-story-reprobuild-rollout" >&2
+        exit 1
