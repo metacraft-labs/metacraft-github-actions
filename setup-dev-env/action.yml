@@ -119,7 +119,7 @@ runs:
         # locally.  Override flags below come from the
         # 'flake-override-inputs' input of setup-dev-env.
         set -euo pipefail
-        exec nix develop$OVERRIDE_FLAGS --command bash -c '"\$@"' bash "\$@"
+        exec nix develop$OVERRIDE_FLAGS --command "\$@"
         EOF
         chmod +x "$HOME/.local/bin/dev-exec"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
