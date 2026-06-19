@@ -64,6 +64,14 @@ inputs:
       working directory.
     required: false
     default: "./env.ps1"
+  repro-build-pin:
+    description: >
+      Git ref (branch, tag, or SHA) of `metacraft-labs/reprobuild`
+      to build the `repro` CLI from (reprobuild flavor only).
+      Defaults to `dev`, the branch reprobuild's own CI gates on.
+      Set to a SHA for fully reproducible runs.
+    required: false
+    default: "dev"
 
 runs:
   using: "composite"
@@ -217,20 +225,123 @@ runs:
     # env-flavor: reprobuild
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # env-flavor: reprobuild
+    #
+    # Build the `repro` CLI from source on the runner.  We deliberately
+    # do this rather than fetch a pre-built binary because:
+    #
+    #   * reprobuild's own release pipeline is still in flight, so
+    #     pinned binaries aren't published yet.
+    #
+    #   * Building from source on the runner is the deterministic
+    #     contract — it's what a developer does on their workstation
+    #     before `repro exec` is available.  Faster CIs can substitute
+    #     a cached binary once that pipeline lands.
+    #
+    # The build itself reuses the dev env the runner already knows how
+    # to materialise: Linux/macOS via the reprobuild repo's nix flake;
+    # Windows via reprobuild's own `env.ps1` DIY toolchain.  Both
+    # paths drop a `repro` (or `repro.exe`) at a known location which
+    # we then prepend to PATH.
+    # ------------------------------------------------------------------
+
+    - name: Clone reprobuild sibling (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      shell: bash
+      run: |
+        # Reprobuild's CI matrix builds `repro` on every push, so the
+        # default-branch tip is always a known-good source tree.  We
+        # honour an optional pin from the calling workflow's env so
+        # repos can lock reprobuild to a known SHA across CI runs.
+        REF="${REPRO_BUILD_PIN:-dev}"
+        DEST="${GITHUB_WORKSPACE}/.reprobuild-src"
+        rm -rf "${DEST}"
+        if ! git clone --depth 1 --branch "${REF}" --single-branch \
+          "https://github.com/metacraft-labs/reprobuild.git" "${DEST}" 2>/dev/null; then
+          rm -rf "${DEST}"
+          git clone --no-checkout "https://github.com/metacraft-labs/reprobuild.git" "${DEST}"
+          git -C "${DEST}" checkout "${REF}"
+        fi
+      env:
+        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+
+    - name: Build repro CLI (reprobuild, Linux/macOS)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      uses: metacraft-labs/metacraft-github-actions/setup-nix@main
+      with:
+        gh-token: ${{ inputs.gh-token }}
+
+    - name: nix-build repro (reprobuild, Linux/macOS)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}/.reprobuild-src"
+        # Use the dev shell's just target — same path reprobuild's own
+        # CI exercises, so any green CI on reprobuild's `dev` branch
+        # implies a working build here.
+        nix develop --command just build
+        # `just build` writes to ./build/bin/repro.  Surface it on PATH
+        # for subsequent steps via GITHUB_PATH.
+        echo "${PWD}/build/bin" >> "$GITHUB_PATH"
+
+    - name: Build repro CLI (reprobuild, Windows)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os == 'Windows' }}
+      shell: pwsh
+      run: |
+        # Windows-side: replay reprobuild's own DIY contract.  Source
+        # its env.ps1 (which pulls in scoop/winget toolchain managed
+        # by `non-nix-build/windows/ensure-*.ps1` scripts) and run
+        # `just build`.  The build drops `repro.exe` under
+        # `build\bin\` which we add to GITHUB_PATH.
+        Set-Location "$env:GITHUB_WORKSPACE\.reprobuild-src"
+        . .\env.ps1
+        just build
+        Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path .\build\bin).Path
+
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       shell: bash
       run: |
-        # Placeholder until the `repro` CLI's CI distribution
-        # story is finalised.  When unblocked, this step will:
-        #   1. Install `repro` (curl|sh from the reprobuild
-        #      release URL, or a pinned binary cached on the
-        #      self-hosted runner pool).
-        #   2. Run `repro build` to materialise the env.
-        #   3. Install `dev-exec` that wraps `repro exec --`.
+        set -euo pipefail
+        # dev-exec is the policy-mandated indirection so calling
+        # workflows don't bake in `repro exec --` syntax.  Per the
+        # `ci-shared-dev-env` policy table:
         #
-        # Repositories that opt 'reprobuild' into their CI matrix
-        # before the reprobuild rollout completes will hit this
-        # error and know to defer the matrix entry.
-        echo "::error::env-flavor 'reprobuild' is not yet implemented in setup-dev-env. See https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md#4-migration-story-reprobuild-rollout" >&2
-        exit 1
+        #   reprobuild → `repro exec -- <cmd>`
+        #
+        # Calling steps invoke `dev-exec just test` etc. and we route
+        # it through `repro exec --` against the calling repo's
+        # `repro.nim` recipe (selector inferred from the working
+        # directory).
+        BIN_DIR="$HOME/.local/bin"
+        mkdir -p "$BIN_DIR"
+        cat > "$BIN_DIR/dev-exec" <<'EOF'
+        #!/usr/bin/env bash
+        # dev-exec (reprobuild flavor): re-play the local dev env's
+        # invocation contract.  This is the CI-side equivalent of
+        # `repro exec -- <cmd>` that a developer runs locally.
+        set -euo pipefail
+        exec repro exec -- "$@"
+        EOF
+        chmod +x "$BIN_DIR/dev-exec"
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+
+        # Windows runners run pwsh by default; expose the wrapper there
+        # too so subsequent pwsh-shelled steps can call `dev-exec`.
+        if [ "${RUNNER_OS:-}" = "Windows" ]; then
+          # Translate the Unix-style script to a .cmd shim that pwsh
+          # picks up first when bash isn't on PATH for a given step.
+          WIN_BIN_DIR="$(cygpath -u "$USERPROFILE")/.local/bin"
+          mkdir -p "$WIN_BIN_DIR"
+          cat > "$WIN_BIN_DIR/dev-exec.cmd" <<'EOF'
+        @echo off
+        repro exec -- %*
+        EOF
+          echo "$WIN_BIN_DIR" >> "$GITHUB_PATH"
+        fi
+
+        echo "::group::dev-exec wrapper (reprobuild)"
+        cat "$BIN_DIR/dev-exec"
+        echo "::endgroup::"
