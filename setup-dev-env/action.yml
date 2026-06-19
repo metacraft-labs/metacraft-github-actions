@@ -360,25 +360,43 @@ runs:
       run: |
         set -euo pipefail
         WS="${GITHUB_WORKSPACE}"
+        clone_repo() {
+          local name="$1"
+          local ref="$2"
+          local dest="${WS}/${name}"
+          local submodule_flags="${3:-}"
+
+          rm -rf "${dest}"
+          if ! git clone --depth 1 --branch "${ref}" --single-branch ${submodule_flags} \
+            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
+            "${dest}"; then
+            rm -rf "${dest}"
+            git clone --depth 1 ${submodule_flags} \
+              "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
+              "${dest}"
+          fi
+        }
+
         for entry in \
           "repo-workspaces:main" \
-          "codetracer:main" \
           "runquota:main" \
           "nim-stackable-hooks:main" \
         ; do
           name="${entry%%:*}"
           ref="${entry##*:}"
-          dest="${WS}/${name}"
-          rm -rf "${dest}"
-          # codetracer needs submodules (libs/nim*); --recurse-submodules
-          # is harmless for the others.
-          git clone --depth 1 --branch "${ref}" --single-branch --recurse-submodules \
-            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-            "${dest}" || \
-            git clone --depth 1 --recurse-submodules \
-              "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-              "${dest}"
+          clone_repo "${name}" "${ref}" "--recurse-submodules"
         done
+
+        clone_repo "codetracer" "main"
+        git -C "${WS}/codetracer" config \
+          url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf \
+          "https://github.com/"
+        git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
+          libs/nim-serialization \
+          libs/nim-faststreams \
+          libs/nim-stew \
+          libs/nimcrypto
+
         # Move reprobuild from .reprobuild-src to a sibling location so
         # env.ps1 finds repo-workspaces et al. at ../<name>.
         if [ -d "${WS}/.reprobuild-src" ] && [ ! -d "${WS}/reprobuild" ]; then
