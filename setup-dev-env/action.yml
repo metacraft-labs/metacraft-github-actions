@@ -72,6 +72,18 @@ inputs:
       Set to a SHA for fully reproducible runs.
     required: false
     default: "dev"
+  nix-attr:
+    description: >
+      Optional flake attribute selector for the nix flavor. When
+      unset, `dev-exec` calls `nix develop --command <cmd>` and
+      gets the default devShell. When set to e.g. `ci`, the
+      wrapper calls `nix develop .#ci --command <cmd>` and gets
+      the named devShell. Use this to opt into a slim CI shell
+      (`devShells.ci`) instead of the full developer shell when
+      the latter pulls in dev-only tooling (AI agents, LSPs,
+      AppImage tooling, etc.) that bloats the CI build closure.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -104,6 +116,7 @@ runs:
       shell: bash
       env:
         FLAKE_OVERRIDE_INPUTS: ${{ inputs.flake-override-inputs }}
+        NIX_ATTR: ${{ inputs.nix-attr }}
       run: |
         set -euo pipefail
 
@@ -118,6 +131,14 @@ runs:
           done <<< "$FLAKE_OVERRIDE_INPUTS"
         fi
 
+        # When nix-attr is set, materialise the named devShell instead
+        # of the default. `nix develop .#<attr>` reads the attribute
+        # from devShells.<system>.<attr>.
+        ATTR_FLAG=""
+        if [ -n "$NIX_ATTR" ]; then
+          ATTR_FLAG=" .#$NIX_ATTR"
+        fi
+
         mkdir -p "$HOME/.local/bin"
         cat > "$HOME/.local/bin/dev-exec" <<EOF
         #!/usr/bin/env bash
@@ -125,9 +146,10 @@ runs:
         # invocation contract.  This is the CI-side equivalent of
         # 'nix develop --command <cmd>' that a developer runs
         # locally.  Override flags below come from the
-        # 'flake-override-inputs' input of setup-dev-env.
+        # 'flake-override-inputs' input of setup-dev-env. The
+        # attribute selector (if any) comes from 'nix-attr'.
         set -euo pipefail
-        exec nix develop$OVERRIDE_FLAGS --command "\$@"
+        exec nix develop$OVERRIDE_FLAGS$ATTR_FLAG --command "\$@"
         EOF
         chmod +x "$HOME/.local/bin/dev-exec"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
