@@ -55,6 +55,10 @@ runs:
         cat << EOF > "$HOME/.config/nix/nix.conf"
           accept-flake-config = true
           allow-import-from-derivation = true
+          fallback = true
+          connect-timeout = 3
+          download-attempts = 1
+          narinfo-cache-negative-ttl = 0
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
           netrc-file = $HOME/.config/nix/netrc
