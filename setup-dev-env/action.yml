@@ -474,6 +474,7 @@ runs:
               if [ "$has_tool_provisioning" = false ]; then
                 args+=(--tool-provisioning=path)
               fi
+              exec "${args[@]}"
               ;;
           esac
         fi
@@ -508,6 +509,9 @@ runs:
           if (-not $hasToolProvisioning) {
             $cmdArgs += "--tool-provisioning=path"
           }
+
+          & repro @cmdArgs
+          exit $LASTEXITCODE
         }
 
         & repro exec -- @cmdArgs
