@@ -28,8 +28,24 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Detect pre-installed Nix
+      # macOS-15-arm64 hosted runners ship images where `_nixbld1` may
+      # already exist (or where a previous Nix volume is mounted),
+      # which causes cachix/install-nix-action's dscl-based bootstrap
+      # to fail with eDSRecordAlreadyExists (-14135).  Skip the
+      # installer entirely if nix is already on PATH.
+      id: nix_check
+      shell: bash
+      run: |
+        if command -v nix >/dev/null 2>&1; then
+          echo "preinstalled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "preinstalled=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Install Nix
-      uses: cachix/install-nix-action@v27
+      if: steps.nix_check.outputs.preinstalled != 'true'
+      uses: cachix/install-nix-action@v31
 
     - name: Configure Nix and Git authentication
       shell: bash
