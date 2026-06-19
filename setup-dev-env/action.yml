@@ -342,8 +342,10 @@ runs:
             set -euo pipefail
             just build
             : "${NIMCRYPTO_SRC:?reprobuild dev shell did not set NIMCRYPTO_SRC}"
+            : "${BEARSSL_SRC:?reprobuild dev shell did not set BEARSSL_SRC}"
             : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
             echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${GITHUB_ENV}"
+            echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${GITHUB_ENV}"
           '
         # `just build` writes to ./build/bin/repro.  Surface it on PATH
         # for subsequent steps via GITHUB_PATH.
@@ -407,6 +409,14 @@ runs:
         # env.ps1 finds repo-workspaces et al. at ../<name>.
         if [ -d "${WS}/.reprobuild-src" ] && [ ! -d "${WS}/reprobuild" ]; then
           mv "${WS}/.reprobuild-src" "${WS}/reprobuild"
+        fi
+
+        # Git for Windows may check text files out with CRLF.  This file's
+        # lines become Nim source paths during `just build`, so strip CRs
+        # before the PowerShell build step runs.
+        entrypoints="${WS}/reprobuild/apps/entrypoints.txt"
+        if [ -f "${entrypoints}" ]; then
+          sed -i 's/\r$//' "${entrypoints}"
         fi
 
     - name: Build repro CLI (reprobuild, Windows)
