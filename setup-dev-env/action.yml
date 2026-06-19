@@ -456,7 +456,29 @@ runs:
         # invocation contract.  This is the CI-side equivalent of
         # `repro exec -- <cmd>` that a developer runs locally.
         set -euo pipefail
-        exec repro exec -- "$@"
+
+        args=("$@")
+        if [ "${args[0]:-}" = "repro" ]; then
+          case "${args[1]:-}" in
+            build|test)
+              has_tool_provisioning=false
+              for arg in "${args[@]}"; do
+                case "$arg" in
+                  --tool-provisioning=*)
+                    has_tool_provisioning=true
+                    break
+                    ;;
+                esac
+              done
+
+              if [ "$has_tool_provisioning" = false ]; then
+                args+=(--tool-provisioning=path)
+              fi
+              ;;
+          esac
+        fi
+
+        exec repro exec -- "${args[@]}"
         EOF
         chmod +x "$BIN_DIR/dev-exec"
         echo "$BIN_DIR" >> "$GITHUB_PATH"
@@ -464,13 +486,37 @@ runs:
         # Windows runners run pwsh by default; expose the wrapper there
         # too so subsequent pwsh-shelled steps can call `dev-exec`.
         if [ "${RUNNER_OS:-}" = "Windows" ]; then
-          # Translate the Unix-style script to a .cmd shim that pwsh
-          # picks up first when bash isn't on PATH for a given step.
+          # Install a PowerShell wrapper plus a .cmd trampoline so both
+          # pwsh- and cmd-shelled steps get the same argv rewrite.
           WIN_BIN_DIR="$(cygpath -u "$USERPROFILE")/.local/bin"
           mkdir -p "$WIN_BIN_DIR"
+          cat > "$WIN_BIN_DIR/dev-exec.ps1" <<'EOF'
+        $ErrorActionPreference = "Stop"
+
+        $cmdArgs = @($args)
+        if ($cmdArgs.Count -ge 2 -and
+            $cmdArgs[0] -eq "repro" -and
+            ($cmdArgs[1] -eq "build" -or $cmdArgs[1] -eq "test")) {
+          $hasToolProvisioning = $false
+          foreach ($arg in $cmdArgs) {
+            if ($arg -like "--tool-provisioning=*") {
+              $hasToolProvisioning = $true
+              break
+            }
+          }
+
+          if (-not $hasToolProvisioning) {
+            $cmdArgs += "--tool-provisioning=path"
+          }
+        }
+
+        & repro exec -- @cmdArgs
+        exit $LASTEXITCODE
+        EOF
           cat > "$WIN_BIN_DIR/dev-exec.cmd" <<'EOF'
         @echo off
-        repro exec -- %*
+        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
+        exit /b %ERRORLEVEL%
         EOF
           echo "$WIN_BIN_DIR" >> "$GITHUB_PATH"
         fi

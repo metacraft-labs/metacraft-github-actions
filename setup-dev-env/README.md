@@ -10,7 +10,7 @@ a developer uses locally:
 | ------------- | ------------------------------------------- |
 | `nix`         | `nix develop [--override-input …] -c <cmd>` |
 | `windows-diy` | `<cmd>` (env from `env.ps1` already loaded) |
-| `reprobuild`  | `repro exec -- <cmd>` (not yet implemented) |
+| `reprobuild`  | `repro exec -- <cmd>`                       |
 
 See the policy doc for the design rationale:
 [metacraft-dev-guidelines/policies/ci-shared-dev-env.md](https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md).
@@ -68,6 +68,15 @@ shell to consume them via `--override-input`:
       codetracer-trace-format=../codetracer-trace-format
 - run: dev-exec just test
 ```
+
+## Reprobuild compatibility
+
+For `env-flavor: reprobuild`, `dev-exec` preserves the generic
+`repro exec -- <cmd>` contract for arbitrary commands. As a compatibility
+shim for newer typed tool provisioning requirements, calls shaped as
+`dev-exec repro build ...` or `dev-exec repro test ...` automatically get
+`--tool-provisioning=path` appended unless the command already includes a
+`--tool-provisioning=...` flag.
 
 ## Forbidden patterns in calling workflows
 
