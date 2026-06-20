@@ -503,6 +503,7 @@ runs:
           # Install a PowerShell wrapper plus a .cmd trampoline so both
           # pwsh- and cmd-shelled steps get the same argv rewrite.
           WIN_BIN_DIR="$(cygpath -u "$USERPROFILE")/.local/bin"
+          WIN_BIN_DIR_WIN="$(cygpath -w "$WIN_BIN_DIR")"
           mkdir -p "$WIN_BIN_DIR"
           cat > "$WIN_BIN_DIR/dev-exec.ps1" <<'EOF'
         $ErrorActionPreference = "Stop"
@@ -535,7 +536,7 @@ runs:
         pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
         exit /b %ERRORLEVEL%
         EOF
-          echo "$WIN_BIN_DIR" >> "$GITHUB_PATH"
+          echo "$WIN_BIN_DIR_WIN" >> "$GITHUB_PATH"
         fi
 
         echo "::group::dev-exec wrapper (reprobuild)"
