@@ -30,21 +30,21 @@ inputs:
   gh-token:
     description: >
       GitHub token used to authenticate Nix flake input fetches
-      and (where applicable) the Cachix substituter. Required
+      and private repository access. Required
       for `env-flavor: nix` because nix inputs reach private
       Metacraft Labs repos.
     required: false
     default: ""
-  cachix-cache:
+  substituters:
     description: >
-      Cachix cache name to enable as a substituter (nix flavor
-      only). Leave empty to skip Cachix.
+      Space-separated Nix substituter URLs to trust in addition
+      to cache.nixos.org (for example Attic cache URLs).
     required: false
     default: ""
-  cachix-auth-token:
+  trusted-public-keys:
     description: >
-      Cachix auth token for the named cache. Required if
-      `cachix-cache` is set and the cache is private.
+      Space-separated signing public keys for the extra Nix
+      substituters.
     required: false
     default: ""
   flake-override-inputs:
@@ -108,8 +108,8 @@ runs:
       uses: metacraft-labs/metacraft-github-actions/setup-nix@main
       with:
         gh-token: ${{ inputs.gh-token }}
-        cachix-cache: ${{ inputs.cachix-cache }}
-        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+        substituters: ${{ inputs.substituters }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
 
     - name: Install dev-exec wrapper (nix)
       if: ${{ inputs.env-flavor == 'nix' }}
