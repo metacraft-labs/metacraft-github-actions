@@ -101,6 +101,16 @@ inputs:
       AppImage tooling, etc.) that bloats the CI build closure.
     required: false
     default: ""
+  nix-develop-args:
+    description: >
+      Extra arguments passed verbatim to every `nix develop`
+      invocation made by `dev-exec` (nix flavor), inserted before
+      `--command`. Use for flags the repo's dev env genuinely
+      needs, e.g. `--impure` for a build that reads ambient state.
+      Keep this empty unless the local `nix develop` contract
+      requires it.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -257,6 +267,7 @@ runs:
       env:
         FLAKE_OVERRIDE_INPUTS: ${{ inputs.flake-override-inputs }}
         NIX_ATTR: ${{ inputs.nix-attr }}
+        NIX_DEVELOP_ARGS: ${{ inputs.nix-develop-args }}
       run: |
         set -euo pipefail
 
@@ -279,6 +290,13 @@ runs:
           ATTR_FLAG=" .#$NIX_ATTR"
         fi
 
+        # Extra `nix develop` args (e.g. --impure) the repo's dev env
+        # contract requires, inserted before --command.
+        EXTRA_FLAGS=""
+        if [ -n "${NIX_DEVELOP_ARGS//[[:space:]]/}" ]; then
+          EXTRA_FLAGS=" $NIX_DEVELOP_ARGS"
+        fi
+
         mkdir -p "$HOME/.local/bin"
         cat > "$HOME/.local/bin/dev-exec" <<EOF
         #!/usr/bin/env bash
@@ -287,9 +305,10 @@ runs:
         # 'nix develop --command <cmd>' that a developer runs
         # locally.  Override flags below come from the
         # 'flake-override-inputs' input of setup-dev-env. The
-        # attribute selector (if any) comes from 'nix-attr'.
+        # attribute selector (if any) comes from 'nix-attr', and
+        # any extra nix-develop args from 'nix-develop-args'.
         set -euo pipefail
-        exec nix develop$OVERRIDE_FLAGS$ATTR_FLAG --command "\$@"
+        exec nix develop$OVERRIDE_FLAGS$ATTR_FLAG$EXTRA_FLAGS --command "\$@"
         EOF
         chmod +x "$HOME/.local/bin/dev-exec"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
