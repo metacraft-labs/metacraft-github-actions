@@ -43,8 +43,8 @@ jobs:
 | ----------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `env-flavor`            | yes      | `nix` \| `windows-diy` \| `reprobuild`.                                                                                                                                      |
 | `gh-token`              | no       | Forwarded to `setup-nix` so private flake inputs resolve.                                                                                                                    |
-| `cachix-cache`          | no       | Cachix cache name to enable (nix flavor only).                                                                                                                               |
-| `cachix-auth-token`     | no       | Cachix auth token for private caches.                                                                                                                                        |
+| `substituters`          | no       | Space-separated extra Nix substituter URLs, such as Attic cache URLs.                                                                                                        |
+| `trusted-public-keys`   | no       | Space-separated signing keys for the extra substituters.                                                                                                                     |
 | `flake-override-inputs` | no       | Newline-separated `NAME=PATH` entries; each becomes `--override-input NAME path:PATH` on every `nix develop` invocation. Use for sibling-repo overrides cloned alongside.    |
 | `env-ps1-path`          | no       | Path to `env.ps1` (windows-diy only). Defaults to `./env.ps1`.                                                                                                               |
 

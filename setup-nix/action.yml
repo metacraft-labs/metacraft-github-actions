@@ -2,20 +2,12 @@ name: Setup Nix Environment
 description: >
   Install Nix, configure nix.conf with access-tokens and netrc for private
   GitHub repos, set up Git URL rewrites for authenticated submodule cloning,
-  and optionally configure Cachix.
+  and configure the caller-provided binary caches.
 
 inputs:
   gh-token:
     description: GitHub token for accessing private repos
     required: true
-  cachix-cache:
-    description: Cachix cache name (leave empty to skip Cachix setup)
-    required: false
-    default: ""
-  cachix-auth-token:
-    description: Cachix auth token
-    required: false
-    default: ""
   substituters:
     description: Additional Nix substituters
     required: false
@@ -30,9 +22,7 @@ runs:
   steps:
     - name: Detect pre-installed Nix
       # macOS-15-arm64 hosted runners ship images where `_nixbld1` may
-      # already exist (or where a previous Nix volume is mounted),
-      # which causes cachix/install-nix-action's dscl-based bootstrap
-      # to fail with eDSRecordAlreadyExists (-14135).  Skip the
+      # already exist (or where a previous Nix volume is mounted). Skip the
       # installer entirely if nix is already on PATH.
       id: nix_check
       shell: bash
@@ -45,7 +35,9 @@ runs:
 
     - name: Install Nix
       if: steps.nix_check.outputs.preinstalled != 'true'
-      uses: cachix/install-nix-action@v31
+      uses: DeterminateSystems/nix-installer-action@v22
+      with:
+        determinate: false
 
     - name: Configure Nix and Git authentication
       shell: bash
@@ -68,9 +60,6 @@ runs:
         # Create netrc for Nix's internal git fetcher (needed for
         # ?submodules=1 flake references that clone via git)
         {
-          if [[ -n "${{inputs.cachix-cache}}" ]]; then
-            echo "machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}"
-          fi
           echo "machine github.com login x-access-token password ${{inputs.gh-token}}"
         } > "$HOME/.config/nix/netrc"
 
@@ -82,10 +71,3 @@ runs:
         git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "git@github.com:"
         git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "ssh://git@github.com/"
         git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "https://github.com/"
-
-    - name: Setup Cachix
-      if: inputs.cachix-cache != ''
-      uses: cachix/cachix-action@v15
-      with:
-        name: ${{inputs.cachix-cache}}
-        authToken: ${{inputs.cachix-auth-token}}
