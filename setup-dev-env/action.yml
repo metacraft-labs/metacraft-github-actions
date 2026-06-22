@@ -33,6 +33,17 @@ inputs:
                             cached env; `dev-exec` becomes
                             `repro exec -- <cmd>`.
     required: true
+  siblings:
+    description: >
+      Optional whitespace/newline-separated list of cross-repo
+      sibling repo names to clone (at workspace-lock-pinned
+      revisions) instead of reading `.github/sibling-repos`. Use
+      this when a particular job needs only a subset of the repo's
+      declared siblings (e.g. a fast `ci` job that does not need
+      the full `codetracer` checkout that the cross-repo test job
+      pulls). When empty, `.github/sibling-repos` is read.
+    required: false
+    default: ""
   gh-token:
     description: >
       GitHub token used to authenticate Nix flake input fetches
@@ -124,19 +135,24 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.gh-token }}
+        SIBLINGS_INPUT: ${{ inputs.siblings }}
       run: |
         set -euo pipefail
-        SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
-        if [ ! -f "${SIBS_FILE}" ]; then
-          echo "No .github/sibling-repos in this repo; no cross-repo siblings to clone."
-          exit 0
+        # The explicit `siblings` input (if provided) overrides the
+        # repo-level `.github/sibling-repos` declaration; otherwise read the
+        # file. Both accept '#' comments and whitespace/newline separation.
+        if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
+          mapfile -t SIBLINGS < <(printf '%s\n' ${SIBLINGS_INPUT} | sed -e 's/#.*//' | awk 'NF {print $1}')
+        else
+          SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
+          if [ ! -f "${SIBS_FILE}" ]; then
+            echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
+            exit 0
+          fi
+          mapfile -t SIBLINGS < <(sed -e 's/#.*//' "${SIBS_FILE}" | awk 'NF {print $1}')
         fi
-        # One repo name per line; ignore comments and blank lines, take the
-        # first whitespace-delimited field so an optional trailing comment
-        # or annotation is tolerated.
-        mapfile -t SIBLINGS < <(sed -e 's/#.*//' "${SIBS_FILE}" | awk 'NF {print $1}')
         if [ "${#SIBLINGS[@]}" -eq 0 ]; then
-          echo ".github/sibling-repos lists no repos; nothing to clone."
+          echo "No cross-repo siblings to clone."
           exit 0
         fi
 
