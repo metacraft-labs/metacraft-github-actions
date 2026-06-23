@@ -9,8 +9,11 @@ description: >
 
   This is a thin orchestrator over composable sub-actions:
     - cross-repo sibling cloning (from the workspace lock) is delegated to
-      `metacraft-labs/repo-workspaces/.github/actions/clone-siblings` — it
-      reads the repo's `.github/sibling-repos` (or the `siblings` input);
+      `metacraft-labs/metacraft-github-actions/clone-siblings` — it reads the
+      repo's `.github/sibling-repos` (or the `siblings` input). (The lock-based
+      sibling-resolution contract it implements is piloted by repo-workspaces;
+      the action lives here in the public actions repo so it is usable via
+      `uses:` from any workflow.);
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
     - the `reprobuild` flavor uses
@@ -148,7 +151,7 @@ runs:
     # ------------------------------------------------------------------
 
     - name: Clone cross-repo siblings from the workspace lock
-      uses: metacraft-labs/repo-workspaces/.github/actions/clone-siblings@main
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@main
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}

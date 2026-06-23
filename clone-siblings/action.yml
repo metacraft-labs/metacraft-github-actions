@@ -1,0 +1,154 @@
+name: Clone cross-repo siblings
+description: >
+  Clone the cross-repo sibling repositories a repo's CI needs, each at the
+  revision pinned by the repo-workspaces per-commit workspace lock
+  (.repo/manifests/locks/<project>/<repo>/<sha>.xml). The set of siblings comes
+  from the `siblings` input or, when empty, the calling repo's
+  `.github/sibling-repos` file (one repo name per line). Each sibling is cloned
+  adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
+  there is no silent fallback to a branch tip.
+
+  This is the single approved sibling-revision mechanism (it bundles
+  resolve-sibling-rev.sh, which reads the workspace lock). repo-workspaces is the
+  pilot for this contract; reprobuild's workspace/provisioning model is being
+  aligned to it. See
+  codetracer-specs/Testing/Cross-Repo-CI-Integration.md.
+
+inputs:
+  gh-token:
+    description: >
+      GitHub token (CI App token) used to clone private siblings and the private
+      metacraft-manifests repo that holds the locks. Required for private repos.
+    required: false
+    default: ""
+  siblings:
+    description: >
+      Optional whitespace/newline-separated list of sibling repo names to clone.
+      Each entry is `name` (revision resolved from the workspace lock) or
+      `name=ref` (clone `ref` directly — used for workflow_dispatch /
+      repository_dispatch overrides; a trailing `=` falls back to the lock).
+      When empty, `.github/sibling-repos` is read.
+    required: false
+    default: ""
+  manifests-repo:
+    description: >
+      owner/name of the manifest repo holding the workspace locks.
+    required: false
+    default: "metacraft-labs/metacraft-manifests"
+  manifests-ref:
+    description: The branch of the manifest repo to read locks from.
+    required: false
+    default: "latest"
+
+runs:
+  using: composite
+  steps:
+    - name: Clone cross-repo siblings from the workspace lock
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        SIBLINGS_INPUT: ${{ inputs.siblings }}
+        MANIFESTS_REPO: ${{ inputs.manifests-repo }}
+        MANIFESTS_REF: ${{ inputs.manifests-ref }}
+      run: |
+        set -euo pipefail
+        # The explicit `siblings` input (if provided) overrides the
+        # repo-level `.github/sibling-repos` declaration; otherwise read the
+        # file. Both accept '#' comments and whitespace/newline separation.
+        # Each entry is either `name` (revision resolved from the workspace
+        # lock) or `name=ref` (clone `ref` directly — used for
+        # workflow_dispatch / repository_dispatch overrides; an empty ref,
+        # i.e. a trailing `=`, falls back to the lock).
+        if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
+          mapfile -t SIBLINGS < <(printf '%s\n' ${SIBLINGS_INPUT} | sed -e 's/#.*//' | awk 'NF {print $1}')
+        else
+          SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
+          if [ ! -f "${SIBS_FILE}" ]; then
+            echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
+            exit 0
+          fi
+          mapfile -t SIBLINGS < <(sed -e 's/#.*//' "${SIBS_FILE}" | awk 'NF {print $1}')
+        fi
+        if [ "${#SIBLINGS[@]}" -eq 0 ]; then
+          echo "No cross-repo siblings to clone."
+          exit 0
+        fi
+
+        SELF="${GITHUB_REPOSITORY##*/}"
+        RESOLVER="${{ github.action_path }}/resolve-sibling-rev.sh"
+
+        # Split entries into names + optional explicit refs.
+        NAMES=(); REFS=(); NEED_LOCK=0
+        for entry in "${SIBLINGS[@]}"; do
+          nm="${entry%%=*}"; rf=""
+          case "${entry}" in *=*) rf="${entry#*=}" ;; esac
+          NAMES+=("${nm}"); REFS+=("${rf}")
+          [ -z "${rf}" ] && NEED_LOCK=1
+        done
+
+        # The manifest repo holds the per-commit workspace locks. Only clone
+        # it when at least one sibling resolves from the lock.
+        MAN=""; LOCK_SHA=""
+        if [ "${NEED_LOCK}" -eq 1 ]; then
+          MAN="${RUNNER_TEMP}/metacraft-manifests"
+          rm -rf "${MAN}"
+          if [ -n "${GH_TOKEN}" ]; then
+            MAN_URL="https://x-access-token:${GH_TOKEN}@github.com/${MANIFESTS_REPO}.git"
+          else
+            MAN_URL="https://github.com/${MANIFESTS_REPO}.git"
+          fi
+          git clone --depth 1 --branch "${MANIFESTS_REF}" "${MAN_URL}" "${MAN}" >/dev/null 2>&1
+          # Which commit's lock to use: the pushed commit (falling back to its
+          # parent for GitHub merge commits), or the PR base — all mainline
+          # commits the pre-push hook locks.
+          case "${{ github.event_name }}" in
+            pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
+            push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;
+            *) CANDS="${{ github.sha }}" ;;
+          esac
+          PROBE=""
+          for i in "${!NAMES[@]}"; do
+            [ -z "${REFS[$i]}" ] && { PROBE="${NAMES[$i]}"; break; }
+          done
+          for c in ${CANDS}; do
+            [ -z "${c}" ] && continue
+            [ "${c}" = "0000000000000000000000000000000000000000" ] && continue
+            if "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
+                 --manifest-dir "${MAN}" --sha "${c}" --no-walk >/dev/null 2>&1; then
+              LOCK_SHA="${c}"; break
+            fi
+          done
+          if [ -z "${LOCK_SHA}" ]; then
+            echo "::error::No repo-workspaces workspace lock for ${SELF} (candidates: ${CANDS}). The commit must be published through the workspace tooling (pre-push hook / 'workspace lock')."
+            exit 1
+          fi
+          echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
+        fi
+
+        SIBLING_PATHS=""
+        for i in "${!NAMES[@]}"; do
+          name="${NAMES[$i]}"; ref="${REFS[$i]}"
+          if [ -n "${ref}" ]; then
+            rev="${ref}"; src="override"
+          else
+            rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
+              --manifest-dir "${MAN}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
+          fi
+          dest="${GITHUB_WORKSPACE}/../${name}"
+          echo "  ${name} -> ${rev} (${src})"
+          if [ -n "${GH_TOKEN}" ]; then
+            url="https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git"
+          else
+            url="https://github.com/metacraft-labs/${name}.git"
+          fi
+          rm -rf "${dest}"
+          git clone --no-checkout "${url}" "${dest}" >/dev/null 2>&1
+          git -C "${dest}" fetch --depth 1 origin "${rev}" >/dev/null 2>&1
+          git -C "${dest}" checkout --detach FETCH_HEAD >/dev/null 2>&1
+          # Best-effort submodules (no-op for repos without any).
+          git -C "${dest}" submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
+          SIBLING_PATHS="${SIBLING_PATHS} ${name}=$(cd "${dest}" && pwd)"
+        done
+        # Expose the clone locations for later steps (e.g. flake overrides).
+        echo "CT_SIBLING_PATHS=${SIBLING_PATHS# }" >> "${GITHUB_ENV}"
+        echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout."
