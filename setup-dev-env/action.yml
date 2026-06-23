@@ -73,6 +73,20 @@ inputs:
       substituters.
     required: false
     default: ""
+  attic-token:
+    description: >
+      Attic token used to upload newly built Nix store paths.
+      When empty, setup-dev-env only configures substituter trust.
+    required: false
+    default: ""
+  attic-cache:
+    description: Attic cache name to upload newly built Nix store paths to.
+    required: false
+    default: ""
+  attic-endpoint:
+    description: Attic server endpoint.
+    required: false
+    default: "https://cache.metacraft-labs.com/"
   flake-override-inputs:
     description: >
       Newline-separated `INPUT_NAME=PATH` entries. Each is
@@ -167,6 +181,9 @@ runs:
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        attic-token: ${{ inputs.attic-token }}
+        attic-cache: ${{ inputs.attic-cache }}
+        attic-endpoint: ${{ inputs.attic-endpoint }}
 
     - name: Install dev-exec wrapper (nix)
       if: ${{ inputs.env-flavor == 'nix' }}
@@ -345,6 +362,11 @@ runs:
       uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@main
       with:
         gh-token: ${{ inputs.gh-token }}
+        substituters: ${{ inputs.substituters }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        attic-token: ${{ inputs.attic-token }}
+        attic-cache: ${{ inputs.attic-cache }}
+        attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
 
     - name: Install dev-exec wrapper (reprobuild)
