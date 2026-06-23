@@ -7,11 +7,17 @@ description: >
   Windows `. .\env.ps1; <cmd>` equivalent, or `repro exec --
   <cmd>` once reprobuild is available).
 
-  It also clones the cross-repo siblings the repo declares in
-  `.github/sibling-repos`, each at the revision pinned by the
-  repo-workspaces workspace lock (resolved with the bundled
-  `resolve-sibling-rev.sh`), so calling workflows no longer carry
-  their own checkout/resolve/clone steps.
+  This is a thin orchestrator over composable sub-actions:
+    - cross-repo sibling cloning (from the workspace lock) is delegated to
+      `metacraft-labs/repo-workspaces/.github/actions/clone-siblings` — it
+      reads the repo's `.github/sibling-repos` (or the `siblings` input);
+    - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
+    - the `windows-diy` flavor sources the repo's `env.ps1`;
+    - the `reprobuild` flavor uses
+      `metacraft-labs/reprobuild/.github/actions/reprobuild-provision` (clone the
+      dependency siblings) + `.../setup-reprobuild` (build the `repro` CLI).
+  This action then installs the unified `dev-exec` wrapper for the chosen flavor,
+  so calling workflows carry no checkout/resolve/clone/toolchain-install steps.
 
   This action is the CI-side replay of the contract documented in
   https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md
@@ -142,112 +148,10 @@ runs:
     # ------------------------------------------------------------------
 
     - name: Clone cross-repo siblings from the workspace lock
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.gh-token }}
-        SIBLINGS_INPUT: ${{ inputs.siblings }}
-      run: |
-        set -euo pipefail
-        # The explicit `siblings` input (if provided) overrides the
-        # repo-level `.github/sibling-repos` declaration; otherwise read the
-        # file. Both accept '#' comments and whitespace/newline separation.
-        # Each entry is either `name` (revision resolved from the workspace
-        # lock) or `name=ref` (clone `ref` directly — used for
-        # workflow_dispatch / repository_dispatch overrides; an empty ref,
-        # i.e. a trailing `=`, falls back to the lock).
-        if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
-          mapfile -t SIBLINGS < <(printf '%s\n' ${SIBLINGS_INPUT} | sed -e 's/#.*//' | awk 'NF {print $1}')
-        else
-          SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
-          if [ ! -f "${SIBS_FILE}" ]; then
-            echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
-            exit 0
-          fi
-          mapfile -t SIBLINGS < <(sed -e 's/#.*//' "${SIBS_FILE}" | awk 'NF {print $1}')
-        fi
-        if [ "${#SIBLINGS[@]}" -eq 0 ]; then
-          echo "No cross-repo siblings to clone."
-          exit 0
-        fi
-
-        SELF="${GITHUB_REPOSITORY##*/}"
-        RESOLVER="${{ github.action_path }}/resolve-sibling-rev.sh"
-
-        # Split entries into names + optional explicit refs.
-        NAMES=(); REFS=(); NEED_LOCK=0
-        for entry in "${SIBLINGS[@]}"; do
-          nm="${entry%%=*}"; rf=""
-          case "${entry}" in *=*) rf="${entry#*=}" ;; esac
-          NAMES+=("${nm}"); REFS+=("${rf}")
-          [ -z "${rf}" ] && NEED_LOCK=1
-        done
-
-        # The manifest repo holds the per-commit workspace locks. Only clone
-        # it when at least one sibling resolves from the lock.
-        MAN=""; LOCK_SHA=""
-        if [ "${NEED_LOCK}" -eq 1 ]; then
-          MAN="${RUNNER_TEMP}/metacraft-manifests"
-          rm -rf "${MAN}"
-          if [ -n "${GH_TOKEN}" ]; then
-            MAN_URL="https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/metacraft-manifests.git"
-          else
-            MAN_URL="https://github.com/metacraft-labs/metacraft-manifests.git"
-          fi
-          git clone --depth 1 --branch latest "${MAN_URL}" "${MAN}" >/dev/null 2>&1
-          # Which commit's lock to use: the pushed commit (falling back to its
-          # parent for GitHub merge commits), or the PR base — all mainline
-          # commits the pre-push hook locks.
-          case "${{ github.event_name }}" in
-            pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
-            push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;
-            *) CANDS="${{ github.sha }}" ;;
-          esac
-          PROBE=""
-          for i in "${!NAMES[@]}"; do
-            [ -z "${REFS[$i]}" ] && { PROBE="${NAMES[$i]}"; break; }
-          done
-          for c in ${CANDS}; do
-            [ -z "${c}" ] && continue
-            [ "${c}" = "0000000000000000000000000000000000000000" ] && continue
-            if "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
-                 --manifest-dir "${MAN}" --sha "${c}" --no-walk >/dev/null 2>&1; then
-              LOCK_SHA="${c}"; break
-            fi
-          done
-          if [ -z "${LOCK_SHA}" ]; then
-            echo "::error::No repo-workspaces workspace lock for ${SELF} (candidates: ${CANDS}). The commit must be published through the workspace tooling (pre-push hook / 'workspace lock')."
-            exit 1
-          fi
-          echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
-        fi
-
-        SIBLING_PATHS=""
-        for i in "${!NAMES[@]}"; do
-          name="${NAMES[$i]}"; ref="${REFS[$i]}"
-          if [ -n "${ref}" ]; then
-            rev="${ref}"; src="override"
-          else
-            rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
-              --manifest-dir "${MAN}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
-          fi
-          dest="${GITHUB_WORKSPACE}/../${name}"
-          echo "  ${name} -> ${rev} (${src})"
-          if [ -n "${GH_TOKEN}" ]; then
-            url="https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git"
-          else
-            url="https://github.com/metacraft-labs/${name}.git"
-          fi
-          rm -rf "${dest}"
-          git clone --no-checkout "${url}" "${dest}" >/dev/null 2>&1
-          git -C "${dest}" fetch --depth 1 origin "${rev}" >/dev/null 2>&1
-          git -C "${dest}" checkout --detach FETCH_HEAD >/dev/null 2>&1
-          # Best-effort submodules (no-op for repos without any).
-          git -C "${dest}" submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
-          SIBLING_PATHS="${SIBLING_PATHS} ${name}=$(cd "${dest}" && pwd)"
-        done
-        # Expose the clone locations for later steps (e.g. flake overrides).
-        echo "CT_SIBLING_PATHS=${SIBLING_PATHS# }" >> "${GITHUB_ENV}"
-        echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout."
+      uses: metacraft-labs/repo-workspaces/.github/actions/clone-siblings@main
+      with:
+        gh-token: ${{ inputs.gh-token }}
+        siblings: ${{ inputs.siblings }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
@@ -427,183 +331,18 @@ runs:
     # we then prepend to PATH.
     # ------------------------------------------------------------------
 
-    - name: Clone reprobuild sibling (reprobuild)
+    - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
-      shell: bash
-      run: |
-        # Reprobuild's CI matrix builds `repro` on every push, so the
-        # default-branch tip is always a known-good source tree.  We
-        # honour an optional pin from the calling workflow's env so
-        # repos can lock reprobuild to a known SHA across CI runs.
-        REF="${REPRO_BUILD_PIN:-dev}"
-        DEST="${GITHUB_WORKSPACE}/.reprobuild-src"
-        rm -rf "${DEST}"
-        if ! git clone --depth 1 --branch "${REF}" --single-branch \
-          "https://github.com/metacraft-labs/reprobuild.git" "${DEST}" 2>/dev/null; then
-          rm -rf "${DEST}"
-          git clone --no-checkout "https://github.com/metacraft-labs/reprobuild.git" "${DEST}"
-          git -C "${DEST}" checkout "${REF}"
-        fi
-      env:
-        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
-
-    - name: Clone reprobuild flake-input siblings (reprobuild, Linux/macOS)
-      # Reprobuild's flake.nix references private metacraft-labs repos
-      # (codetracer-native-recorder, runquota) as flake inputs.  The
-      # default `secrets.GITHUB_TOKEN` is scoped to the calling repo and
-      # cannot read sibling private repos via the tarball URL, so we
-      # clone them adjacent to `.reprobuild-src` and override the flake
-      # inputs to point at the local paths.  Auth uses the runner-scoped
-      # token by prefixing the URL — works for both public and private
-      # metacraft-labs repos since the runner is itself a
-      # metacraft-labs-authenticated context.
-      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.gh-token }}
-      run: |
-        set -euo pipefail
-        WS="${GITHUB_WORKSPACE}"
-        for entry in \
-          "codetracer-native-recorder:stable" \
-          "runquota:main" \
-        ; do
-          name="${entry%%:*}"
-          ref="${entry##*:}"
-          dest="${WS}/${name}"
-          rm -rf "${dest}"
-          git clone --depth 1 --branch "${ref}" --single-branch \
-            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-            "${dest}"
-        done
-
-    - name: Build repro CLI (reprobuild, Linux/macOS)
-      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-nix@main
+      uses: metacraft-labs/reprobuild/.github/actions/reprobuild-provision@main
       with:
         gh-token: ${{ inputs.gh-token }}
 
-    - name: nix-build repro (reprobuild, Linux/macOS)
-      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd "${GITHUB_WORKSPACE}/.reprobuild-src"
-        # Use the dev shell's just target — same path reprobuild's own
-        # CI exercises, so any green CI on reprobuild's `dev` branch
-        # implies a working build here.  Override the private flake
-        # inputs to the local clones so Nix doesn't try to fetch them
-        # via tarball (which 404s under the calling repo's token).
-        nix develop \
-          --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
-          --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
-          --command bash -c '
-            set -euo pipefail
-            just build
-            : "${NIMCRYPTO_SRC:?reprobuild dev shell did not set NIMCRYPTO_SRC}"
-            : "${BEARSSL_SRC:?reprobuild dev shell did not set BEARSSL_SRC}"
-            : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
-            echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${GITHUB_ENV}"
-            echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${GITHUB_ENV}"
-          '
-        # `just build` writes to ./build/bin/repro.  Surface it on PATH
-        # for subsequent steps via GITHUB_PATH.
-        echo "${PWD}/build/bin" >> "$GITHUB_PATH"
-
-    - name: Clone reprobuild env.ps1 sibling deps (reprobuild, Windows)
-      # The Windows-side reprobuild env.ps1 dot-sources
-      # ../repo-workspaces/env.ps1 (toolchain bootstrap) and reads four
-      # other sibling repos for source-only Nim deps:
-      #   - repo-workspaces      (required: nim/gcc/just/python/gpg)
-      #   - codetracer           (nim-stew/nim-faststreams/nim-serialization/nimcrypto submodules)
-      #   - runquota             (runquota_* Nim libs)
-      #   - nim-stackable-hooks  (monitor-shim primitives)
-      # These must be siblings of `.reprobuild-src`, i.e. under
-      # $GITHUB_WORKSPACE.
-      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os == 'Windows' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.gh-token }}
-      run: |
-        set -euo pipefail
-        WS="${GITHUB_WORKSPACE}"
-        clone_repo() {
-          local name="$1"
-          local ref="$2"
-          local dest="${WS}/${name}"
-          local submodule_flags="${3:-}"
-
-          rm -rf "${dest}"
-          if ! git clone --depth 1 --branch "${ref}" --single-branch ${submodule_flags} \
-            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-            "${dest}"; then
-            rm -rf "${dest}"
-            git clone --depth 1 ${submodule_flags} \
-              "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-              "${dest}"
-          fi
-        }
-
-        for entry in \
-          "repo-workspaces:main" \
-          "runquota:main" \
-          "nim-stackable-hooks:main" \
-        ; do
-          name="${entry%%:*}"
-          ref="${entry##*:}"
-          clone_repo "${name}" "${ref}" "--recurse-submodules"
-        done
-
-        clone_repo "codetracer" "main"
-        git -C "${WS}/codetracer" config \
-          url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf \
-          "https://github.com/"
-        git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
-          libs/nim-serialization \
-          libs/nim-faststreams \
-          libs/nim-stew \
-          libs/nimcrypto
-
-        # Reprobuild's peer-cache apps import status-im/nim-bearssl.
-        # The Nix dev shell supplies this through BEARSSL_SRC; Windows
-        # env.ps1 resolves the same source as a sibling checkout.
-        bearssl_ref="9a4eed052abbded2d94feaf3f5bbd95a30ec4671"
-        bearssl_dest="${WS}/nim-bearssl"
-        rm -rf "${bearssl_dest}"
-        git clone --depth 1 --recurse-submodules \
-          "https://github.com/status-im/nim-bearssl.git" \
-          "${bearssl_dest}"
-        git -C "${bearssl_dest}" fetch --depth 1 origin "${bearssl_ref}"
-        git -C "${bearssl_dest}" checkout --detach FETCH_HEAD
-        git -C "${bearssl_dest}" submodule update --init --recursive --depth 1
-
-        # Move reprobuild from .reprobuild-src to a sibling location so
-        # env.ps1 finds repo-workspaces et al. at ../<name>.
-        if [ -d "${WS}/.reprobuild-src" ] && [ ! -d "${WS}/reprobuild" ]; then
-          mv "${WS}/.reprobuild-src" "${WS}/reprobuild"
-        fi
-
-        # Git for Windows may check text files out with CRLF.  This file's
-        # lines become Nim source paths during `just build`, so strip CRs
-        # before the PowerShell build step runs.
-        entrypoints="${WS}/reprobuild/apps/entrypoints.txt"
-        if [ -f "${entrypoints}" ]; then
-          sed -i 's/\r$//' "${entrypoints}"
-        fi
-
-    - name: Build repro CLI (reprobuild, Windows)
-      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os == 'Windows' }}
-      shell: pwsh
-      run: |
-        # Windows-side: replay reprobuild's own DIY contract.  Source
-        # its env.ps1 (which pulls in scoop/winget toolchain managed
-        # by `non-nix-build/windows/ensure-*.ps1` scripts) and run
-        # `just build`.  The build drops `repro.exe` under
-        # `build\bin\` which we add to GITHUB_PATH.
-        Set-Location "$env:GITHUB_WORKSPACE\reprobuild"
-        . .\env.ps1
-        just build
-        Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path .\build\bin).Path
+    - name: Install the repro CLI (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@main
+      with:
+        gh-token: ${{ inputs.gh-token }}
+        repro-build-pin: ${{ inputs.repro-build-pin }}
 
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
