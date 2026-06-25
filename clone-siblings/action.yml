@@ -59,16 +59,28 @@ runs:
         # lock) or `name=ref` (clone `ref` directly — used for
         # workflow_dispatch / repository_dispatch overrides; an empty ref,
         # i.e. a trailing `=`, falls back to the lock).
+        # Parsing is pure bash (no awk/sed/cat): this step runs in the
+        # consumer's dev-env shell, which may be a minimal nix bash with no
+        # coreutils/gawk on PATH. Strip '#' comments per line and split the
+        # remainder on whitespace, collecting every token (one repo per line
+        # in the file; whitespace- or newline-separated in the input).
         if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
-          mapfile -t SIBLINGS < <(printf '%s\n' ${SIBLINGS_INPUT} | sed -e 's/#.*//' | awk 'NF {print $1}')
+          RAW="${SIBLINGS_INPUT}"
         else
           SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
           if [ ! -f "${SIBS_FILE}" ]; then
             echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
             exit 0
           fi
-          mapfile -t SIBLINGS < <(sed -e 's/#.*//' "${SIBS_FILE}" | awk 'NF {print $1}')
+          RAW="$(<"${SIBS_FILE}")"
         fi
+        SIBLINGS=()
+        while IFS= read -r _line || [ -n "${_line}" ]; do
+          _line="${_line%%#*}"
+          for _tok in ${_line}; do
+            SIBLINGS+=("${_tok}")
+          done
+        done <<< "${RAW}"
         if [ "${#SIBLINGS[@]}" -eq 0 ]; then
           echo "No cross-repo siblings to clone."
           exit 0
