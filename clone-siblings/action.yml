@@ -157,8 +157,32 @@ runs:
           git clone --no-checkout "${url}" "${dest}" >/dev/null 2>&1
           git -C "${dest}" fetch --depth 1 origin "${rev}" >/dev/null 2>&1
           git -C "${dest}" checkout --detach FETCH_HEAD >/dev/null 2>&1
-          # Best-effort submodules (no-op for repos without any).
-          git -C "${dest}" submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
+          # Submodules, authenticated with the token so PRIVATE submodules (e.g.
+          # codetracer's tree-sitter-nim) clone instead of failing on auth.
+          # Mirrors clone-repo's approach: a `url.insteadOf` rewrite covers
+          # submodules fetched fresh during the recursive update, and an explicit
+          # per-URL rewrite covers any URL already written into .git/config by
+          # `submodule init` (insteadOf does not retroactively apply to those).
+          # Pure git + bash builtins — this step runs in the dev-env shell, which
+          # may lack awk/sed/grep.
+          if [ -n "${GH_TOKEN}" ]; then
+            tok="https://x-access-token:${GH_TOKEN}@github.com/"
+            git -C "${dest}" config --add url."${tok}".insteadOf "https://github.com/" || true
+            git -C "${dest}" config --add url."${tok}".insteadOf "git@github.com:" || true
+            git -C "${dest}" config --add url."${tok}".insteadOf "ssh://git@github.com/" || true
+            git -C "${dest}" submodule init >/dev/null 2>&1 || true
+            git -C "${dest}" config --get-regexp '^submodule\..*\.url$' 2>/dev/null \
+            | while read -r _key _old; do
+                case "${_old}" in
+                  https://github.com/*) _new="${tok}${_old#https://github.com/}" ;;
+                  git@github.com:*) _new="${tok}${_old#git@github.com:}" ;;
+                  ssh://git@github.com/*) _new="${tok}${_old#ssh://git@github.com/}" ;;
+                  *) continue ;;
+                esac
+                git -C "${dest}" config "${_key}" "${_new}" || true
+              done
+          fi
+          git -C "${dest}" submodule update --init --recursive >/dev/null 2>&1 || true
           SIBLING_PATHS="${SIBLING_PATHS} ${name}=$(cd "${dest}" && pwd)"
         done
         # Expose the clone locations for later steps (e.g. flake overrides).
