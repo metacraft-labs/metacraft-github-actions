@@ -171,7 +171,9 @@ runs:
             git -C "${dest}" config --add url."${tok}".insteadOf "git@github.com:" || true
             git -C "${dest}" config --add url."${tok}".insteadOf "ssh://git@github.com/" || true
             git -C "${dest}" submodule init >/dev/null 2>&1 || true
-            git -C "${dest}" config --get-regexp '^submodule\..*\.url$' 2>/dev/null \
+            # `git config --get-regexp` exits 1 when a sibling has NO submodules;
+            # `|| true` keeps that from aborting the step under `set -o pipefail`.
+            { git -C "${dest}" config --get-regexp '^submodule\..*\.url$' 2>/dev/null || true; } \
             | while read -r _key _old; do
                 case "${_old}" in
                   https://github.com/*) _new="${tok}${_old#https://github.com/}" ;;
