@@ -75,9 +75,20 @@ runs:
           RAW="$(<"${SIBS_FILE}")"
         fi
         SIBLINGS=()
+        # On Windows, `actions/checkout@v4` respects git's
+        # `core.autocrlf=true` default and converts LF-in-repo to
+        # CRLF-in-worktree.  With `IFS= read -r`, that trailing `\r`
+        # sticks to the last token on each line, and downstream
+        # comparisons (`grep -E 'name="$SIBLING"'`, path lookups) then
+        # miss because the CR is a literal part of the value.  Strip
+        # any `\r` per line before tokenising.
         while IFS= read -r _line || [ -n "${_line}" ]; do
+          _line="${_line%$'\r'}"
           _line="${_line%%#*}"
           for _tok in ${_line}; do
+            # `_tok` inherits the CRLF too when the trailing CR was
+            # before a `#` comment marker (rare); belt-and-braces trim.
+            _tok="${_tok%$'\r'}"
             SIBLINGS+=("${_tok}")
           done
         done <<< "${RAW}"
