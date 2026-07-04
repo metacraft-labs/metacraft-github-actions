@@ -120,6 +120,12 @@ inputs:
       requires it.
     required: false
     default: ""
+  manifests-ref:
+    description: >
+      Optional branch/ref of the manifest repository to fetch workspace locks from.
+      If not provided, falls back to MANIFESTS_REF environment variable, then to 'latest'.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -155,6 +161,7 @@ runs:
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
+        manifests-ref: ${{ inputs.manifests-ref || env.MANIFESTS_REF || 'latest' }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
