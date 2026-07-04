@@ -153,15 +153,14 @@ fi
 find_lock() {
 	local sha="$1" f
 	local preferred="" first=""
-	while IFS= read -r -d '' f; do
+	for f in "$LOCKS_ROOT"/*/"$SELF_REPO/$sha.xml" "$LOCKS_ROOT"/*/"$SELF_REPO-$sha.xml"; do
+		[[ -f "$f" ]] || continue
 		[[ -z $first ]] && first="$f"
 		if [[ $f == "$LOCKS_ROOT/$PREFER_PROJECT/"* ]]; then
 			preferred="$f"
 			break
 		fi
-	done < <(find "$LOCKS_ROOT" \
-		\( -path "*/$SELF_REPO/$sha.xml" -o -name "$SELF_REPO-$sha.xml" \) \
-		-type f -print0 2>/dev/null)
+	done
 	if [[ -n $preferred ]]; then
 		printf '%s\n' "$preferred"
 		return 0
