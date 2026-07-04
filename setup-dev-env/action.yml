@@ -376,17 +376,24 @@ runs:
           case "${args[1]:-}" in
             build|test)
               has_tool_provisioning=false
+              has_daemon=false
               for arg in "${args[@]}"; do
                 case "$arg" in
-                  --tool-provisioning=*)
-                    has_tool_provisioning=true
-                    break
-                    ;;
+                  --tool-provisioning=*) has_tool_provisioning=true ;;
+                  --daemon=*)            has_daemon=true ;;
                 esac
               done
 
               if [ "$has_tool_provisioning" = false ]; then
                 args+=(--tool-provisioning=path)
+              fi
+              # `repro build`/`repro test` require an explicit --daemon
+              # selector.  In CI we want the single-shot no-daemon path
+              # so there is no background process to clean up between
+              # steps or workflow reruns.  Callers that want the daemon
+              # can pass --daemon=auto or --daemon=require themselves.
+              if [ "$has_daemon" = false ]; then
+                args+=(--daemon=off)
               fi
               exec "${args[@]}"
               ;;
