@@ -142,7 +142,7 @@ runs:
             [ -z "${c}" ] && continue
             [ "${c}" = "0000000000000000000000000000000000000000" ] && continue
             if "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
-                 --manifest-dir "${MAN}" --sha "${c}" --no-walk >/dev/null 2>&1; then
+                 --manifest-dir "${MAN}" --sha "${c}" --no-walk >/dev/null; then
               LOCK_SHA="${c}"; break
             fi
           done
