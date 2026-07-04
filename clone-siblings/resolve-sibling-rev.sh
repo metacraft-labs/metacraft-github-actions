@@ -203,12 +203,12 @@ if [[ -z $LOCK ]]; then
 fi
 
 # Each <project .../> is on its own line in a `repo manifest -r` snapshot.
-line=$(grep -E "<project[[:space:]][^>]*\bname=\"$SIBLING\"" "$LOCK" | head -1 || true)
+line=$(grep -E "<project[[:space:]][^>]*name=\"$SIBLING\"" "$LOCK" | head -1 || true)
 if [[ -z $line ]]; then
 	echo "resolve-sibling-rev: sibling '$SIBLING' not present in lock $LOCK" >&2
 	exit 4
 fi
-rev=$(printf '%s\n' "$line" | sed -E 's/.*\brevision="([^"]+)".*/\1/')
+rev=$(printf '%s\n' "$line" | sed -E 's/.*[[:space:]]revision="([^"]+)".*/\1/')
 if [[ -z $rev || $rev == "$line" ]]; then
 	echo "resolve-sibling-rev: no revision attribute for '$SIBLING' in $LOCK" >&2
 	exit 5
