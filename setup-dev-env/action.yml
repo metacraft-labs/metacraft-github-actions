@@ -161,7 +161,7 @@ runs:
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
-        manifests-ref: ${{ inputs.manifests-ref || env.MANIFESTS_REF || 'latest' }}
+        manifests-ref: ${{ inputs.manifests-ref }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
