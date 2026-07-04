@@ -360,13 +360,13 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
-      uses: metacraft-labs/reprobuild/.github/actions/reprobuild-provision@main
+      uses: metacraft-labs/reprobuild/.github/actions/reprobuild-provision@dev
       with:
         gh-token: ${{ inputs.gh-token }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
-      uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@main
+      uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@dev
       with:
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
