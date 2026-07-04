@@ -437,10 +437,21 @@ runs:
             $cmdArgs += "--daemon=off"
           }
 
-          & repro @cmdArgs
+          # `$cmdArgs[0]` is already "repro" — drop it before splatting or we
+          # would invoke `repro repro build ...` which repro treats as an
+          # unknown subcommand and exits with the usage banner.
+          $reproArgs = $cmdArgs[1..($cmdArgs.Count - 1)]
+          & repro @reproArgs
           exit $LASTEXITCODE
         }
 
+        # Non-`repro build|test` path: pass through to `repro exec -- $@`. The
+        # cmdArgs here still hold the raw invocation the caller supplied; drop
+        # the leading "repro" (if present) with the same slice pattern so the
+        # `exec --` boundary lines up with what the caller expects.
+        if ($cmdArgs.Count -ge 1 -and $cmdArgs[0] -eq "repro") {
+          $cmdArgs = $cmdArgs[1..($cmdArgs.Count - 1)]
+        }
         & repro exec -- @cmdArgs
         exit $LASTEXITCODE
         EOF
