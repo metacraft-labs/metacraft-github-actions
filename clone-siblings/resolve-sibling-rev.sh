@@ -153,7 +153,7 @@ fi
 find_lock() {
 	local sha="$1" f
 	local preferred="" first=""
-	for f in "$LOCKS_ROOT"/*/"$SELF_REPO/$sha.xml" "$LOCKS_ROOT"/*/"$SELF_REPO-$sha.xml"; do
+	for f in "$LOCKS_ROOT"/*/"$SELF_REPO"/"$sha.xml" "$LOCKS_ROOT"/*/"$SELF_REPO-$sha.xml"; do
 		[[ -f "$f" ]] || continue
 		[[ -z $first ]] && first="$f"
 		if [[ $f == "$LOCKS_ROOT/$PREFER_PROJECT/"* ]]; then
