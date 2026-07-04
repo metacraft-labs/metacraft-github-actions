@@ -162,7 +162,10 @@ runs:
             echo "CANDS: ${CANDS}"
             echo "MANIFESTS_REF: ${MANIFESTS_REF}"
             echo "Files in cloned manifests locks directory:"
-            find "${MAN}/locks" -type f 2>/dev/null || echo "No locks directory found!"
+            ls -la "${MAN}/locks" || true
+            find "${MAN}/locks" -type f || true
+            echo "Checking if lock file exists directly:"
+            ls -la "${MAN}/locks/io/io-mon" || true
             echo "======================================"
             echo "::error::No repo-workspaces workspace lock for ${SELF} (candidates: ${CANDS}). The commit must be published through the workspace tooling (pre-push hook / 'workspace lock')."
             exit 1
