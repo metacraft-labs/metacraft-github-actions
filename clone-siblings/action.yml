@@ -38,7 +38,7 @@ inputs:
   manifests-ref:
     description: The branch of the manifest repo to read locks from.
     required: false
-    default: "latest"
+    default: ""
 
 runs:
   using: composite
@@ -49,9 +49,10 @@ runs:
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
         MANIFESTS_REPO: ${{ inputs.manifests-repo }}
-        MANIFESTS_REF: ${{ inputs.manifests-ref }}
+        INPUT_MANIFESTS_REF: ${{ inputs.manifests-ref }}
       run: |
         set -euo pipefail
+        MANIFESTS_REF="${INPUT_MANIFESTS_REF:-${MANIFESTS_REF:-latest}}"
         # The explicit `siblings` input (if provided) overrides the
         # repo-level `.github/sibling-repos` declaration; otherwise read the
         # file. Both accept '#' comments and whitespace/newline separation.
