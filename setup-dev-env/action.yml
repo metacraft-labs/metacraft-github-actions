@@ -421,15 +421,20 @@ runs:
             $cmdArgs[0] -eq "repro" -and
             ($cmdArgs[1] -eq "build" -or $cmdArgs[1] -eq "test")) {
           $hasToolProvisioning = $false
+          $hasDaemon = $false
           foreach ($arg in $cmdArgs) {
-            if ($arg -like "--tool-provisioning=*") {
-              $hasToolProvisioning = $true
-              break
-            }
+            if ($arg -like "--tool-provisioning=*") { $hasToolProvisioning = $true }
+            if ($arg -like "--daemon=*")            { $hasDaemon = $true }
           }
 
           if (-not $hasToolProvisioning) {
             $cmdArgs += "--tool-provisioning=path"
+          }
+          # Mirror the bash dev-exec: `repro build`/`test` need an explicit
+          # --daemon selector; default to the single-shot no-daemon path so
+          # CI does not have to clean up a background process.
+          if (-not $hasDaemon) {
+            $cmdArgs += "--daemon=off"
           }
 
           & repro @cmdArgs
