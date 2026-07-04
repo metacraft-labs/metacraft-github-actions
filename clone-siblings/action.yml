@@ -130,6 +130,11 @@ runs:
             echo "::error::Failed to clone manifests repo from ${MAN_URL} on branch ${MANIFESTS_REF}"
             exit 1
           fi
+          echo "=== CLONED MANIFESTS INFO ==="
+          ls -la "${MAN}" || true
+          git -C "${MAN}" status || true
+          git -C "${MAN}" log -n 1 || true
+          echo "============================="
           # Which commit's lock to use: the pushed commit (falling back to its
           # parent for GitHub merge commits), or the PR base — all mainline
           # commits the pre-push hook locks.
