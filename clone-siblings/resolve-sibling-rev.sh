@@ -124,7 +124,7 @@ if [[ -z $MANIFEST_DIR ]]; then
 			MANIFEST_DIR="$d/.repo/manifests"
 			break
 		fi
-		d="$(dirname "$d")"
+		d="${d%/*}"
 	done
 fi
 if [[ -z $MANIFEST_DIR || ! -d "$MANIFEST_DIR/locks" ]]; then
@@ -203,12 +203,22 @@ if [[ -z $LOCK ]]; then
 fi
 
 # Each <project .../> is on its own line in a `repo manifest -r` snapshot.
-line=$(grep -E "<project[[:space:]][^>]*name=\"$SIBLING\"" "$LOCK" | head -1 || true)
+line=""
+while IFS= read -r l; do
+	if [[ $l == *"<project"* && $l == *"name=\"$SIBLING\""* ]]; then
+		line="$l"
+		break
+	fi
+done < "$LOCK"
+
 if [[ -z $line ]]; then
 	echo "resolve-sibling-rev: sibling '$SIBLING' not present in lock $LOCK" >&2
 	exit 4
 fi
-rev=$(printf '%s\n' "$line" | sed -E 's/.*[[:space:]]revision="([^"]+)".*/\1/')
+
+rev="${line#*revision=\"}"
+rev="${rev%%\"*}"
+
 if [[ -z $rev || $rev == "$line" ]]; then
 	echo "resolve-sibling-rev: no revision attribute for '$SIBLING' in $LOCK" >&2
 	exit 5
