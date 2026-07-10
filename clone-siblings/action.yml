@@ -162,7 +162,8 @@ runs:
             rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
               --manifest-dir "${MAN}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
           fi
-          dest="${GITHUB_WORKSPACE}/../${name}"
+          WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
+          dest="${WORKSPACE_NORM}/../${name}"
           echo "  ${name} -> ${rev} (${src})"
           if [ -n "${GH_TOKEN}" ]; then
             url="https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git"
