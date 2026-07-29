@@ -24,23 +24,23 @@ inputs:
     required: false
     default: ""
   endpoint:
-    description: S3 endpoint (pass `${{ vars.MCL_S3_ARTIFACTS_ENDPOINT }}`).
+    description: S3 endpoint (pass `vars.MCL_S3_ARTIFACTS_ENDPOINT`).
     required: false
     default: ""
   bucket:
-    description: Bucket name (pass `${{ vars.MCL_S3_ARTIFACTS_BUCKET }}`).
+    description: Bucket name (pass `vars.MCL_S3_ARTIFACTS_BUCKET`).
     required: false
     default: "ci-artifacts"
   region:
-    description: Region (pass `${{ vars.MCL_S3_ARTIFACTS_REGION }}`).
+    description: Region (pass `vars.MCL_S3_ARTIFACTS_REGION`).
     required: false
     default: "garage"
   access-key-id:
-    description: S3 access key id (pass `${{ secrets.MCL_S3_ARTIFACTS_ACCESS_KEY_ID }}`).
+    description: S3 access key id (pass `secrets.MCL_S3_ARTIFACTS_ACCESS_KEY_ID`).
     required: false
     default: ""
   secret-access-key:
-    description: S3 secret access key (pass `${{ secrets.MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY }}`).
+    description: S3 secret access key (pass `secrets.MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY`).
     required: false
     default: ""
 
