@@ -1,0 +1,31 @@
+name: test
+
+# The sibling-revision resolver is the single source of the revisions every
+# consumer's CI builds against, so a regression here mispins other repos'
+# builds rather than failing this one. Its contract suite therefore runs on
+# every change to it.
+#
+# Deliberately stock `ubuntu-latest` with nothing but checkout, bash and git:
+# no Nix, no dev shell, no secrets, no self-hosted runner. A guard must not
+# share the failure modes of the things it guards.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-sibling-rev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: resolve-sibling-rev.sh contract suite
+        run: bash clone-siblings/resolve-sibling-rev-test.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh
