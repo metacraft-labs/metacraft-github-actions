@@ -113,6 +113,21 @@ inputs:
       Set to a SHA for fully reproducible runs.
     required: false
     default: "dev"
+  repro-publish-key:
+    description: >
+      ECDSA-P256 signing private key (PEM) for publishing `repro build`
+      action outputs to the reprobuild binary cache (reprobuild flavor
+      only). When empty, publishing stays disabled and the build is
+      substitute-only. Pass from a per-repo secret (org-wide secrets are
+      not readable in private repos).
+    required: false
+    default: ""
+  repro-publish-cert:
+    description: >
+      The publisher certificate (PEM) paired with `repro-publish-key`.
+      When either this or the key is empty, publishing stays disabled.
+    required: false
+    default: ""
   nix-attr:
     description: >
       Optional flake attribute selector for the nix flavor. When
@@ -377,6 +392,31 @@ runs:
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
+
+    - name: Configure reprobuild binary-cache publishing (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' && inputs.repro-publish-key != '' && inputs.repro-publish-cert != '' }}
+      shell: bash
+      env:
+        REPRO_PUBLISH_KEY: ${{ inputs.repro-publish-key }}
+        REPRO_PUBLISH_CERT: ${{ inputs.repro-publish-cert }}
+      run: |
+        set -euo pipefail
+        # A publisher key+cert were provided: materialise them and export the
+        # REPRO_BINARY_CACHE_* env so the calling repo's subsequent
+        # `dev-exec repro build` publishes its action outputs to the fleet
+        # binary cache. Empty inputs skip this step -> substitute-only (the safe
+        # default; fork PRs never receive the secret).
+        umask 077
+        key_path="$RUNNER_TEMP/repro-publish.key"
+        cert_path="$RUNNER_TEMP/repro-publish.cert"
+        printf '%s' "$REPRO_PUBLISH_KEY"  > "$key_path"
+        printf '%s' "$REPRO_PUBLISH_CERT" > "$cert_path"
+        {
+          echo "REPRO_BINARY_CACHE_URL=https://repro-cache.metacraft-labs.com"
+          echo "REPRO_BINARY_CACHE_KEY_PATH=$key_path"
+          echo "REPRO_BINARY_CACHE_CERT_PATH=$cert_path"
+        } >> "$GITHUB_ENV"
+        echo "reprobuild binary-cache publish ENABLED -> https://repro-cache.metacraft-labs.com"
 
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
