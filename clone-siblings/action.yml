@@ -11,6 +11,16 @@ description: >
   adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
   there is no silent fallback to a branch tip.
 
+  MANIFEST LAYERS. The locks are read from one or more manifest repos, layered
+  by visibility per reprobuild-specs/Workspace-And-Develop-Mode.md §"Workspace
+  Composition and Manifest Layers": `manifests-repo` is the public base layer
+  and `private-manifests-repo` (optional) is an access-controlled org/team
+  layer on top of it, which is REQUIRED once private repos participate in the
+  workspace. Repos declared in both are deduplicated with the private layer
+  taking precedence; a repo only the private layer declares resolves from it.
+  Leaving `private-manifests-repo` empty is the single-layer behaviour every
+  consumer has today.
+
   This is the single approved sibling-revision mechanism (it bundles
   resolve-sibling-rev.sh, which reads the workspace lock; its contract suite is
   resolve-sibling-rev-test.sh). See
@@ -34,11 +44,33 @@ inputs:
     default: ""
   manifests-repo:
     description: >
-      owner/name of the manifest repo holding the workspace locks.
+      owner/name of the PUBLIC (base) manifest repo holding the workspace
+      locks. This is the least-specific manifest layer.
     required: false
     default: "metacraft-labs/metacraft-manifests"
   manifests-ref:
     description: The branch of the manifest repo to read locks from.
+    required: false
+    default: ""
+  private-manifests-repo:
+    description: >
+      Optional owner/name of an org/team-PRIVATE manifest repo layered on top
+      of `manifests-repo`. Per
+      reprobuild-specs/Workspace-And-Develop-Mode.md §"Workspace Composition
+      and Manifest Layers", a private manifest repo is REQUIRED once private
+      repos participate in a workspace: an access-controlled repo set cannot
+      live in a layer everyone can read. Repos declared in both layers are
+      deduplicated with the private layer taking precedence; repos only the
+      private layer declares resolve from it alone.
+
+      Empty (the default) is exactly the single-layer behaviour every consumer
+      has today — nothing is cloned and nothing is consulted. `gh-token` must
+      grant read access when this is set.
+    required: false
+    default: ""
+  private-manifests-ref:
+    description: >
+      The branch of the private manifest repo. Defaults to `manifests-ref`.
     required: false
     default: ""
 
@@ -52,9 +84,12 @@ runs:
         SIBLINGS_INPUT: ${{ inputs.siblings }}
         MANIFESTS_REPO: ${{ inputs.manifests-repo }}
         INPUT_MANIFESTS_REF: ${{ inputs.manifests-ref }}
+        PRIVATE_MANIFESTS_REPO: ${{ inputs.private-manifests-repo }}
+        INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
       run: |
         set -euo pipefail
         MANIFESTS_REF="${INPUT_MANIFESTS_REF:-${MANIFESTS_REF:-latest}}"
+        PRIVATE_MANIFESTS_REF="${INPUT_PRIVATE_MANIFESTS_REF:-${MANIFESTS_REF}}"
         # The explicit `siblings` input (if provided) overrides the
         # repo-level `.github/sibling-repos` declaration; otherwise read the
         # file. Both accept '#' comments and whitespace/newline separation.
@@ -114,7 +149,16 @@ runs:
 
         # The manifest repo holds the per-commit workspace locks. Only clone
         # it when at least one sibling resolves from the lock.
+        #
+        # MANIFEST LAYERS. `LAYER_ARGS` accumulates one `--manifest-dir` per
+        # layer, least specific FIRST — the order is the resolver's precedence
+        # order (reprobuild-specs/Workspace-And-Develop-Mode.md §"Layering
+        # Rules": a repo declared in several layers is deduplicated with the
+        # more specific layer taking precedence). With no
+        # `private-manifests-repo` this is a one-element list, i.e. byte-for-
+        # byte the single-layer resolve every consumer already gets.
         MAN=""; LOCK_SHA=""
+        LAYER_ARGS=()
         if [ "${NEED_LOCK}" -eq 1 ]; then
           MAN="${RUNNER_TEMP}/metacraft-manifests"
           rm -rf "${MAN}"
@@ -127,6 +171,29 @@ runs:
           if ! git clone --depth 1 --branch "${MANIFESTS_REF}" "${MAN_URL}" "${MAN}"; then
             echo "::error::Failed to clone manifests repo from ${MAN_URL} on branch ${MANIFESTS_REF}"
             exit 1
+          fi
+          LAYER_ARGS+=(--manifest-dir "${MAN}")
+
+          # The org/team-private layer, when the caller declares one. It is
+          # cloned with the SAME token — a private manifest repo is
+          # access-controlled by definition, so a failure to clone it is a
+          # hard error and never a silent downgrade to the public layer: that
+          # would resolve private siblings to whatever the public layer
+          # happens to say, or fail much later with a misleading diagnostic.
+          if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+            PRIV_MAN="${RUNNER_TEMP}/metacraft-manifests-private"
+            rm -rf "${PRIV_MAN}"
+            if [ -n "${GH_TOKEN}" ]; then
+              PRIV_URL="https://x-access-token:${GH_TOKEN}@github.com/${PRIVATE_MANIFESTS_REPO}.git"
+            else
+              PRIV_URL="https://github.com/${PRIVATE_MANIFESTS_REPO}.git"
+            fi
+            echo "Cloning PRIVATE manifests repo on branch '${PRIVATE_MANIFESTS_REF}'..."
+            if ! git clone --depth 1 --branch "${PRIVATE_MANIFESTS_REF}" "${PRIV_URL}" "${PRIV_MAN}"; then
+              echo "::error::Failed to clone the private manifests repo ${PRIVATE_MANIFESTS_REPO} on branch ${PRIVATE_MANIFESTS_REF}. A private manifest layer was declared, so this is fatal: resolving siblings from the public layer alone would silently drop every pin the private layer owns. Check that the CI App token has read access to it."
+              exit 1
+            fi
+            LAYER_ARGS+=(--manifest-dir "${PRIV_MAN}")
           fi
           # Which commit's lock to use: the pushed commit (falling back to its
           # parent for GitHub merge commits), or the PR base — all mainline
@@ -145,7 +212,7 @@ runs:
             [ "${c}" = "0000000000000000000000000000000000000000" ] && continue
             probe_rc=0
             "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
-              --manifest-dir "${MAN}" --sha "${c}" --no-walk >/dev/null || probe_rc=$?
+              "${LAYER_ARGS[@]}" --sha "${c}" --no-walk >/dev/null || probe_rc=$?
             if [ "${probe_rc}" -eq 0 ]; then
               LOCK_SHA="${c}"; break
             fi
@@ -162,7 +229,11 @@ runs:
             fi
           done
           if [ -z "${LOCK_SHA}" ]; then
-            echo "::error::No workspace lock for ${SELF} (candidates: ${CANDS}). Neither a repo-workspaces locks/<project>/${SELF}/<sha>.xml nor a reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${MANIFESTS_REPO}@${MANIFESTS_REF}. The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook, or legacy 'workspace lock'), and its lock pushed to the manifest repo."
+            LAYERS_DESC="${MANIFESTS_REPO}@${MANIFESTS_REF}"
+            if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+              LAYERS_DESC="${LAYERS_DESC} or ${PRIVATE_MANIFESTS_REPO}@${PRIVATE_MANIFESTS_REF}"
+            fi
+            echo "::error::No workspace lock for ${SELF} (candidates: ${CANDS}). Neither a repo-workspaces locks/<project>/${SELF}/<sha>.xml nor a reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${LAYERS_DESC}. The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook, or legacy 'workspace lock'), and its lock pushed to the manifest repo."
             exit 1
           fi
           echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
@@ -175,7 +246,7 @@ runs:
             rev="${ref}"; src="override"
           else
             rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
-              --manifest-dir "${MAN}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
+              "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
           fi
           WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
           dest="${WORKSPACE_NORM}/../${name}"

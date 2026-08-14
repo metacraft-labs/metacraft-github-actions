@@ -156,6 +156,22 @@ inputs:
       If not provided, falls back to MANIFESTS_REF environment variable, then to 'latest'.
     required: false
     default: ""
+  private-manifests-repo:
+    description: >
+      Optional owner/name of an org/team-PRIVATE manifest repo layered on top
+      of the public one when resolving sibling revisions. Required once
+      private repos participate in the workspace (an access-controlled repo
+      set cannot live in a layer everyone can read). Passed straight through
+      to `clone-siblings`; empty is the single-layer default. `gh-token` must
+      grant read access when set.
+    required: false
+    default: ""
+  private-manifests-ref:
+    description: >
+      Optional branch/ref of the private manifest repository. Defaults to
+      `manifests-ref`.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -193,6 +209,8 @@ runs:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
         manifests-ref: ${{ inputs.manifests-ref }}
+        private-manifests-repo: ${{ inputs.private-manifests-repo }}
+        private-manifests-ref: ${{ inputs.private-manifests-ref }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
