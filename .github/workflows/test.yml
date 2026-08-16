@@ -77,3 +77,26 @@ jobs:
 
       - name: shellcheck
         run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh
+
+  clone-git-auth:
+    # `clone-siblings` and `clone-repo` clone into nearly every job in this org,
+    # and until this suite existed the only thing standing between a CI App
+    # token and the `.git/config` of every sibling clone was that nobody had
+    # looked. Same reasoning as the two suites above — stock runner, no Nix, no
+    # secrets — with one addition: this suite stands up its OWN git server on
+    # 127.0.0.1 and clones through it, so it needs no network access either.
+    # Everything it asserts about a credential, it observes on the wire.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: no credential persisted into the checkout
+        run: bash .github/assert-no-persisted-credential.sh
+
+      - name: authenticated-clone contract suite
+        run: bash git-auth/authenticated-clone-test.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh

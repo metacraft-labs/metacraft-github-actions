@@ -1,8 +1,13 @@
 name: Clone Repository
 description: >
-  Authenticated git clone with optional submodule URL rewriting.
-  Handles private repos, self-hosted runner stale state cleanup,
-  and Nix-compatible .gitmodules SSH-to-HTTPS conversion.
+  Authenticated git clone with optional submodule support.
+  Handles private repos, private submodules, self-hosted runner stale state
+  cleanup, and Nix-compatible .gitmodules SSH-to-HTTPS conversion.
+
+  The token is never placed in a URL and never written to disk: it travels as
+  an `http.https://github.com/<owner>/.extraHeader` in this step's own process
+  environment, scoped to the owner of `repo` and to this step. See
+  ../git-auth/scoped-git-auth.sh.
 
 inputs:
   repo:
@@ -18,7 +23,7 @@ inputs:
     description: "GitHub token for authenticated clone"
     required: true
   submodules:
-    description: "Initialize and update submodules with explicit URL rewriting (true/false)"
+    description: "Initialize and update submodules, including private ones (true/false)"
     required: false
     default: "false"
 
@@ -27,48 +32,55 @@ runs:
   steps:
     - name: Clone ${{inputs.repo}}
       shell: bash
+      # Routed through `env:` rather than interpolated into the script body.
+      # `${{ }}` is textual substitution into the command file the runner writes
+      # to disk and executes, so an interpolated secret ends up in that file, in
+      # any `set -x` trace of it, and in the diagnostics the runner keeps on a
+      # self-hosted runner's disk. An env var is none of those. This step used
+      # to interpolate the token four times.
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        CLONE_REPO: ${{ inputs.repo }}
+        CLONE_REF: ${{ inputs.ref }}
+        CLONE_PATH: ${{ inputs.path }}
+        CLONE_SUBMODULES: ${{ inputs.submodules }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
       run: |
-        echo "Cloning ${{inputs.repo}} at ref: ${{inputs.ref}}"
+        set -euo pipefail
+        echo "Cloning ${CLONE_REPO} at ref: ${CLONE_REF}"
 
-        # Clean stale state (self-hosted runners reuse workspaces)
-        rm -rf "${{inputs.path}}"
+        case "${CLONE_REPO}" in
+          */*) ;;
+          *)
+            echo "::error::clone-repo: 'repo' must be in owner/name form (got '${CLONE_REPO}')" >&2
+            exit 1
+            ;;
+        esac
 
-        git clone \
-          "https://x-access-token:${{inputs.gh-token}}@github.com/${{inputs.repo}}.git" \
-          "${{inputs.path}}"
+        # The credential scope is DERIVED from the repository being cloned, so
+        # it cannot disagree with it. This is the one place in these actions
+        # where the owner needs no configuration and no cross-check: the caller
+        # already told us, in `repo`, exactly whose repository this is.
+        # shellcheck source=../git-auth/scoped-git-auth.sh
+        . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
+        export TOKEN_OWNERS="${CLONE_REPO%%/*}"
+        export SCOPED_GIT_AUTH_REWRITES=1
+        export SCOPED_GIT_AUTH_MASK=1
+        scoped_git_auth_build
+        scoped_git_auth_export
+        scoped_git_auth_report
 
-        cd "${{inputs.path}}"
-        git checkout "${{inputs.ref}}"
-
-        if [[ "${{inputs.submodules}}" == "true" ]]; then
-          # Explicitly rewrite submodule URLs with token.
-          # url.insteadOf may not apply to URLs already written to
-          # .git/config by submodule init.
-          git submodule init
-          for url in $(git config --get-regexp '^submodule\..*\.url$' \
-                       | grep -E 'git@github\.com:|https://github\.com/' \
-                       | cut -d' ' -f1); do
-            old_url=$(git config --get "$url")
-            new_url=$(echo "$old_url" \
-              | sed "s|git@github.com:|https://x-access-token:${{inputs.gh-token}}@github.com/|" \
-              | sed "s|https://github.com/|https://x-access-token:${{inputs.gh-token}}@github.com/|")
-            echo "Rewriting submodule URL: $url"
-            git config "$url" "$new_url"
-          done
-          git submodule update --recursive
-
-          # Rewrite .gitmodules SSH URLs to HTTPS so Nix's internal git
-          # fetcher (which does not honor url.insteadOf) can resolve
-          # submodules when evaluating flakes with ?submodules=1.
-          # Use sed -i'' (no space) for cross-platform compat (macOS BSD + GNU).
-          if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' 's|git@github.com:|https://github.com/|g' .gitmodules
-            sed -i '' 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
-          else
-            sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
-            sed -i 's|ssh://git@github.com/|https://github.com/|g' .gitmodules
-          fi
-          git add .gitmodules
-          git -c user.name="CI" -c user.email="ci@local" commit --no-gpg-sign \
-            -m "CI: rewrite submodule URLs to HTTPS" || true
+        args=(--repo "${CLONE_REPO}" --dest "${CLONE_PATH}" --rev "${CLONE_REF}")
+        if [ "${CLONE_SUBMODULES}" = "true" ]; then
+          # `--commit-https-gitmodules` normalises ssh submodule URLs to https
+          # and commits that, so a `?submodules=1` flake reference pinned to a
+          # revision can resolve them: Nix resolves submodule URLs with
+          # libgit2's git_submodule_resolve_url, which does not apply
+          # `insteadOf`, so an scp-style URL never reaches the `git` binary Nix
+          # would otherwise inherit this step's configuration through. The
+          # committed content is credential-free by construction and
+          # authenticated-clone.sh refuses to commit it if that stops being
+          # true.
+          args+=(--submodules --commit-https-gitmodules)
         fi
+        bash "${GIT_AUTH_DIR}/authenticated-clone.sh" "${args[@]}"
