@@ -40,8 +40,49 @@ inputs:
       `name=ref` (clone `ref` directly — used for workflow_dispatch /
       repository_dispatch overrides; a trailing `=` falls back to the lock).
       When empty, `.github/sibling-repos` is read.
+
+      An entry may also be spelled `owner/name` (with or without `=ref`) to
+      clone from a GitHub owner other than `sibling-owner`. The repo NAME is
+      what the workspace lock is keyed by and what the clone is placed at
+      (`../<name>`); the owner only selects the remote. Declaring the owner
+      here is what makes it possible to compose a workspace out of repos from
+      more than one org — reprobuild's manifest model already allows a
+      `projectRemote` of `blocksense-network` — without the CI token having to
+      be scoped to all of github.com.
     required: false
     default: ""
+  sibling-owner:
+    description: >
+      The GitHub owner a bare sibling entry (`name`, not `owner/name`) is
+      cloned from. Defaults to `metacraft-labs`, which is what this action used
+      to hard-code.
+
+      Accepts a whitespace-separated list, of which the FIRST entry is used;
+      the rest are ignored here. That is not a courtesy — it is what lets
+      `setup-dev-env` pass its single `token-owner` value to this input and to
+      `token-owner` below, so the two physically cannot disagree. Direct
+      callers that set them separately are covered by the check described under
+      `token-owner`.
+    required: false
+    default: "metacraft-labs"
+  token-owner:
+    description: >
+      Whitespace-separated GitHub owner(s) the job's CI token is scoped to —
+      i.e. whatever will be passed to `setup-nix`'s input of the same name.
+
+      This action does not merely trust it: it installs its OWN credential,
+      scoped to exactly the owners it is about to clone from, so its clones
+      cannot be broken by a mismatch. What it uses this input for is to FAIL
+      LOUDLY when the two disagree, because the rest of the job — `nix develop`
+      resolving a private flake input, a test script cloning a private repo —
+      runs on `setup-nix`'s scope, not on this one, and an owner missing from
+      that scope surfaces as a bare GitHub 404 on a private repository, which
+      reads as a typo rather than as an auth failure.
+
+      Set to the empty string to skip the check (for a job that runs no
+      `setup-nix`).
+    required: false
+    default: "metacraft-labs"
   manifests-repo:
     description: >
       owner/name of the PUBLIC (base) manifest repo holding the workspace
@@ -82,10 +123,13 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
+        SIBLING_OWNER: ${{ inputs.sibling-owner }}
+        JOB_TOKEN_OWNERS: ${{ inputs.token-owner }}
         MANIFESTS_REPO: ${{ inputs.manifests-repo }}
         INPUT_MANIFESTS_REF: ${{ inputs.manifests-ref }}
         PRIVATE_MANIFESTS_REPO: ${{ inputs.private-manifests-repo }}
         INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
       run: |
         set -euo pipefail
         MANIFESTS_REF="${INPUT_MANIFESTS_REF:-${MANIFESTS_REF:-latest}}"
@@ -138,14 +182,106 @@ runs:
         SELF="${GITHUB_REPOSITORY##*/}"
         RESOLVER="${{ github.action_path }}/resolve-sibling-rev.sh"
 
-        # Split entries into names + optional explicit refs.
-        NAMES=(); REFS=(); NEED_LOCK=0
+        # Split entries into owner + name + optional explicit ref.
+        #
+        # An entry is `[owner/]name[=ref]`. The owner half is optional and
+        # defaults to `sibling-owner`; the NAME half is the workspace-lock key
+        # and the directory the clone lands in, so `owner/` is stripped before
+        # either is used. The `=ref` split happens first because a ref may
+        # itself contain `/` (a branch name), which would otherwise be mistaken
+        # for an owner separator.
+        # First word only; see the `sibling-owner` input description.
+        for _w in ${SIBLING_OWNER}; do DEFAULT_OWNER="${_w}"; break; done
+        DEFAULT_OWNER="${DEFAULT_OWNER:-}"
+
+        NAMES=(); REFS=(); OWNERS=(); NEED_LOCK=0
         for entry in "${SIBLINGS[@]}"; do
-          nm="${entry%%=*}"; rf=""
+          spec="${entry%%=*}"; rf=""
           case "${entry}" in *=*) rf="${entry#*=}" ;; esac
-          NAMES+=("${nm}"); REFS+=("${rf}")
+          case "${spec}" in
+            */*) ow="${spec%%/*}"; nm="${spec#*/}" ;;
+            *)   ow="${DEFAULT_OWNER}"; nm="${spec}" ;;
+          esac
+          case "${nm}" in
+            */*)
+              echo "::error::sibling entry '${entry}' has more than one '/'; the form is [owner/]name[=ref]."
+              exit 1
+              ;;
+          esac
+          NAMES+=("${nm}"); REFS+=("${rf}"); OWNERS+=("${ow}")
           [ -z "${rf}" ] && NEED_LOCK=1
         done
+
+        # ------------------------------------------------------------------
+        # The git credential for everything this step clones.
+        #
+        # This used to be a token embedded in every clone URL plus, in each
+        # sibling's own `.git/config`, a catch-all `url.<credentialed
+        # github.com>.insteadOf` covering the whole of github.com. That left a
+        # live App token in the `.git/config` of every sibling clone and every submodule
+        # of every sibling clone — files that sit next to the workspace, get
+        # archived as artifacts, and on this org's self-hosted runners survive
+        # into the next job — and it authenticated every github.com fetch those
+        # clones ever made, third parties included. A URL-borne credential is
+        # also the one shape git hands to `credential approve` on success, so on
+        # a runner with a `credential.helper` it was additionally written to
+        # `~/.git-credentials`.
+        #
+        # It is now an `http.https://github.com/<owner>/.extraHeader` in THIS
+        # STEP's process environment. Child processes inherit it (including
+        # `git submodule update --recursive`, at every depth); nothing else
+        # does, and nothing writes it down.
+        #
+        # THE SCOPE IS DERIVED, not configured: it is the exact set of owners
+        # this step is about to clone from — every sibling's owner plus the
+        # owners of the manifest repos. A sibling this action can name is
+        # therefore a sibling this action can authenticate, by construction.
+        # shellcheck source=../git-auth/scoped-git-auth.sh
+        . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
+
+        CLONE_OWNERS=()
+        add_owner() {
+          local o="$1" e
+          [ -z "${o}" ] && return 0
+          for e in ${CLONE_OWNERS[@]+"${CLONE_OWNERS[@]}"}; do
+            [ "${e}" = "${o}" ] && return 0
+          done
+          CLONE_OWNERS+=("${o}")
+        }
+        for ow in ${OWNERS[@]+"${OWNERS[@]}"}; do add_owner "${ow}"; done
+        if [ "${NEED_LOCK}" -eq 1 ]; then
+          add_owner "$(scoped_git_auth_owner_of "${MANIFESTS_REPO}")"
+          [ -n "${PRIVATE_MANIFESTS_REPO}" ] && \
+            add_owner "$(scoped_git_auth_owner_of "${PRIVATE_MANIFESTS_REPO}")"
+        fi
+
+        if [ "${#CLONE_OWNERS[@]}" -eq 0 ]; then
+          echo "::error::no GitHub owner to clone from: 'sibling-owner' is empty and no sibling entry is spelled owner/name."
+          exit 1
+        fi
+
+        export TOKEN_OWNERS="${CLONE_OWNERS[*]}"
+        export SCOPED_GIT_AUTH_REWRITES=1
+        export SCOPED_GIT_AUTH_MASK=1
+        scoped_git_auth_build
+        scoped_git_auth_export
+        scoped_git_auth_report
+
+        # ------------------------------------------------------------------
+        # The coupling this action used to hide.
+        #
+        # The sibling owner was hard-coded to `metacraft-labs` here while
+        # `setup-nix`'s `token-owner` defaulted to the same string in a
+        # different file. Nothing tied them together, and while the CI token
+        # authenticated all of github.com nothing had to: a mismatch simply
+        # worked. It no longer does — an owner outside `setup-nix`'s scope gets
+        # a 404 on a private repo, which reads as a wrong repository name — so
+        # the disagreement is detected here, by name, before anything is cloned.
+        if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ]; then
+          TOKEN_OWNERS="${JOB_TOKEN_OWNERS}" \
+            scoped_git_auth_require_covered "clone-siblings" \
+              ${CLONE_OWNERS[@]+"${CLONE_OWNERS[@]}"} || exit 1
+        fi
 
         # The manifest repo holds the per-commit workspace locks. Only clone
         # it when at least one sibling resolves from the lock.
@@ -162,11 +298,10 @@ runs:
         if [ "${NEED_LOCK}" -eq 1 ]; then
           MAN="${RUNNER_TEMP}/metacraft-manifests"
           rm -rf "${MAN}"
-          if [ -n "${GH_TOKEN}" ]; then
-            MAN_URL="https://x-access-token:${GH_TOKEN}@github.com/${MANIFESTS_REPO}.git"
-          else
-            MAN_URL="https://github.com/${MANIFESTS_REPO}.git"
-          fi
+          # Credential-free URL. Authentication rides the scoped extraHeader
+          # installed above, which covers this repo's owner because the scope
+          # was derived from `manifests-repo` itself.
+          MAN_URL="https://github.com/${MANIFESTS_REPO}.git"
           echo "Cloning manifests repo on branch '${MANIFESTS_REF}'..."
           if ! git clone --depth 1 --branch "${MANIFESTS_REF}" "${MAN_URL}" "${MAN}"; then
             echo "::error::Failed to clone manifests repo from ${MAN_URL} on branch ${MANIFESTS_REF}"
@@ -183,11 +318,7 @@ runs:
           if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
             PRIV_MAN="${RUNNER_TEMP}/metacraft-manifests-private"
             rm -rf "${PRIV_MAN}"
-            if [ -n "${GH_TOKEN}" ]; then
-              PRIV_URL="https://x-access-token:${GH_TOKEN}@github.com/${PRIVATE_MANIFESTS_REPO}.git"
-            else
-              PRIV_URL="https://github.com/${PRIVATE_MANIFESTS_REPO}.git"
-            fi
+            PRIV_URL="https://github.com/${PRIVATE_MANIFESTS_REPO}.git"
             echo "Cloning PRIVATE manifests repo on branch '${PRIVATE_MANIFESTS_REF}'..."
             if ! git clone --depth 1 --branch "${PRIVATE_MANIFESTS_REF}" "${PRIV_URL}" "${PRIV_MAN}"; then
               echo "::error::Failed to clone the private manifests repo ${PRIVATE_MANIFESTS_REPO} on branch ${PRIVATE_MANIFESTS_REF}. A private manifest layer was declared, so this is fatal: resolving siblings from the public layer alone would silently drop every pin the private layer owns. Check that the CI App token has read access to it."
@@ -241,7 +372,7 @@ runs:
 
         SIBLING_PATHS=""
         for i in "${!NAMES[@]}"; do
-          name="${NAMES[$i]}"; ref="${REFS[$i]}"
+          name="${NAMES[$i]}"; ref="${REFS[$i]}"; owner="${OWNERS[$i]}"
           if [ -n "${ref}" ]; then
             rev="${ref}"; src="override"
           else
@@ -250,44 +381,21 @@ runs:
           fi
           WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
           dest="${WORKSPACE_NORM}/../${name}"
-          echo "  ${name} -> ${rev} (${src})"
-          if [ -n "${GH_TOKEN}" ]; then
-            url="https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git"
-          else
-            url="https://github.com/metacraft-labs/${name}.git"
-          fi
-          rm -rf "${dest}"
-          git clone --no-checkout "${url}" "${dest}" >/dev/null 2>&1
-          git -C "${dest}" fetch --depth 1 origin "${rev}" >/dev/null 2>&1
-          git -C "${dest}" checkout --detach FETCH_HEAD >/dev/null 2>&1
-          # Submodules, authenticated with the token so PRIVATE submodules (e.g.
-          # codetracer's tree-sitter-nim) clone instead of failing on auth.
-          # Mirrors clone-repo's approach: a `url.insteadOf` rewrite covers
-          # submodules fetched fresh during the recursive update, and an explicit
-          # per-URL rewrite covers any URL already written into .git/config by
-          # `submodule init` (insteadOf does not retroactively apply to those).
-          # Pure git + bash builtins — this step runs in the dev-env shell, which
-          # may lack awk/sed/grep.
-          if [ -n "${GH_TOKEN}" ]; then
-            tok="https://x-access-token:${GH_TOKEN}@github.com/"
-            git -C "${dest}" config --add url."${tok}".insteadOf "https://github.com/" || true
-            git -C "${dest}" config --add url."${tok}".insteadOf "git@github.com:" || true
-            git -C "${dest}" config --add url."${tok}".insteadOf "ssh://git@github.com/" || true
-            git -C "${dest}" submodule init >/dev/null 2>&1 || true
-            # `git config --get-regexp` exits 1 when a sibling has NO submodules;
-            # `|| true` keeps that from aborting the step under `set -o pipefail`.
-            { git -C "${dest}" config --get-regexp '^submodule\..*\.url$' 2>/dev/null || true; } \
-            | while read -r _key _old; do
-                case "${_old}" in
-                  https://github.com/*) _new="${tok}${_old#https://github.com/}" ;;
-                  git@github.com:*) _new="${tok}${_old#git@github.com:}" ;;
-                  ssh://git@github.com/*) _new="${tok}${_old#ssh://git@github.com/}" ;;
-                  *) continue ;;
-                esac
-                git -C "${dest}" config "${_key}" "${_new}" || true
-              done
-          fi
-          git -C "${dest}" submodule update --init --recursive >/dev/null 2>&1 || true
+          echo "  ${owner}/${name} -> ${rev} (${src})"
+          # Credential-free URL; the scoped extraHeader in this step's
+          # environment authenticates it, and `git submodule update
+          # --recursive` inherits that environment at every depth — which is
+          # what keeps the PRIVATE submodule path working (codetracer's
+          # libs/tree-sitter-nim inside a public repo, codetracer-native-backend
+          # recursing into a private codetracer-rr) with nothing written to any
+          # `.git/config`.
+          #
+          # Failures are no longer discarded to /dev/null: an owner-scoped
+          # credential makes auth-denied a reachable configuration error, and
+          # the previous code produced no output at all for it.
+          bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
+            --repo "${owner}/${name}" --dest "${dest}" --rev "${rev}" \
+            --shallow --submodules-optional
           SIBLING_PATHS="${SIBLING_PATHS} ${name}=$(cd "${dest}" && pwd)"
         done
         # Expose the clone locations for later steps (e.g. flake overrides).

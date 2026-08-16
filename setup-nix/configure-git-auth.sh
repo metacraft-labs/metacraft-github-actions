@@ -56,6 +56,12 @@
 # a declaration rather than a side effect, which is the point — a per-repo
 # minted secret should say which repo it is for.
 #
+# THE SCOPE ITSELF LIVES IN ../git-auth/scoped-git-auth.sh, because this was
+# only two-thirds of the fix: `clone-siblings` and `clone-repo` carried the same
+# URL-embedded catch-all and were not covered by the change that wrote this
+# comment. They are now, and they derive the scope from the same file, so the
+# next person cannot fix one copy and miss two.
+#
 # Environment:
 #   GH_TOKEN                  (required) the token to install.
 #   TOKEN_OWNERS              whitespace/newline-separated GitHub owners the
@@ -75,16 +81,46 @@
 # Contract suite: ./configure-git-auth-test.sh (pure bash + real git).
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../git-auth/scoped-git-auth.sh
+. "$HERE/../git-auth/scoped-git-auth.sh"
+
 : "${GH_TOKEN:?configure-git-auth: GH_TOKEN is required}"
 TOKEN_OWNERS="${TOKEN_OWNERS:-metacraft-labs}"
 EXTRA_TOKEN_URL_PREFIXES="${EXTRA_TOKEN_URL_PREFIXES:-}"
 
 # --- 1. credential-free URL-scheme rewrites -------------------------------
 #
-# `.gitmodules` in this org's repos spells submodule URLs in all three styles.
-# Nix's internal git fetcher does not read gitconfig at all, which is why
-# `clone-repo` additionally rewrites `.gitmodules` on disk; these rewrites cover
-# the git CLI.
+# `.gitmodules` in this org's repos spells submodule URLs in all three styles,
+# and these rewrites are what makes the ssh spellings reachable by an https
+# credential.
+#
+# They are written to `--global` here rather than carried in the process-scoped
+# configuration below because they must apply to every git in the job whether or
+# not it inherited this step's environment, and they carry no credential, so a
+# copy that outlives the job is inert. (`clone-siblings` and `clone-repo` take
+# the same rewrites through the process environment instead — they are one step,
+# not a job-wide contract, and they should leave nothing behind at all.)
+#
+# NOTE ON NIX. This comment used to claim "Nix's internal git fetcher does not
+# read gitconfig at all", offered as the reason `clone-repo` rewrites
+# `.gitmodules` on disk. That has been false since Nix 2.20.0: libgit2 fetching
+# was reverted in 8d422c2f (2024-01-18, "libgit2 is not capable of using
+# git-credentials helpers yet"), and `src/libfetchers/git-utils.cc` has shelled
+# out to the `git` binary ever since — so a Nix fetch is a `git fetch` and
+# inherits `GIT_CONFIG_COUNT`, `insteadOf`, `extraHeader` and the rest.
+#
+# The real, narrower reason `clone-repo` still normalises `.gitmodules` is that
+# Nix resolves a submodule's URL with libgit2's `git_submodule_resolve_url`,
+# which handles relative URLs and does NOT apply `insteadOf`; a scp-style
+# `git@github.com:owner/repo` therefore never becomes a URL Nix can hand to the
+# `git` binary in the first place.
+#
+# The distinction matters more than the fix: "Nix ignores gitconfig" would mean
+# the credential scoping in this file does not reach Nix at all, and someone
+# reasoning from it would conclude they need a broader mechanism — a netrc, or a
+# catch-all — to authenticate Nix's fetches. They do not. A false comment about
+# credential scope is how the next person reasons their way into a real hole.
 #
 # `insteadOf` is multi-valued and both values must survive, so each is written
 # with `--replace-all` plus a VALUE-PATTERN matching only itself: that makes a
@@ -123,40 +159,18 @@ done < <(
 
 # --- 3. the scoped credential --------------------------------------------
 #
-# Basic auth with the App token as the password, which is what
-# `x-access-token:<token>@` encoded positionally in the URL. Same credential,
-# carried in a header instead of a URL.
-AUTH_BASIC="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\r\n')"
-printf '::add-mask::%s\n' "$AUTH_BASIC"
-
-# Collect the URL prefixes this credential covers. Owners become
-# `https://github.com/<owner>/`.
+# Derived by ../git-auth/scoped-git-auth.sh: basic auth with the App token as
+# the password (exactly what `x-access-token:<token>@` encoded positionally in
+# the URL — same credential, carried in a header instead of a URL), scoped to
+# `https://github.com/<owner>/` per declared owner plus any explicitly declared
+# extra prefix. `SCOPED_GIT_AUTH_MASK=1` makes it print the derived blob once,
+# and only as the payload of `::add-mask::`, which the runner consumes and
+# replaces with `***`.
 #
-# The trailing slash is for readability only, and it is worth being exact about
-# why: git's own path match breaks on `/`, so `https://github.com/<owner>`
-# already fails to match `https://github.com/<owner>-evil/x`. The boundary is
-# git's, not ours — do not "harden" it here with a manual check, and do not
-# assume dropping the slash would open it.
-declare -a SCOPES=()
-for _owner in $TOKEN_OWNERS; do
-	[[ -z $_owner ]] && continue
-	SCOPES+=("https://github.com/${_owner}/")
-done
-for _prefix in $EXTRA_TOKEN_URL_PREFIXES; do
-	[[ -z $_prefix ]] && continue
-	case "$_prefix" in
-	https://*) ;;
-	*)
-		echo "configure-git-auth: extra-token-url-prefixes entry '$_prefix' is not an https:// URL" >&2
-		exit 2
-		;;
-	esac
-	SCOPES+=("$_prefix")
-done
-if [[ ${#SCOPES[@]} -eq 0 ]]; then
-	echo "configure-git-auth: no token scope (token-owner and extra-token-url-prefixes are both empty)" >&2
-	exit 2
-fi
+# `SCOPED_GIT_AUTH_REWRITES` is left off: the scheme rewrites are written to
+# `--global` in section 1 above, and emitting them here as well would put a
+# second copy into every step's environment for no gain.
+SCOPED_GIT_AUTH_MASK=1 scoped_git_auth_build || exit $?
 
 # --- 4. emit as process-scoped git configuration --------------------------
 #
@@ -170,26 +184,5 @@ fi
 # setup-git` or a helper of its own. That is someone else's credential, not the
 # one this action installs, so disabling it is out of scope for a change whose
 # whole claim is that it regresses nothing.
-_emit() {
-	if [[ -n ${GITHUB_ENV:-} ]]; then
-		printf '%s\n' "$1" >>"$GITHUB_ENV"
-	else
-		printf '%s\n' "$1"
-	fi
-}
-
-_n=0
-for _scope in "${SCOPES[@]}"; do
-	_emit "GIT_CONFIG_KEY_${_n}=http.${_scope}.extraHeader"
-	_emit "GIT_CONFIG_VALUE_${_n}=AUTHORIZATION: basic ${AUTH_BASIC}"
-	_n=$((_n + 1))
-done
-_emit "GIT_CONFIG_COUNT=${_n}"
-# Without a URL-embedded credential a misconfigured scope would block on a
-# prompt instead of failing; make it fail.
-_emit "GIT_TERMINAL_PROMPT=0"
-
-echo "configure-git-auth: git credential scoped to ${#SCOPES[@]} URL prefix(es):"
-for _scope in "${SCOPES[@]}"; do
-	echo "  ${_scope}"
-done
+scoped_git_auth_emit "${GITHUB_ENV:-}"
+scoped_git_auth_report

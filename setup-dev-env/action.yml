@@ -62,6 +62,26 @@ inputs:
       Metacraft Labs repos.
     required: false
     default: ""
+  token-owner:
+    description: >
+      Whitespace-separated GitHub owner(s) whose repositories `gh-token` is
+      allowed to authenticate. Defaults to `metacraft-labs`.
+
+      THIS IS ONE KNOB ON PURPOSE. It feeds `setup-nix`'s `token-owner` (which
+      scopes the job-wide Git CLI credential) AND `clone-siblings`'
+      `sibling-owner` (which selects the remote sibling repos are cloned from)
+      AND `clone-siblings`' own `token-owner` cross-check. Those three used to
+      be a hard-coded `metacraft-labs` in `clone-siblings` and a defaulted
+      `metacraft-labs` in `setup-nix`, tied together by nothing but the fact
+      that the credential authenticated all of github.com so a mismatch could
+      not be noticed. It can be noticed now — as a 404 on a private repo — so
+      they are no longer separately settable through this action.
+
+      A workspace that spans orgs sets this to the list (e.g.
+      `"metacraft-labs blocksense-network"`) and names the non-default owners
+      explicitly in `siblings` entries, as `owner/name`.
+    required: false
+    default: "metacraft-labs"
   substituters:
     description: >
       Space-separated Nix substituter URLs to trust in addition
@@ -208,6 +228,14 @@ runs:
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
+        # ONE value reaching both inputs. `sibling-owner` selects the remote
+        # bare sibling names are cloned from and `token-owner` is what
+        # `clone-siblings` cross-checks its clone set against; feeding both from
+        # `inputs.token-owner` is what makes the coupling with the `setup-nix`
+        # step below un-breakable through this action rather than merely
+        # documented.
+        sibling-owner: ${{ inputs.token-owner }}
+        token-owner: ${{ inputs.token-owner }}
         manifests-ref: ${{ inputs.manifests-ref }}
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
@@ -221,6 +249,7 @@ runs:
       uses: metacraft-labs/metacraft-github-actions/setup-nix@main
       with:
         gh-token: ${{ inputs.gh-token }}
+        token-owner: ${{ inputs.token-owner }}
         substituters: ${{ inputs.substituters }}
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
         attic-token: ${{ inputs.attic-token }}
