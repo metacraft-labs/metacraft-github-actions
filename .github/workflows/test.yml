@@ -22,13 +22,22 @@ jobs:
   resolve-sibling-rev:
     runs-on: ubuntu-latest
     steps:
+      # persist-credentials: false — see the note on the job below. This job
+      # runs two bash scripts and shellcheck; it performs no git operation
+      # after the checkout, so there is nothing for a stored credential to
+      # authenticate.
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: no credential persisted into the checkout
+        run: bash .github/assert-no-persisted-credential.sh
 
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh .github/assert-no-persisted-credential.sh
 
   setup-nix-git-auth:
     # `setup-nix` runs in almost every job in this org, so a mistake in how it
@@ -38,7 +47,30 @@ jobs:
     # runner, no Nix, no secrets, nothing this action itself provides.
     runs-on: ubuntu-latest
     steps:
+      # `actions/checkout` defaults to `persist-credentials: true`, which writes
+      #
+      #     http.https://github.com/.extraheader = AUTHORIZATION: basic <token>
+      #
+      # into this checkout's LOCAL .git/config — the same catch-all shape
+      # `setup-nix` no longer installs, at per-checkout scope. It is what made
+      # this suite's first CI run fail while passing locally: `git config
+      # --get-urlmatch` answered from the checkout's own credential. The suite
+      # defends itself by querying git from a non-repository directory; turning
+      # the header off removes the contaminant at its source as well, so the
+      # guard is not sharing a runner-only failure mode with the thing it
+      # guards.
+      #
+      # Safe here because neither job in this workflow runs a git operation
+      # after the checkout: both run bash scripts and shellcheck, `permissions`
+      # is `contents: read`, and nothing pushes, tags, fetches or updates a
+      # submodule. The step below asserts the header is actually gone, so this
+      # cannot silently regress if a future checkout release changes defaults.
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: no credential persisted into the checkout
+        run: bash .github/assert-no-persisted-credential.sh
 
       - name: configure-git-auth.sh contract suite
         run: bash setup-nix/configure-git-auth-test.sh
