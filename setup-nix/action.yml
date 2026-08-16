@@ -8,6 +8,26 @@ inputs:
   gh-token:
     description: GitHub token for accessing private repos
     required: true
+  token-owner:
+    description: >
+      Whitespace-separated GitHub owner(s) whose repositories `gh-token` is
+      allowed to authenticate. The Git CLI credential is installed as an
+      `http.https://github.com/<owner>/.extraHeader`, so it covers those owners'
+      repositories and nothing else — not nixpkgs, not `nim-lang/*`, not any
+      other third party a build happens to fetch from github.com.
+    required: false
+    default: "metacraft-labs"
+  extra-token-url-prefixes:
+    description: >
+      Optional whitespace/newline-separated extra `https://github.com/...` URL
+      prefixes the Git CLI credential should also cover. This is the deliberate
+      path for a cross-org PRIVATE clone authenticated by a per-repo minted
+      secret: name the repository (e.g.
+      `https://github.com/some-partner/one-repo.git`) or that owner's prefix
+      (`https://github.com/some-partner/`). Matching is by slash-delimited path
+      prefix, so naming one repository does not authenticate its neighbours.
+    required: false
+    default: ""
   substituters:
     description: Additional Nix substituters
     required: false
@@ -51,11 +71,44 @@ runs:
       with:
         determinate: false
 
-    - name: Configure Nix and Git authentication
+    - name: Configure Nix authentication
       shell: bash
+      env:
+        # Routed through `env:` rather than interpolated into the script body:
+        # `${{ }}` interpolation is textual substitution into the command file
+        # the runner writes to disk and executes, so the secret ends up in that
+        # file and in any `set -x` trace of it. An env var is neither.
+        GH_TOKEN: ${{ inputs.gh-token }}
+        EXTRA_SUBSTITUTERS: ${{ inputs.substituters }}
+        EXTRA_TRUSTED_PUBLIC_KEYS: ${{ inputs.trusted-public-keys }}
       run: |
-        mkdir -p $HOME/.config/nix
+        set -euo pipefail
+        echo "::add-mask::$GH_TOKEN"
 
+        # nix.conf and netrc both carry the token. `umask 077` is not
+        # cosmetic: on the self-hosted runners in this org $HOME is reused
+        # between jobs, so these files are readable by whatever runs next
+        # unless they are mode 600.
+        umask 077
+        mkdir -p "$HOME/.config/nix"
+
+        # NOTE (scoping): unlike the Git CLI credential installed below, these
+        # two mechanisms are HOST-granular and stay that way here, deliberately:
+        #
+        #   * `netrc` has no path granularity at all — `machine github.com` is
+        #     the finest scope the format has.
+        #   * `access-tokens` DOES support `github.com/<owner>=<token>` (Nix
+        #     matches the entry as a slash-delimited prefix of host+path), but
+        #     that landed in Nix 2025-02. This action deliberately SKIPS
+        #     installing Nix when one is already present (pre-installed
+        #     ephemeral images, NixOS runners), so the running Nix version is not
+        #     something this action controls, and an older one would read
+        #     `github.com/<owner>=` as an entry matching nothing — silently
+        #     unauthenticating every private flake input in the org.
+        #
+        # Both send the token only to github.com, which issued it; the exposure
+        # is that Nix attaches it to fetches of third-party github.com repos.
+        # Narrowing them needs a Nix version floor, which is a separate change.
         cat << EOF > "$HOME/.config/nix/nix.conf"
           # Enable flakes + nix-command additively, so this holds even when the
           # DeterminateSystems installer is skipped because Nix is pre-installed
@@ -69,26 +122,29 @@ runs:
           connect-timeout = 3
           download-attempts = 1
           narinfo-cache-negative-ttl = 0
-          substituters = https://cache.nixos.org ${{inputs.substituters}}
-          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
+          substituters = https://cache.nixos.org $EXTRA_SUBSTITUTERS
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $EXTRA_TRUSTED_PUBLIC_KEYS
           netrc-file = $HOME/.config/nix/netrc
-          access-tokens = github.com=${{inputs.gh-token}}
+          access-tokens = github.com=$GH_TOKEN
         EOF
 
         # Create netrc for Nix's internal git fetcher (needed for
         # ?submodules=1 flake references that clone via git)
-        {
-          echo "machine github.com login x-access-token password ${{inputs.gh-token}}"
-        } > "$HOME/.config/nix/netrc"
+        printf 'machine github.com login x-access-token password %s\n' \
+          "$GH_TOKEN" > "$HOME/.config/nix/netrc"
 
-        # Rewrite all GitHub URLs to authenticated HTTPS for submodule cloning.
-        # Submodules may use SSH or HTTPS URLs in .gitmodules, so we cover all styles:
-        #   git@github.com:org/repo.git    -> https://token@github.com/org/repo.git
-        #   ssh://git@github.com/org/repo  -> https://token@github.com/org/repo
-        #   https://github.com/org/repo    -> https://token@github.com/org/repo
-        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "git@github.com:"
-        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "ssh://git@github.com/"
-        git config --global url."https://x-access-token:${{inputs.gh-token}}@github.com/".insteadOf "https://github.com/"
+    - name: Configure Git authentication
+      # Scoped to the org's own repositories and to this job. See the long
+      # rationale in configure-git-auth.sh; in short, the credential this used
+      # to install was a global, URL-embedded, catch-all rewrite, and each of
+      # those three words was a separate problem. Contract suite:
+      # setup-nix/configure-git-auth-test.sh.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+        EXTRA_TOKEN_URL_PREFIXES: ${{ inputs.extra-token-url-prefixes }}
+      run: bash "${{ github.action_path }}/configure-git-auth.sh"
 
     - name: Start Attic watch-store
       if: ${{ inputs.attic-token != '' && inputs.attic-cache != '' }}
