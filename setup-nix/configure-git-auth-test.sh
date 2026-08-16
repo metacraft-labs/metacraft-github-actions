@@ -55,6 +55,27 @@ check() { # <desc> <actual> <expected>
 TMPROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPROOT"' EXIT
 
+# Every git query below runs from HERE, not from the checkout — and that is a
+# correctness requirement, not tidiness.
+#
+# `actions/checkout` with its default `persist-credentials: true` writes
+#
+#     http.https://github.com/.extraheader = AUTHORIZATION: basic <workflow token>
+#
+# into the checkout's LOCAL `.git/config`. That is the same catch-all shape this
+# change removes from `setup-nix`, and `git config --get-urlmatch` run with a cwd
+# inside the checkout picks it up — so every negative contract here reported the
+# workflow's own token and failed, on CI only, while passing locally. Asking git
+# from a directory that is not a repository, with system config neutralised,
+# isolates the answers to the configuration under test.
+#
+# (The checkout-local header is real and is NOT fixed by this change: any `git`
+# command a job runs with its cwd inside the checkout still sends the workflow
+# token to every github.com URL unless the caller sets
+# `persist-credentials: false`. That belongs to the calling workflows.)
+NEUTRAL_CWD="$TMPROOT/not-a-repo"
+mkdir -p "$NEUTRAL_CWD"
+
 # A token shaped like a real GitHub App installation token, so a substring
 # search for it cannot accidentally match ordinary text.
 TOKEN="ghs_TESTONLYnotarealtoken0000000000000000"
@@ -94,8 +115,9 @@ urlmatch() {
 		[[ -z $line ]] && continue
 		envv+=("$line")
 	done <"$CASE_ENV"
-	env -i PATH="$PATH" HOME="$CASE_HOME" "${envv[@]}" \
-		git config --get-urlmatch http.extraHeader "$url" 2>/dev/null
+	env -i PATH="$PATH" HOME="$CASE_HOME" GIT_CONFIG_SYSTEM=/dev/null \
+		GIT_CEILING_DIRECTORIES="$TMPROOT" "${envv[@]}" \
+		git -C "$NEUTRAL_CWD" config --get-urlmatch http.extraHeader "$url" 2>/dev/null
 }
 
 # `sent_url <url>` — the URL git would actually contact for <url>, after every
@@ -114,8 +136,9 @@ sent_url() {
 		[[ -z $line ]] && continue
 		envv+=("$line")
 	done <"$CASE_ENV"
-	env -i PATH="$PATH" HOME="$CASE_HOME" "${envv[@]}" \
-		git ls-remote --get-url "$url" 2>/dev/null
+	env -i PATH="$PATH" HOME="$CASE_HOME" GIT_CONFIG_SYSTEM=/dev/null \
+		GIT_CEILING_DIRECTORIES="$TMPROOT" "${envv[@]}" \
+		git -C "$NEUTRAL_CWD" ls-remote --get-url "$url" 2>/dev/null
 }
 
 # `credential_for <url>` — everything git would present as authentication when
@@ -171,6 +194,21 @@ check "another host is NOT authenticated" \
 	"$(credential_for https://gitlab.com/metacraft-labs/x)" ""
 check "plain http to our own org is NOT authenticated" \
 	"$(credential_for http://github.com/metacraft-labs/codetracer.git)" ""
+
+# Self-check on the isolation the negative contracts above depend on. Without
+# it they answered with whatever credential the surrounding checkout carried,
+# which is how they passed locally and failed on CI. Reproduce that exact
+# contamination and assert it does not reach the answers.
+CONTAMINATED="$TMPROOT/contaminated-checkout"
+mkdir -p "$CONTAMINATED"
+git -C "$CONTAMINATED" init -q .
+git -C "$CONTAMINATED" config --local http."https://github.com/".extraHeader \
+	"AUTHORIZATION: basic CONTAMINANT"
+(
+	cd "$CONTAMINATED" || exit 1
+	[[ "$(credential_for https://github.com/NixOS/nixpkgs)" == "" ]]
+) && ok "a checkout-local catch-all header cannot contaminate these answers" ||
+	bad "a checkout-local catch-all header cannot contaminate these answers"
 
 # ---------------------------------------------------------------------------
 # Nothing carrying the credential survives the job.
