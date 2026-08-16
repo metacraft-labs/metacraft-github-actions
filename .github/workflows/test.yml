@@ -29,3 +29,19 @@ jobs:
 
       - name: shellcheck
         run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh
+
+  setup-nix-git-auth:
+    # `setup-nix` runs in almost every job in this org, so a mistake in how it
+    # scopes the CI token does not fail this repo — it either leaks a live
+    # credential onto fetches that should never see it, or unauthenticates
+    # every private clone in the org. Same reasoning as the suite above: stock
+    # runner, no Nix, no secrets, nothing this action itself provides.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: configure-git-auth.sh contract suite
+        run: bash setup-nix/configure-git-auth-test.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh
