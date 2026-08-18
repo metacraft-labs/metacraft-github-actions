@@ -1,3 +1,24 @@
+# NO SECOND SIBLING-CLONING ACTION.
+#
+# There is exactly one mechanism for "what revision of sibling repo X does this
+# commit pin?", and it is this action (reprobuild-specs/
+# CI-Dev-Env-Actions-And-Workspace-Alignment.md §"Sibling-revision resolution").
+# A per-project convenience action that clones siblings ITSELF is how that
+# guarantee gets lost: it starts as a wrapper, acquires a hard-coded `ref:` for
+# a repo the lock does not happen to cover, and from then on that project's CI
+# builds a branch tip while every document says it builds a pinned revision.
+#
+# `codetracer/.github/actions/setup-db-backend-siblings` is the shape a
+# per-project action should have: inputs, a `siblings:` list, and nothing else —
+# all resolution delegated here.
+# `codetracer/.github/actions/setup-isonim-siblings` is the shape it should not:
+# nine `clone-repo` calls at a hard-coded `ref: dev`. Migrating it needs no new
+# action; it needs those nine names in a `siblings:` list, and five of them
+# declared in `codetracer`'s project manifest so the lock can pin them (today
+# only nim-everywhere / nim-acp / nim-agent-harbor / nim-agents are members —
+# isonim, isonim-tui, isonim-gpui, nim-pty and nim-termctl belong to the
+# `isonim` project). This action now says exactly that when asked to resolve
+# them; see the PASS 1 error below.
 name: Clone cross-repo siblings
 description: >
   Clone the cross-repo sibling repositories a repo's CI needs, each at the
@@ -9,7 +30,10 @@ description: >
   siblings comes from the `siblings` input or, when empty, the calling repo's
   `.github/sibling-repos` file (one repo name per line). Each sibling is cloned
   adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
-  there is no silent fallback to a branch tip.
+  there is no silent fallback to a branch tip. A sibling the lock does not NAME
+  fails just as loudly, but as what it is — a workspace-membership gap, i.e. a
+  repo the project manifest does not declare — reported for every such sibling
+  at once and before anything is cloned, not as a broken lock.
 
   MANIFEST LAYERS. The locks are read from one or more manifest repos, layered
   by visibility per reprobuild-specs/Workspace-And-Develop-Mode.md §"Workspace
@@ -40,6 +64,14 @@ inputs:
       `name=ref` (clone `ref` directly — used for workflow_dispatch /
       repository_dispatch overrides; a trailing `=` falls back to the lock).
       When empty, `.github/sibling-repos` is read.
+
+      An override `ref` is shape-checked before anything is cloned: it must be
+      `[0-9A-Za-z._/-]` only and must not begin with `-`, `.` or `/`. That is
+      not style enforcement — the value is substituted into `git fetch <remote>
+      <rev>`, git parses options after the remote, and `--upload-pack=<cmd>`
+      runs `<cmd>` on the runner. An override that is not a 40-hex commit SHA
+      is additionally reported as a `::warning::`: it pins nothing and resolves
+      to wherever the ref points when the job runs.
 
       An entry may also be spelled `owner/name` (with or without `=ref`) to
       clone from a GitHub owner other than `sibling-owner`. The repo NAME is
@@ -213,6 +245,94 @@ runs:
         done
 
         # ------------------------------------------------------------------
+        # An explicit `name=ref` override is a REVISION, and it was the one
+        # revision in this action nothing checked.
+        #
+        # `resolve-sibling-rev.sh` shape-checks every revision it reads out of a
+        # lock (its `check_rev_shape`), for two reasons that are on the record.
+        # A value like `main` makes CI build a branch TIP, which is the silent,
+        # unpinned resolve this whole mechanism exists to prevent. And a value
+        # starting with `-` is not a refspec at all: this step substitutes it
+        # into `git fetch <remote> <rev>`, git parses options AFTER the remote,
+        # and `--upload-pack=<cmd>` is handed to `sh -c` — command execution on
+        # the runner, after which the fetch SUCCEEDS and the step goes green.
+        #
+        # The override path reached `git fetch` without passing through any of
+        # that, because it never goes near the resolver. Same substitution, same
+        # git, so it gets the same standard.
+        #
+        # The check is a whitelist over the characters a branch, tag or SHA can
+        # contain, which is deliberately narrower than `git check-ref-format`:
+        # everything this org actually passes today (`main`,
+        # `mcr-backend-integration`, `refs/heads/dev`, a 40-hex SHA) is inside
+        # it, and everything that makes git do something other than name a
+        # revision — a leading `-`, whitespace, `;`, `$`, `:`, `~`, `^`, `?`,
+        # `*`, `[`, `\` — is outside it. Pure bash, no `git check-ref-format`
+        # subprocess: this step runs in the consumer's dev-env shell.
+        ref_shape_ok() { # <ref>
+          local r="$1" i=0 c
+          [ -n "${r}" ] || return 1
+          case "${r}" in
+            -* | .* | /*) return 1 ;;
+            */ | *.) return 1 ;;
+            *..* | *//* | *@\{*) return 1 ;;
+            *.lock) return 1 ;;
+          esac
+          while [ "${i}" -lt "${#r}" ]; do
+            c="${r:${i}:1}"
+            case "${c}" in
+              [0-9A-Za-z._/-]) ;;
+              *) return 1 ;;
+            esac
+            i=$((i + 1))
+          done
+          return 0
+        }
+
+        is_sha40() { # <rev>
+          local r="$1" i=0 c
+          [ "${#r}" -eq 40 ] || return 1
+          while [ "${i}" -lt 40 ]; do
+            c="${r:${i}:1}"
+            case "${c}" in
+              [0-9a-f]) ;;
+              *) return 1 ;;
+            esac
+            i=$((i + 1))
+          done
+          return 0
+        }
+
+        # Validated before ANYTHING is cloned — including the manifests repo —
+        # so a hostile or malformed entry costs no network and leaves no
+        # half-populated workspace parent behind.
+        BAD_REFS=""
+        for i in "${!NAMES[@]}"; do
+          [ -z "${REFS[$i]}" ] && continue
+          if ! ref_shape_ok "${REFS[$i]}"; then
+            BAD_REFS="${BAD_REFS} ${NAMES[$i]}=${REFS[$i]}"
+            continue
+          fi
+          # A shape-legal override is still an override: it bypasses the
+          # workspace lock by construction. When it is not a 40-hex SHA it does
+          # not pin anything either — it resolves to wherever that ref points
+          # when the job happens to run — so the log has to say so. This is a
+          # warning and not a refusal on purpose: several workflows in this org
+          # pass `<name>=main` today for deliberate downstream-integration runs,
+          # and this action reaches them immediately at `@main`. Turning that
+          # into a hard failure is a separate, announced decision; making it
+          # invisible is not defensible either way.
+          if ! is_sha40 "${REFS[$i]}"; then
+            echo "::warning::sibling '${NAMES[$i]}' is pinned by the explicit override '${NAMES[$i]}=${REFS[$i]}', not by the workspace lock, and '${REFS[$i]}' is not a 40-hex commit SHA. This build is therefore not reproducible: it resolves to whatever that ref points at right now. Overrides are for workflow_dispatch / repository_dispatch experiments; a lasting pin belongs in the workspace lock."
+          fi
+        done
+        if [ -n "${BAD_REFS}" ]; then
+          echo "::error::refusing sibling override(s) whose revision is not a usable ref:${BAD_REFS}"
+          echo "::error::An override revision is substituted into 'git fetch <remote> <rev>'. git parses options after the remote, so a value beginning with '-' is an OPTION, and '--upload-pack=<cmd>' executes <cmd> on this runner. A revision must be a plain branch name, tag or 40-hex commit SHA: [0-9A-Za-z._/-] only, not starting with '-', '.' or '/'."
+          exit 1
+        fi
+
+        # ------------------------------------------------------------------
         # The git credential for everything this step clones.
         #
         # This used to be a token embedded in every clone URL plus, in each
@@ -344,16 +464,25 @@ runs:
             probe_rc=0
             "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
               "${LAYER_ARGS[@]}" --sha "${c}" --no-walk >/dev/null || probe_rc=$?
-            if [ "${probe_rc}" -eq 0 ]; then
+            # Exit 4 — "a lock exists for this commit, but no manifest layer
+            # names the probed sibling" — is an answer ABOUT THE SIBLING, not
+            # about the lock. The lock was found, so this commit IS the locked
+            # commit, and it is the right commit for every other sibling in the
+            # list. Treating it as "the lock cannot be used" made the whole
+            # step's success depend on whether the first lock-resolved entry
+            # happened to be a member of the workspace project, and reported a
+            # membership gap as a corrupt artifact. The per-sibling pass below
+            # reports it by name instead.
+            if [ "${probe_rc}" -eq 0 ] || [ "${probe_rc}" -eq 4 ]; then
               LOCK_SHA="${c}"; break
             fi
             # Exit 3 is the resolver's only "this commit is not locked"
             # answer, and the only one worth trying the next candidate for.
-            # Any other code means a lock EXISTS but cannot be trusted —
-            # malformed, missing the probed sibling, or two locks for the
-            # same commit disagreeing. Falling through to the next candidate
-            # would bury that behind the generic "no lock" error below and
-            # could pin siblings from a DIFFERENT commit, so stop here.
+            # What is left (5 malformed, 6 self-contradictory) means a lock
+            # EXISTS but cannot be trusted. Falling through to the next
+            # candidate would bury that behind the generic "no lock" error
+            # below and could pin siblings from a DIFFERENT commit, so stop
+            # here.
             if [ "${probe_rc}" -ne 3 ]; then
               echo "::error::Workspace lock for ${SELF}@${c} exists but cannot be used (resolve-sibling-rev exit ${probe_rc}); see its diagnostic above."
               exit 1
@@ -370,15 +499,60 @@ runs:
           echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
         fi
 
+        # ------------------------------------------------------------------
+        # PASS 1 — resolve every revision. Nothing is cloned yet.
+        #
+        # Resolution used to be interleaved with cloning under `set -e`, so the
+        # first sibling the lock could not answer for aborted the step with
+        # some of the others already on disk. Two things were wrong with that.
+        # A caller bringing N repos onto the lock at once learned about them one
+        # CI run at a time; and the workspace parent was left half-populated,
+        # which the next step then builds against.
+        #
+        # Resolver exit 4 gets its own bucket. It means "a lock exists and no
+        # manifest layer pins this sibling", which is a statement about the
+        # WORKSPACE MEMBERSHIP of that repo — its project does not declare it —
+        # and not about the health of the lock. The others (5 malformed, 6
+        # self-contradictory) are lock defects and still stop everything at
+        # once.
+        declare -a REVS=() SRCS=()
+        MISSING=""
+        for i in "${!NAMES[@]}"; do
+          name="${NAMES[$i]}"; ref="${REFS[$i]}"
+          if [ -n "${ref}" ]; then
+            REVS+=("${ref}"); SRCS+=("override")
+            continue
+          fi
+          rrc=0
+          rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
+            "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk)" || rrc=$?
+          if [ "${rrc}" -eq 4 ]; then
+            MISSING="${MISSING} ${name}"
+            REVS+=(""); SRCS+=("missing")
+            continue
+          fi
+          if [ "${rrc}" -ne 0 ]; then
+            echo "::error::Workspace lock for ${SELF}@${LOCK_SHA} exists but cannot be used for sibling '${name}' (resolve-sibling-rev exit ${rrc}); see its diagnostic above."
+            exit 1
+          fi
+          REVS+=("${rev}"); SRCS+=("lock")
+        done
+
+        if [ -n "${MISSING}" ]; then
+          FIX_IN="${MANIFESTS_REPO}"
+          if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+            FIX_IN="${FIX_IN} (or ${PRIVATE_MANIFESTS_REPO}, for repos that belong in the private layer)"
+          fi
+          echo "::error::The workspace lock for ${SELF}@${LOCK_SHA} pins no revision for these sibling(s):${MISSING}. The lock is intact — it answered for the others — so this is not a corrupt or stale lock. A lock can only pin what its project declares, and these repos are not members of the workspace project that lock describes, so it has nothing to say about them. Declare them in ${SELF}'s project manifest in ${FIX_IN} and the next lock will pin them; until then a single run can name a revision explicitly with a '<name>=<40-hex sha>' entry in 'siblings'. Cloning a branch tip instead is precisely the unpinned, unreproducible fallback this action refuses to have."
+          exit 1
+        fi
+
+        # ------------------------------------------------------------------
+        # PASS 2 — clone, now that every revision is known and legal.
         SIBLING_PATHS=""
         for i in "${!NAMES[@]}"; do
-          name="${NAMES[$i]}"; ref="${REFS[$i]}"; owner="${OWNERS[$i]}"
-          if [ -n "${ref}" ]; then
-            rev="${ref}"; src="override"
-          else
-            rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
-              "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk)"; src="lock"
-          fi
+          name="${NAMES[$i]}"; owner="${OWNERS[$i]}"
+          rev="${REVS[$i]}"; src="${SRCS[$i]}"
           WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
           dest="${WORKSPACE_NORM}/../${name}"
           echo "  ${owner}/${name} -> ${rev} (${src})"
