@@ -107,5 +107,17 @@ jobs:
       - name: authenticated-clone contract suite
         run: bash git-auth/authenticated-clone-test.sh
 
+      # The Windows MAX_PATH half of the same script. Separate suite because it
+      # needs a different observation apparatus (a `git` shim plus trace2
+      # `def_param` events) and a different fixture shape (two levels of
+      # submodule nesting, no server), and because it must be readable on its
+      # own by whoever next wonders why `core.longpaths` is set from a clone
+      # script. It runs on this stock Linux runner deliberately: the mechanism
+      # under test is environment propagation into submodule git processes,
+      # which is identical on every platform, and a Windows-only suite would be
+      # a suite this repo's CI cannot run.
+      - name: long-path contract suite
+        run: bash git-auth/longpaths-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh
+        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh

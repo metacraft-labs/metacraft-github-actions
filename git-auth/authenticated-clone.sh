@@ -152,6 +152,77 @@ run_git() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# Windows MAX_PATH: git's own long-path opt-in, before the first git runs.
+# ---------------------------------------------------------------------------
+#
+# Git for Windows refuses any path over 260 characters with
+#
+#     error: unable to create file <path>: Filename too long
+#
+# unless `core.longpaths` is true, at which point it addresses the file through
+# the `\\?\` form and the limit becomes ~32767. This org's Windows jobs start at
+# `C:\actions-runner\_work\<repo>\`, `clone-siblings` puts each sibling next to
+# that, and `codetracer` -- a sibling of nearly everything -- nests submodules
+# that themselves recurse. The `submodule update` at the bottom of this file is
+# where that ran out, reported through this script's own `run_git` diagnostic:
+#
+#     ::error::submodule update failed for metacraft-labs/codetracer (git exit 1).
+#     --- git output ---
+#     error: unable to create file ...: Filename too long
+#
+# THE REGISTRY POLICY IS NOT A SUBSTITUTE, and this is the part that gets
+# assumed. `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled`
+# lifts MAX_PATH for binaries that declare themselves long-path aware in their
+# manifest -- which is what the compilers, cargo, tup and the .NET runner that
+# later READ the tree need -- but git gates its `\\?\` expansion on this config
+# key and errors out whatever the OS policy says. The two halves cover different
+# processes; the OS half is provisioned in the `infra` repo
+# (machines/server/_win-ci-*/system_windows_runner.nim, gated by
+# checks/t_windows_long_paths.sh), and this is the git half.
+#
+# WHY PROCESS-SCOPED CONFIGURATION RATHER THAN `git -C "$DEST" config`. A
+# submodule is its own repository with its own config file, so a setting on the
+# superproject is not read by the git processes that check the submodules out --
+# and the submodules are where the deep paths are. `GIT_CONFIG_COUNT` /
+# `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` is inherited by every child git at
+# every depth: git's `prepare_submodule_repo_env` scrubs the local-repo
+# variables but deliberately KEEPS these two, which is the same mechanism that
+# makes the well-known `git -c protocol.file.allow=always submodule update`
+# workaround reach submodules. ./longpaths-test.sh observes that rather than
+# assuming it, with `GIT_TRACE2_CONFIG_PARAMS`.
+#
+# It is set unconditionally rather than under a Windows test. On Linux and macOS
+# `core.longpaths` is an unrecognised `core.*` key that git ignores in silence,
+# so there is one code path and it is the one the suite exercises -- as opposed
+# to a Windows-only branch that no suite in this repo can reach.
+#
+# APPENDING, for the same reason `scoped_git_auth_export` appends: a caller may
+# already have numbered configuration in the environment (`setup-nix` puts the
+# job's credential there), and renumbering from zero would silently drop it.
+# Appending is also what makes this authoritative rather than merely present --
+# git applies the pairs in order and the last value of a single-valued key wins,
+# so an inherited `core.longpaths=false` cannot defeat it.
+git_longpaths_export() {
+	local n="${GIT_CONFIG_COUNT:-0}" j kn vn last=""
+	for ((j = 0; j < n; j++)); do
+		kn="GIT_CONFIG_KEY_${j}"
+		vn="GIT_CONFIG_VALUE_${j}"
+		if [ "${!kn-}" = "core.longpaths" ]; then
+			last="${!vn-}"
+		fi
+	done
+	# Already in force: adding a second identical pair would be a no-op that
+	# grows the environment on every nested invocation.
+	[ "$last" = "true" ] && return 0
+	printf -v "GIT_CONFIG_KEY_${n}" '%s' "core.longpaths"
+	printf -v "GIT_CONFIG_VALUE_${n}" '%s' "true"
+	export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
+	export GIT_CONFIG_COUNT="$((n + 1))"
+}
+
+git_longpaths_export
+
 rm -rf "$DEST"
 
 if [ "$SHALLOW" = 1 ]; then
