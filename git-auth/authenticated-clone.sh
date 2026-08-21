@@ -181,6 +181,23 @@ run_git() {
 # (machines/server/_win-ci-*/system_windows_runner.nim, gated by
 # checks/t_windows_long_paths.sh), and this is the git half.
 #
+# DO NOT DELETE THIS AS "NOW REDUNDANT" once you see the same setting in a
+# runner profile. Those profiles converge onto the PERSISTENT Windows boxes
+# (win-ci-vm-001, win-ci-bare-001) only. Every job that hit this defect runs on
+# `eph-win-x64`, whose runners are copy-on-write clones of a PRE-BAKED golden
+# image that no converge loop reaches, and the respin that would put either half
+# into that image is deliberately deferred until a non-git tool is actually
+# observed failing on MAX_PATH (recorded in the infra repo's
+# docs/runbooks/Ephemeral-Runner-Fleet.runbook.md, §12). So on the class where
+# the failure was reported, THIS is the only half in force -- and it stays the
+# only one that needs no image at all, which is what makes it the half that
+# still works on a runner booted from a stale image.
+#
+# The one surface it does NOT reach is the consumer's own `actions/checkout`
+# step: that git is not a child of this process. `codetracer` covers that with
+# `ci/ensure-git-for-checkout.ps1`, which runs before checkout on every
+# eph-win-x64 job.
+#
 # WHY PROCESS-SCOPED CONFIGURATION RATHER THAN `git -C "$DEST" config`. A
 # submodule is its own repository with its own config file, so a setting on the
 # superproject is not read by the git processes that check the submodules out --
