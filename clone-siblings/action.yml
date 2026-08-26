@@ -19,6 +19,40 @@
 # isonim, isonim-tui, isonim-gpui, nim-pty and nim-termctl belong to the
 # `isonim` project). This action now says exactly that when asked to resolve
 # them; see the PASS 1 error below.
+#
+# WHICH COMMIT'S LOCK, AND WHY MAINLINE DOES NOT LOCK ITSELF
+#
+# The step below probes the pushed commit (falling back to its parent for
+# GitHub merge commits) or the pull request's base — both MAINLINE commits —
+# and `--no-walk` requires the probed commit ITSELF to carry a lock.
+#
+# That is not a property mainline has on its own. The pre-push gate locks
+# commits leaving a WORKSPACE; a PR-based repo's mainline commits are created
+# server-side by GitHub when a pull request lands, where no hook runs. On
+# `codetracer@dev` and `infra@live` not one first-parent commit in the last
+# thirty carried a lock, and every job that reached that line died there.
+#
+# `publish-workspace-lock` (this repo) is what makes the premise true for a
+# merged pull request whose HEAD was locked: it re-anchors that record onto the
+# mainline commit. The alternative — relaxing `--no-walk` into an ancestry walk
+# — was rejected twice over: it cannot rescue `infra`, which has no locked
+# ancestor within reach, and it would answer a merge commit with pins that
+# PREDATE the merge, which is exactly wrong for a pull request whose content is
+# a sibling bump.
+#
+# It does NOT make the premise true for a pull request whose head was never
+# locked, and that is still the majority: over the last 24 merged pull
+# requests, 4 of codetracer's heads and 3 of infra's carried a record. That is
+# a hook-COVERAGE gap upstream of both this action and that one — a branch
+# pushed from a checkout without the managed hooks never reaches the pre-push
+# gate — and it is reported by name there rather than papered over here.
+#
+# This prose lives HERE, and not in the `run:` body where it was first written,
+# because a composite action's `run:` body is a template string GitHub refuses
+# to parse past a length limit, and 1,419 characters of exactly this comment
+# took the whole org's CI down on 2026-08-26. `.github/assert-composite-run-
+# size.sh` is the guard that now measures it. A YAML comment out here costs the
+# template nothing.
 name: Clone cross-repo siblings
 description: >
   Clone the cross-repo sibling repositories a repo's CI needs, each at the
@@ -446,34 +480,8 @@ runs:
             fi
             LAYER_ARGS+=(--manifest-dir "${PRIV_MAN}")
           fi
-          # Which commit's lock to use: the pushed commit (falling back to its
-          # parent for GitHub merge commits), or the PR base. Both are MAINLINE
-          # commits, and `--no-walk` requires the probed commit itself to be
-          # locked.
-          #
-          # That is not a property mainline has on its own. The pre-push gate
-          # locks commits leaving a WORKSPACE; a PR-based repo's mainline
-          # commits are created server-side by GitHub when a pull request
-          # lands, where no hook runs. On `codetracer@dev` and `infra@live` not
-          # one first-parent commit in the last thirty carried a lock, and
-          # every job that reached this line died here.
-          #
-          # `publish-workspace-lock` (this repo) is what makes the premise
-          # true for a merged pull request whose HEAD was locked: it re-anchors
-          # that record onto the mainline commit. The alternative — relaxing
-          # `--no-walk` into an ancestry walk — was rejected twice over: it
-          # cannot rescue `infra`, which has no locked ancestor within reach,
-          # and it would answer a merge commit with pins that PREDATE the
-          # merge, which is exactly wrong for a pull request whose content is a
-          # sibling bump.
-          #
-          # It does NOT make the premise true for a pull request whose head was
-          # never locked, and that is still the majority: over the last 24
-          # merged pull requests, 4 of codetracer's heads and 3 of infra's
-          # carried a record. That is a hook-COVERAGE gap upstream of both this
-          # action and that one — a branch pushed from a checkout without the
-          # managed hooks never reaches the pre-push gate — and it is reported
-          # by name there rather than papered over here.
+          # Which commit's lock to use; `--no-walk` needs that commit itself
+          # locked. See "WHICH COMMIT'S LOCK" at the top of this file.
           case "${{ github.event_name }}" in
             pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
             push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;

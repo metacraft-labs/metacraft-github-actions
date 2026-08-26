@@ -155,3 +155,34 @@ jobs:
 
       - name: shellcheck
         run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh
+
+  action-template-limits:
+    # Every suite above EXTRACTS a composite action's `run:` body and executes
+    # it, which works no matter how long that body is. GitHub's template parser
+    # has the one opinion none of them can hold: past a length limit it refuses
+    # the action outright, with
+    #
+    #   Exceeded max expression length 21000
+    #
+    # That is not a failing step in a consumer's job — the job never starts, and
+    # the diagnostic names a file in THIS repo from inside somebody else's run.
+    # Because every consumer pins `@main`, it takes the mainline CI of every
+    # repo in the org down at once, which is what happened on 2026-08-26 when
+    # `clone-siblings` grew 1,419 characters of comment.
+    #
+    # Same stock runner as the suites above: this one reads YAML with bash and
+    # counts characters. It needs no Nix, no secrets and no network.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: no credential persisted into the checkout
+        run: bash .github/assert-no-persisted-credential.sh
+
+      - name: "composite run: bodies stay inside the template limit"
+        run: bash .github/assert-composite-run-size.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning .github/assert-composite-run-size.sh
