@@ -448,6 +448,12 @@ SOURCE_SHA="$STRAY_SHA" run_step
 check "no source: a source commit with no published lock fails the step" "$RC" "1"
 contains "no source: ...and says it will not invent one" "$OUT" "will not invent one"
 contains "no source: ...with the remedy that actually produces the record" "$OUT" "push it once from a workspace"
+# The dominant cause is not a fork and not --no-verify: it is a checkout with no
+# managed hooks at all. Over the last 24 merged pull requests only 4 of
+# codetracer's heads and 3 of infra's were locked, so a remedy that names only
+# the exotic cases sends most readers looking in the wrong place.
+contains "no source: ...naming the hook-coverage cause, not only the exotic ones" "$OUT" "repro hooks ensure --vcs"
+contains "no source: ...and the dispatch that re-runs it afterwards" "$OUT" "workflow_dispatch, with source-sha="
 check "no source: ...and nothing is pushed" "$(remote_tip)" "$BEFORE_TIP"
 unset SOURCE_SHA
 

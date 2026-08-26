@@ -11,7 +11,16 @@
 # a pull request is merged, squashed or rebased. No hook runs there. On
 # `metacraft-labs/codetracer@dev` and `metacraft-labs/infra@live` that is EVERY
 # mainline commit — measured over the last 30 first-parent commits of each, zero
-# carry a lock — while the PR heads that produced them all do.
+# carry a lock.
+#
+# A SECOND, SEPARATE GAP, which this action does not close and must not hide.
+# Only a MINORITY of pull request heads carry a lock either: over the last 24
+# merged pull requests, 4 of codetracer's and 3 of infra's heads were locked.
+# That is a gap in hook COVERAGE — a branch pushed from a workspace without the
+# managed hooks installed, or with `--no-verify`, never reaches the pre-push
+# gate — and no amount of server-side re-anchoring can invent the record it did
+# not produce. This action fails loudly and names the remedy when the source
+# lock is missing, which is how that condition stops being invisible.
 #
 # `clone-siblings` probes exactly those mainline commits (`pull_request` ->
 # `base.sha`, `push` -> `github.sha` then `github.event.before`) with
@@ -449,7 +458,7 @@ runs:
           if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
             LAYERS_DESC="${LAYERS_DESC} or ${PRIVATE_MANIFESTS_REPO}@${PRIVATE_MANIFESTS_REF}"
           fi
-          die "No workspace lock is published for ${SELF_NAME}@${SOURCE_SHA} in ${LAYERS_DESC}, so there is nothing to re-anchor onto ${TARGET_SHA} and this action will not invent one. The source commit is a pull request HEAD: it is locked by the pre-push gate when the branch is pushed from a workspace. A branch pushed with --no-verify, or from a fork, has no such record — push it once from a workspace ('repro ws lock' then push) and re-run this workflow."
+          die "No workspace lock is published for ${SELF_NAME}@${SOURCE_SHA} in ${LAYERS_DESC}, so there is nothing to re-anchor onto ${TARGET_SHA} and this action will not invent one. ${TARGET_SHA} therefore has no reproducible sibling snapshot, and cross-repo CI cannot resolve against it. The source commit is a pull request HEAD, and a pull request HEAD is locked by the PRE-PUSH GATE when its branch is pushed. It is missing when that gate did not run: the author's checkout has no managed hooks ('repro hooks ensure --vcs <repo>'), the push used --no-verify, or the branch came from a fork. Remedy: from a workspace holding ${SOURCE_SHA}, run 'repro ws lock' and push it once from a workspace, then re-run this workflow (workflow_dispatch, with source-sha=${SOURCE_SHA} and target-sha=${TARGET_SHA})."
         fi
 
         echo "publish-workspace-lock: ${PUBLISHED_TOTAL} record(s) published for ${SELF_NAME}@${TARGET_SHA}."

@@ -459,12 +459,21 @@ runs:
           # every job that reached this line died here.
           #
           # `publish-workspace-lock` (this repo) is what makes the premise
-          # true: on merge it re-anchors the PR head's published lock onto the
-          # mainline commit. The alternative — relaxing `--no-walk` into an
-          # ancestry walk — was rejected twice over: it cannot rescue `infra`,
-          # which has no locked ancestor within reach, and it would answer a
-          # merge commit with pins that PREDATE the merge, which is exactly
-          # wrong for a pull request whose content is a sibling bump.
+          # true for a merged pull request whose HEAD was locked: it re-anchors
+          # that record onto the mainline commit. The alternative — relaxing
+          # `--no-walk` into an ancestry walk — was rejected twice over: it
+          # cannot rescue `infra`, which has no locked ancestor within reach,
+          # and it would answer a merge commit with pins that PREDATE the
+          # merge, which is exactly wrong for a pull request whose content is a
+          # sibling bump.
+          #
+          # It does NOT make the premise true for a pull request whose head was
+          # never locked, and that is still the majority: over the last 24
+          # merged pull requests, 4 of codetracer's heads and 3 of infra's
+          # carried a record. That is a hook-COVERAGE gap upstream of both this
+          # action and that one — a branch pushed from a checkout without the
+          # managed hooks never reaches the pre-push gate — and it is reported
+          # by name there rather than papered over here.
           case "${{ github.event_name }}" in
             pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
             push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;
