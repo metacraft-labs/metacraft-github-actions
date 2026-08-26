@@ -1,0 +1,455 @@
+# THE PUBLISHER OF LAST RESORT, AND ONLY FOR COMMITS NOBODY ELSE CAN PUBLISH.
+#
+# The workspace lock for a commit is published by the LOCAL pre-push gate. That
+# is the reproducibility boundary and it stays the boundary: this action does
+# not create a lock, does not resolve siblings, does not consult a branch tip,
+# and cannot invent a pin. It re-files a lock the pre-push gate ALREADY
+# published, onto the mainline commit that landed that same content.
+#
+# It exists because there is exactly one class of commit the pre-push gate
+# structurally cannot reach: the mainline commit GitHub creates server-side when
+# a pull request is merged, squashed or rebased. No hook runs there. On
+# `metacraft-labs/codetracer@dev` and `metacraft-labs/infra@live` that is EVERY
+# mainline commit — measured over the last 30 first-parent commits of each, zero
+# carry a lock — while the PR heads that produced them all do.
+#
+# `clone-siblings` probes exactly those mainline commits (`pull_request` ->
+# `base.sha`, `push` -> `github.sha` then `github.event.before`) with
+# `--no-walk`, and its own comment states the premise it relies on: "all
+# mainline commits the pre-push hook locks". This action makes that premise
+# true. It is deliberately NOT a relaxation of `--no-walk` into an ancestry
+# walk, which would (a) not rescue `infra` at all, whose nearest locked
+# first-parent ancestor is outside 30 commits, and (b) answer a merge commit
+# with pins that PREDATE the merge — precisely wrong for a PR whose whole
+# content is a sibling bump.
+name: Publish the workspace lock for a merged mainline commit
+description: >
+  Re-anchor the workspace lock record published for a pull request's HEAD
+  commit onto the mainline commit that landed it, and publish that record to
+  the manifests repo.
+
+  The recorded sibling set is the PR head's, verbatim: every `[[repo]]` pin is
+  copied byte-for-byte and precisely one field changes — the record's own
+  coordinate, the entry naming the repo itself, whose revision moves from the
+  PR head SHA to the mainline SHA. That rewrite is mandatory rather than
+  cosmetic: a lock record is bound to its filename (reprobuild's publisher
+  accepts a staged record only when its body anchors the repo at the SHA in the
+  path), so a byte copy under a new name would be a record contradicting its
+  own key.
+
+  Publication is ADDITIONS-ONLY and a published record is IMMUTABLE. A
+  destination that already exists with identical bytes is an idempotent
+  success; one that exists with different bytes is a hard failure and is never
+  rewritten. Two merges landing seconds apart both end up published: a lost
+  push race is detected by shape, the layer checkout is fast-forwarded onto the
+  new tip and the work is re-applied, because lock records are commit-addressed
+  and therefore disjoint additions.
+
+  Nothing is published until the target commit has been PROVEN to be an
+  ancestor of the base branch, from the repo's real history. That is what
+  stands between this action and a payload's `merge_commit_sha` naming a test
+  merge that never landed.
+
+inputs:
+  gh-token:
+    description: >
+      GitHub token with WRITE access to the manifests repo and read access to
+      the repo whose lock is being published. This is the one input that makes
+      this action different from every other action here: it needs a
+      credential that can push.
+    required: true
+  repo:
+    description: >
+      owner/name of the repo whose mainline commit is being locked. Defaults to
+      the calling repository.
+    required: false
+    default: ""
+  source-sha:
+    description: >
+      The commit whose published lock supplies the sibling set — the pull
+      request's HEAD commit, which the pre-push gate locked.
+    required: true
+  target-sha:
+    description: >
+      The mainline commit to publish the lock for — the commit GitHub created
+      when the pull request merged (`merge_commit_sha`, whatever the merge
+      strategy).
+    required: true
+  base-ref:
+    description: >
+      The mainline branch the pull request merged into (`dev`, `live`, `main`).
+      `target-sha` must be an ancestor of it, and is checked against the real
+      remote history before anything is published.
+    required: true
+  provenance:
+    description: >
+      Free text naming what produced the mainline commit (e.g. "pull request
+      #652"). It goes into the publishing commit message and NOWHERE ELSE — the
+      record schema is read in strict mode, so a provenance key inside the
+      record would make the record unreadable by the tool that owns it.
+    required: false
+    default: ""
+  manifests-repo:
+    description: owner/name of the PUBLIC (base) manifest repo holding the locks.
+    required: false
+    default: "metacraft-labs/metacraft-manifests"
+  manifests-ref:
+    description: Branch of the manifests repo to publish onto.
+    required: false
+    default: "latest"
+  private-manifests-repo:
+    description: >
+      owner/name of an optional access-controlled manifest layer. When set, it
+      is searched and published to on the same terms as the public layer: a
+      repo whose lock lives in the private layer gets its re-anchored record
+      there, never demoted into the public one.
+    required: false
+    default: ""
+  private-manifests-ref:
+    description: Branch of the private manifests repo. Defaults to `manifests-ref`.
+    required: false
+    default: ""
+  token-owner:
+    description: >
+      Whitespace-separated GitHub owner(s) the token is scoped to. Used to
+      derive the process-scoped credential, exactly as `clone-siblings` does,
+      so the token never reaches a URL or a `.git/config`.
+    required: false
+    default: "metacraft-labs"
+  committer-name:
+    description: Name recorded on the publishing commit.
+    required: false
+    default: "metacraft-ci"
+  committer-email:
+    description: Email recorded on the publishing commit.
+    required: false
+    default: "ci@metacraft-labs.com"
+
+runs:
+  using: composite
+  steps:
+    - name: Publish the workspace lock for the merged mainline commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        INPUT_REPO: ${{ inputs.repo }}
+        DEFAULT_REPO: ${{ github.repository }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
+        TARGET_SHA: ${{ inputs.target-sha }}
+        BASE_REF: ${{ inputs.base-ref }}
+        PROVENANCE: ${{ inputs.provenance }}
+        MANIFESTS_REPO: ${{ inputs.manifests-repo }}
+        INPUT_MANIFESTS_REF: ${{ inputs.manifests-ref }}
+        PRIVATE_MANIFESTS_REPO: ${{ inputs.private-manifests-repo }}
+        INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
+        JOB_TOKEN_OWNERS: ${{ inputs.token-owner }}
+        COMMITTER_NAME: ${{ inputs.committer-name }}
+        COMMITTER_EMAIL: ${{ inputs.committer-email }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
+        ANCHOR: ${{ github.action_path }}/anchor-workspace-lock.sh
+      run: |
+        set -euo pipefail
+        MANIFESTS_REF="${INPUT_MANIFESTS_REF:-latest}"
+        PRIVATE_MANIFESTS_REF="${INPUT_PRIVATE_MANIFESTS_REF:-${MANIFESTS_REF}}"
+        SELF_SLUG="${INPUT_REPO:-${DEFAULT_REPO}}"
+
+        # -----------------------------------------------------------------
+        # Shape validation, before anything is cloned or fetched.
+        #
+        # Every value below is substituted into a git command line. `git fetch
+        # <remote> <rev>` parses options after the remote, so a `--upload-pack=`
+        # in a ref runs a command on the runner; and a SHA that is not a SHA
+        # would be published as a lock FILENAME, which is the one thing in this
+        # system that must be a commit and nothing else. The resolver refuses
+        # such values on the read side (`check_rev_shape`); refusing them here
+        # is the same rule on the write side.
+        # -----------------------------------------------------------------
+        die() { echo "::error::$*"; exit 1; }
+
+        check_sha() { # <label> <value>
+          case "$2" in
+            *[!0-9a-f]*|"") die "${1} must be a 40-character lowercase hex commit SHA; got '${2}'." ;;
+          esac
+          [ "${#2}" -eq 40 ] || die "${1} must be a 40-character lowercase hex commit SHA; got '${2}'."
+        }
+        check_sha "source-sha" "${SOURCE_SHA}"
+        check_sha "target-sha" "${TARGET_SHA}"
+        if [ "${SOURCE_SHA}" = "${TARGET_SHA}" ]; then
+          die "source-sha and target-sha name the same commit (${TARGET_SHA}). A mainline commit that IS the locked commit needs no re-anchoring, and publishing one onto itself would be a no-op dressed as a fix."
+        fi
+
+        case "${BASE_REF}" in
+          ""|-*|.*|/*) die "base-ref must be a branch name, not starting with '-', '.' or '/'; got '${BASE_REF}'." ;;
+          *[!0-9A-Za-z._/-]*) die "base-ref must contain only [0-9A-Za-z._/-]; got '${BASE_REF}'." ;;
+        esac
+
+        check_slug() { # <label> <owner/name>
+          case "$2" in
+            */*/*|*/|/*|"") die "${1} must be 'owner/name'; got '${2}'." ;;
+            */*) : ;;
+            *) die "${1} must be 'owner/name'; got '${2}'." ;;
+          esac
+          case "$2" in
+            *[!0-9A-Za-z._/-]*) die "${1} must contain only [0-9A-Za-z._/-]; got '${2}'." ;;
+          esac
+        }
+        check_slug "repo" "${SELF_SLUG}"
+        check_slug "manifests-repo" "${MANIFESTS_REPO}"
+        [ -z "${PRIVATE_MANIFESTS_REPO}" ] || check_slug "private-manifests-repo" "${PRIVATE_MANIFESTS_REPO}"
+
+        SELF_OWNER="${SELF_SLUG%%/*}"
+        SELF_NAME="${SELF_SLUG#*/}"
+
+        [ -n "${GH_TOKEN}" ] || die "gh-token is empty. This action must PUSH the re-anchored lock record to ${MANIFESTS_REPO}; there is no unauthenticated path to that, and failing here is better than failing halfway through a publish."
+        [ -x "${ANCHOR}" ] || [ -f "${ANCHOR}" ] || die "anchor-workspace-lock.sh not found at ${ANCHOR}."
+
+        # -----------------------------------------------------------------
+        # The credential. Same mechanism as clone-siblings: an owner-scoped
+        # `http.<url>.extraHeader` in PROCESS-scoped git configuration, so the
+        # token never reaches an argv, a URL, or any `.git/config` that
+        # outlives this step. The scope covers the repo being locked (read, for
+        # the ancestry proof) and every manifest layer (write).
+        # -----------------------------------------------------------------
+        # shellcheck source=../git-auth/scoped-git-auth.sh
+        . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
+        # Deduplicated: the repo being locked and the manifest layers usually
+        # share an owner, and a scope reported twice reads as a bug in the
+        # scoping.
+        OWNERS=()
+        add_owner() {
+          local o
+          for o in ${OWNERS[@]+"${OWNERS[@]}"}; do [ "${o}" = "$1" ] && return 0; done
+          OWNERS+=("$1")
+        }
+        add_owner "${SELF_OWNER}"
+        add_owner "${MANIFESTS_REPO%%/*}"
+        [ -z "${PRIVATE_MANIFESTS_REPO}" ] || add_owner "${PRIVATE_MANIFESTS_REPO%%/*}"
+        export TOKEN_OWNERS="${OWNERS[*]}"
+        export SCOPED_GIT_AUTH_REWRITES=1
+        export SCOPED_GIT_AUTH_MASK=1
+        scoped_git_auth_build
+        scoped_git_auth_export
+        scoped_git_auth_report
+        if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ]; then
+          TOKEN_OWNERS="${JOB_TOKEN_OWNERS}" \
+            scoped_git_auth_require_covered "publish-workspace-lock" "${OWNERS[@]}" || exit 1
+        fi
+
+        WORK="${RUNNER_TEMP}/publish-workspace-lock"
+        rm -rf "${WORK}"
+        mkdir -p "${WORK}"
+
+        # -----------------------------------------------------------------
+        # PROOF THAT THE TARGET LANDED.
+        #
+        # `merge_commit_sha` is the merge commit only once the pull request is
+        # actually merged; on an open PR the same field names a THROWAWAY test
+        # merge. A record filed under such a SHA is unreachable garbage in an
+        # append-only, immutable store, and mainline stays unlocked — the exact
+        # symptom this action exists to remove, now with a record that looks
+        # like a fix. So the claim is not taken from the payload: the base
+        # branch is fetched from the repo itself (commits and trees only, no
+        # blobs) and the ancestry is proven locally.
+        # -----------------------------------------------------------------
+        SELF_GIT="${WORK}/self.git"
+        SELF_URL="https://github.com/${SELF_SLUG}.git"
+        echo "Fetching ${SELF_SLUG}@${BASE_REF} to prove ${TARGET_SHA} landed on it..."
+        # Commits and trees only: the proof is about ancestry, and no file
+        # content is read. A server that refuses a partial clone is not an error
+        # condition, it is an older server — retry whole rather than skip the
+        # proof, which is the one thing that must not become optional.
+        if ! git clone --quiet --bare --no-tags --filter=blob:none \
+               --single-branch --branch "${BASE_REF}" "${SELF_URL}" "${SELF_GIT}"; then
+          rm -rf "${SELF_GIT}"
+          git clone --quiet --bare --no-tags \
+            --single-branch --branch "${BASE_REF}" "${SELF_URL}" "${SELF_GIT}" \
+            || die "Cannot clone ${BASE_REF} from ${SELF_SLUG}. The ancestry of ${TARGET_SHA} cannot be proven, and nothing is published without that proof."
+        fi
+        if ! git -C "${SELF_GIT}" merge-base --is-ancestor "${TARGET_SHA}" "refs/heads/${BASE_REF}" 2>/dev/null; then
+          die "${TARGET_SHA} is not an ancestor of ${SELF_SLUG}@${BASE_REF}. It is not a commit that landed on the mainline, so a lock record filed under it would pin nothing and could never be reached. (An open pull request's merge_commit_sha names a throwaway test merge; this is what that looks like.)"
+        fi
+        echo "Proven: ${TARGET_SHA} is an ancestor of ${SELF_SLUG}@${BASE_REF}."
+
+        # -----------------------------------------------------------------
+        # Publish into one manifest layer.
+        #
+        # Layers are independent stores. A repo whose lock lives in the private
+        # layer gets its re-anchored record THERE; it is never demoted into the
+        # public layer, which would publish a private workspace's sibling set
+        # to everyone and would also be read at a different precedence.
+        # -----------------------------------------------------------------
+        PUBLISHED_TOTAL=0
+        FOUND_ANY=0
+
+        publish_layer() { # <label> <owner/name> <branch> <dir>
+          local label="$1" slug="$2" ref="$3" dir="$4"
+          local url="https://github.com/${slug}.git"
+          echo "Cloning ${label} manifest layer ${slug}@${ref}..."
+          # Full history of the one branch: the record is committed and pushed
+          # from this checkout, and the race recovery below re-applies onto a
+          # moved tip. A shallow clone cannot be pushed from reliably.
+          git clone --quiet --branch "${ref}" --single-branch "${url}" "${dir}" \
+            || die "Failed to clone the ${label} manifest layer ${slug} on branch ${ref}."
+
+          local attempt=0 budget=8
+          while :; do
+            local -a srcs=() dests=()
+            local f dest ext stem
+            # `locks/<project>/<repo>/<sha>.<ext>` and the historical flat
+            # `locks/<project>/<repo>-<sha>.<ext>`, both extensions — the same
+            # four shapes resolve-sibling-rev.sh searches, so a record this
+            # action cannot see is a record the resolver cannot read either.
+            for f in \
+                "${dir}"/locks/*/"${SELF_NAME}"/"${SOURCE_SHA}".toml \
+                "${dir}"/locks/*/"${SELF_NAME}"/"${SOURCE_SHA}".xml \
+                "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".toml \
+                "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".xml; do
+              [ -f "${f}" ] || continue
+              ext="${f##*.}"
+              stem="${f%.*}"
+              case "${stem}" in
+                */"${SELF_NAME}/${SOURCE_SHA}") dest="${stem%/*}/${TARGET_SHA}.${ext}" ;;
+                *"/${SELF_NAME}-${SOURCE_SHA}") dest="${stem%-*}-${TARGET_SHA}.${ext}" ;;
+                *) die "Cannot derive a destination path for ${f}; refusing to guess." ;;
+              esac
+              srcs+=("${f}")
+              dests+=("${dest}")
+            done
+
+            if [ "${#srcs[@]}" -eq 0 ]; then
+              echo "No lock record for ${SELF_NAME}@${SOURCE_SHA} in the ${label} layer."
+              return 0
+            fi
+            FOUND_ANY=1
+
+            # Re-anchor every record found, into a staging file first. Nothing
+            # touches the checkout until every transform has succeeded, so a
+            # record this tool refuses cannot leave a half-published commit.
+            local i=0 body rc anchored_any=0
+            local -a pending_src=() pending_dest=()
+            while [ "${i}" -lt "${#srcs[@]}" ]; do
+              f="${srcs[$i]}"
+              dest="${dests[$i]}"
+              i=$((i + 1))
+              body="${WORK}/anchored.$$.${i}"
+              rc=0
+              bash "${ANCHOR}" --repo "${SELF_NAME}" \
+                --source-sha "${SOURCE_SHA}" --target-sha "${TARGET_SHA}" \
+                --in "${f}" --out "${body}" || rc=$?
+              if [ "${rc}" -ne 0 ]; then
+                die "Cannot re-anchor ${f#${dir}/} onto ${TARGET_SHA} (anchor-workspace-lock exit ${rc}); see its diagnostic above."
+              fi
+              if [ -f "${dest}" ]; then
+                # Published records are IMMUTABLE. Identical bytes mean another
+                # run (or another publisher) already did this and we are done;
+                # different bytes mean two different answers for one commit,
+                # which is the one thing that must never be resolved by
+                # overwriting.
+                if cmp -s "${body}" "${dest}"; then
+                  echo "Already published: ${dest#${dir}/} (identical bytes)."
+                  continue
+                fi
+                die "A DIFFERENT lock record is already published at ${dest#${dir}/}. Published records are immutable and this one is not rewritten. Two sources disagree about the sibling set of ${SELF_NAME}@${TARGET_SHA}; resolve that before re-running."
+              fi
+              pending_src+=("${body}")
+              pending_dest+=("${dest}")
+              anchored_any=1
+            done
+
+            if [ "${anchored_any}" -eq 0 ]; then
+              echo "${label} layer: nothing to publish; every destination record already exists."
+              return 0
+            fi
+
+            i=0
+            local -a rels=()
+            while [ "${i}" -lt "${#pending_dest[@]}" ]; do
+              dest="${pending_dest[$i]}"
+              mkdir -p "${dest%/*}"
+              cp "${pending_src[$i]}" "${dest}"
+              rels+=("${dest#${dir}/}")
+              i=$((i + 1))
+            done
+
+            git -C "${dir}" add -f -- "${rels[@]}"
+
+            # ADDITIONS ONLY. Anything staged that is not a new file under
+            # `locks/` means this step is about to rewrite published history,
+            # and no diagnostic downstream would be as clear as stopping here.
+            local st path
+            while IFS=$'\t' read -r st path; do
+              [ -n "${st}" ] || continue
+              case "${st}${path}" in
+                "Alocks/"*) : ;;
+                *) die "Refusing to publish: the staged change is not an addition under locks/ (${st} ${path})." ;;
+              esac
+            done < <(git -C "${dir}" diff --cached --name-status --no-renames)
+
+            local msg="Publish ${#rels[@]} workspace lock entry"
+            [ "${#rels[@]}" -eq 1 ] || msg="Publish ${#rels[@]} workspace lock entries"
+            msg="${msg} for ${SELF_NAME}@${TARGET_SHA}"
+            local body_msg="Re-anchored from the lock published for ${SELF_NAME}@${SOURCE_SHA}."
+            [ -z "${PROVENANCE}" ] || body_msg="${body_msg}"$'\n'"Landed by ${PROVENANCE}."
+            git -C "${dir}" \
+              -c "user.name=${COMMITTER_NAME}" -c "user.email=${COMMITTER_EMAIL}" \
+              commit --quiet --no-gpg-sign -m "${msg}" -m "${body_msg}" -- "${rels[@]}"
+
+            local push_out push_rc=0
+            push_out="$(git -C "${dir}" push origin "HEAD:refs/heads/${ref}" 2>&1)" || push_rc=$?
+            if [ "${push_rc}" -eq 0 ]; then
+              # Positive verification. A push that "succeeded" without the blob
+              # arriving is indistinguishable from a fix that works, until the
+              # next CI run says otherwise.
+              git -C "${dir}" fetch --quiet --no-tags origin "refs/heads/${ref}"
+              local rel
+              for rel in "${rels[@]}"; do
+                git -C "${dir}" cat-file -e "FETCH_HEAD:${rel}" 2>/dev/null \
+                  || die "Pushed to ${slug}@${ref}, but ${rel} is not present at the remote tip afterwards."
+                echo "Published ${rel} to ${slug}@${ref}."
+              done
+              PUBLISHED_TOTAL=$((PUBLISHED_TOTAL + ${#rels[@]}))
+              return 0
+            fi
+
+            # A LOST RACE, recognised by shape. Any other failure (auth, DNS, a
+            # declining pre-receive hook) is reported as itself rather than
+            # retried into a timeout.
+            case "${push_out}" in
+              *"[rejected]"*|*"[remote rejected]"*) : ;;
+              *) die "Failed to push to ${slug}@${ref}: ${push_out}" ;;
+            esac
+            case "${push_out}" in
+              *"non-fast-forward"*|*"fetch first"*|*"behind"*|*"stale info"*|*"failed to update ref"*|*"cannot lock ref"*) : ;;
+              *) die "Push to ${slug}@${ref} was rejected for a reason that is not a lost race: ${push_out}" ;;
+            esac
+
+            attempt=$((attempt + 1))
+            if [ "${attempt}" -gt "${budget}" ]; then
+              die "Lost the publish race on ${slug}@${ref} ${budget} times in a row. Last rejection: ${push_out}"
+            fi
+            echo "Another publisher moved ${slug}@${ref}; re-applying (attempt ${attempt}/${budget})."
+            # Records are commit-addressed, so concurrent publishers write
+            # disjoint paths and the work simply replays onto the new tip. The
+            # loop restarts from the search deliberately: the other publisher
+            # may have added THIS record, in which case the immutability check
+            # above turns the race into an idempotent success.
+            git -C "${dir}" fetch --quiet --no-tags origin "refs/heads/${ref}"
+            git -C "${dir}" reset --quiet --hard FETCH_HEAD
+            git -C "${dir}" clean -qfd
+          done
+        }
+
+        publish_layer public "${MANIFESTS_REPO}" "${MANIFESTS_REF}" "${WORK}/public"
+        if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+          publish_layer private "${PRIVATE_MANIFESTS_REPO}" "${PRIVATE_MANIFESTS_REF}" "${WORK}/private"
+        fi
+
+        if [ "${FOUND_ANY}" -eq 0 ]; then
+          LAYERS_DESC="${MANIFESTS_REPO}@${MANIFESTS_REF}"
+          if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+            LAYERS_DESC="${LAYERS_DESC} or ${PRIVATE_MANIFESTS_REPO}@${PRIVATE_MANIFESTS_REF}"
+          fi
+          die "No workspace lock is published for ${SELF_NAME}@${SOURCE_SHA} in ${LAYERS_DESC}, so there is nothing to re-anchor onto ${TARGET_SHA} and this action will not invent one. The source commit is a pull request HEAD: it is locked by the pre-push gate when the branch is pushed from a workspace. A branch pushed with --no-verify, or from a fork, has no such record — push it once from a workspace ('repro ws lock' then push) and re-run this workflow."
+        fi
+
+        echo "publish-workspace-lock: ${PUBLISHED_TOTAL} record(s) published for ${SELF_NAME}@${TARGET_SHA}."

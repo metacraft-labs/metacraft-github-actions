@@ -447,8 +447,24 @@ runs:
             LAYER_ARGS+=(--manifest-dir "${PRIV_MAN}")
           fi
           # Which commit's lock to use: the pushed commit (falling back to its
-          # parent for GitHub merge commits), or the PR base — all mainline
-          # commits the pre-push hook locks.
+          # parent for GitHub merge commits), or the PR base. Both are MAINLINE
+          # commits, and `--no-walk` requires the probed commit itself to be
+          # locked.
+          #
+          # That is not a property mainline has on its own. The pre-push gate
+          # locks commits leaving a WORKSPACE; a PR-based repo's mainline
+          # commits are created server-side by GitHub when a pull request
+          # lands, where no hook runs. On `codetracer@dev` and `infra@live` not
+          # one first-parent commit in the last thirty carried a lock, and
+          # every job that reached this line died here.
+          #
+          # `publish-workspace-lock` (this repo) is what makes the premise
+          # true: on merge it re-anchors the PR head's published lock onto the
+          # mainline commit. The alternative — relaxing `--no-walk` into an
+          # ancestry walk — was rejected twice over: it cannot rescue `infra`,
+          # which has no locked ancestor within reach, and it would answer a
+          # merge commit with pins that PREDATE the merge, which is exactly
+          # wrong for a pull request whose content is a sibling bump.
           case "${{ github.event_name }}" in
             pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
             push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;

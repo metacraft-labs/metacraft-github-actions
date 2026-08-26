@@ -1,0 +1,936 @@
+schema = "reprobuild.workspace.lock.v1"
+
+[lock]
+project = "codetracer"
+created_at = "2026-08-24T21:44:02Z"
+created_by = "repro workspace lock"
+
+[[repo]]
+name = "metacraft-github-actions"
+path = "metacraft-github-actions"
+remote = "metacraft-labs"
+revision = "3658bade4a8063db35fc777e1673d4292d2a0a9a"
+branch = "main"
+
+[[repo]]
+name = "infra"
+path = "infra"
+remote = "metacraft-labs"
+revision = "9370ac38a40c9e681004d2fb18e2797ac5eea503"
+branch = "live"
+
+[[repo]]
+name = "nixos-modules"
+path = "nixos-modules"
+remote = "metacraft-labs"
+revision = "cbdf01b1dbe4c43f9cb036835a031e5289183074"
+branch = "js-support"
+
+[[repo]]
+name = "metacraft-dev-guidelines"
+path = "metacraft-dev-guidelines"
+remote = "metacraft-labs"
+revision = "898a16350fa55a5b27d1d9193b48d252ce996f21"
+branch = "js-support"
+
+[[repo]]
+name = "metacraft-specs"
+path = "metacraft-specs"
+remote = "metacraft-labs"
+revision = "0b37738950a257cadc7a262138e17977266caad2"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer"
+path = "codetracer"
+remote = "metacraft-labs"
+revision = "a820eb1df159d9cda2f28dae7d308a04dfe5aa3f"
+branch = "fix-review-diff-lent-capture-and-agent-api-contract"
+
+[[repo]]
+name = "codetracer-launcher"
+path = "codetracer-launcher"
+remote = "metacraft-labs"
+revision = "4034f0c917b61d6926536842456453fcd67f37f9"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-test-mirror"
+path = "codetracer-test-mirror"
+remote = "metacraft-labs"
+revision = "892f57711dabe43d39c00dea6e1cb681cc29f321"
+branch = "js-support"
+
+[[repo]]
+name = "nim-everywhere"
+path = "nim-everywhere"
+remote = "metacraft-labs"
+revision = "b2ce1c6b31743c4351aff4ad835f385f79b70edd"
+branch = "js-support"
+
+[[repo]]
+name = "nim-acp"
+path = "nim-acp"
+remote = "metacraft-labs"
+revision = "c7c430ad1fd64ef8c4c508c5ccdfa5a41eae69b4"
+branch = "js-support"
+
+[[repo]]
+name = "nim-agent-harbor"
+path = "nim-agent-harbor"
+remote = "metacraft-labs"
+revision = "4e7ffe03e25ea6249e1af61fefa4a199d8d5679c"
+branch = "js-support"
+
+[[repo]]
+name = "nim-agents"
+path = "nim-agents"
+remote = "metacraft-labs"
+revision = "a4bc08c21fa53ca9f5de324fbaa938373b916a54"
+branch = "js-support"
+
+[[repo]]
+name = "nim-stackable-hooks"
+path = "nim-stackable-hooks"
+remote = "metacraft-labs"
+revision = "7f4a2f34eeaacdfe6ba72b648306ad0bd36e9769"
+branch = "js-support"
+
+[[repo]]
+name = "io-mon"
+path = "io-mon"
+remote = "metacraft-labs"
+revision = "5514608dbd640b362735ea7fae05f1b0fd9f194b"
+branch = "js-support"
+
+[[repo]]
+name = "nim-shm-queue"
+path = "nim-shm-queue"
+remote = "metacraft-labs"
+revision = "5a8e43b52fa202859658692c9f8432967f3971ea"
+branch = "js-support"
+
+[[repo]]
+name = "nim-shm-gset"
+path = "nim-shm-gset"
+remote = "metacraft-labs"
+revision = "c646982b354cb5b1fa8734f94b951a660419d75c"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-python-recorder"
+path = "codetracer-python-recorder"
+remote = "metacraft-labs"
+revision = "baaa793378a7dcd41fd2a63af05be8ced62e90d5"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-ruby-recorder"
+path = "codetracer-ruby-recorder"
+remote = "metacraft-labs"
+revision = "11a84fbe85c07ad5db67ac142f67707bec03b50c"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-wasm-recorder"
+path = "codetracer-wasm-recorder"
+remote = "metacraft-labs"
+revision = "0f0d924d38b301a9e727da743c524acc8e1fbfde"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-wasm-instrumenter"
+path = "codetracer-wasm-instrumenter"
+remote = "metacraft-labs"
+revision = "e650b340b4ee9281c14edf306c9c30d354a66765"
+branch = "main"
+
+[[repo]]
+name = "codetracer-wasmi-recorder"
+path = "codetracer-wasmi-recorder"
+remote = "metacraft-labs"
+revision = "fa7babae5b55e4d9472e56a05d0f2dc8a4d0e401"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-native-recorder"
+path = "codetracer-native-recorder"
+remote = "metacraft-labs"
+revision = "397e18a662b5ddc03859f4a1c9df00e56c4522bd"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-js-recorder"
+path = "codetracer-js-recorder"
+remote = "metacraft-labs"
+revision = "7b9c3c8ac0bafd089eab02cf71d0c28672293d40"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-shell-recorders"
+path = "codetracer-shell-recorders"
+remote = "metacraft-labs"
+revision = "3db83e1bd4277d3f27782a0ad04fcf84ddd6e2cb"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-beam-recorder"
+path = "codetracer-beam-recorder"
+remote = "metacraft-labs"
+revision = "698e29699d94323efdb0f3f7d26ab1cd88a9ea3e"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-cairo-recorder"
+path = "codetracer-cairo-recorder"
+remote = "metacraft-labs"
+revision = "b3add74b28ba265095a008d0ea4ea40256c9eaa9"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-cardano-recorder"
+path = "codetracer-cardano-recorder"
+remote = "metacraft-labs"
+revision = "7e77958877a9111edca5f584f03263d9c363da5f"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-circom-recorder"
+path = "codetracer-circom-recorder"
+remote = "metacraft-labs"
+revision = "ceb509f7772a3434cf58b53761d9ffbe915dc8e3"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-evm-recorder"
+path = "codetracer-evm-recorder"
+remote = "metacraft-labs"
+revision = "965b0c644d16e9c6882ea37a40b366ba597aab2f"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-flow-recorder"
+path = "codetracer-flow-recorder"
+remote = "metacraft-labs"
+revision = "0ea6a36cf7c711c5af09a717359d6fc5ae435d3a"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-fuel-recorder"
+path = "codetracer-fuel-recorder"
+remote = "metacraft-labs"
+revision = "ed7739e277a5e14688f809fb40eb8bf6772c5758"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-leo-recorder"
+path = "codetracer-leo-recorder"
+remote = "metacraft-labs"
+revision = "bfc408f7fce22bd1299b6ca9c6654eaa24fef9c2"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-miden-recorder"
+path = "codetracer-miden-recorder"
+remote = "metacraft-labs"
+revision = "568aec84966e289018dd14672183408224c46069"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-move-recorder"
+path = "codetracer-move-recorder"
+remote = "metacraft-labs"
+revision = "7d225a496f9922aead10ddee111856ca2dffee78"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-polkavm-recorder"
+path = "codetracer-polkavm-recorder"
+remote = "metacraft-labs"
+revision = "1245578349741552c6f33f3cff64c159c107d98c"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-solana-recorder"
+path = "codetracer-solana-recorder"
+remote = "metacraft-labs"
+revision = "52c4b6a77e4729035cbadfcff67d06923e937192"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-ton-recorder"
+path = "codetracer-ton-recorder"
+remote = "metacraft-labs"
+revision = "13eb6c5eac997dd5e912c1f1dda64dff21eb3b69"
+branch = "js-support"
+
+[[repo]]
+name = "nim"
+path = "codetracer-nim"
+remote = "metacraft-github"
+revision = "893bdb9c0f789d841c4e779c4d3dabce989ca788"
+branch = "js-support"
+
+[[repo]]
+name = "langserver"
+path = "nim-langserver"
+remote = "metacraft-labs"
+revision = "f3bd8c7b79b99a6662db22125afb9a4f9204bb84"
+branch = "js-support"
+
+[[repo]]
+name = "nim-chronos"
+path = "nim-chronos"
+remote = "metacraft-labs"
+revision = "7cdfae4f2876ef1af9546813229c49820992c45c"
+branch = "js-support"
+
+[[repo]]
+name = "noir"
+path = "noir"
+remote = "metacraft-labs"
+revision = "6db58caad9aac1dd71252c07bb1a95bfc61d5523"
+branch = "js-support"
+
+[[repo]]
+name = "aiken"
+path = "metacraft-aiken-fork"
+remote = "metacraft-labs"
+revision = "7f392f70bcaec0fa91043030472264712804b0d7"
+branch = "js-support"
+
+[[repo]]
+name = "localstripe"
+path = "localstripe"
+remote = "metacraft-labs"
+revision = "980a42fa922439df64292ba34c998cc55ce0510b"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-native-test-programs"
+path = "codetracer-native-test-programs"
+remote = "metacraft-labs"
+revision = "81b2195b23d3e094357512cbb6a4846ace82c833"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-visual-replay"
+path = "codetracer-visual-replay"
+remote = "metacraft-labs"
+revision = "c53da14ec6f82838a70a4cbb24f897968b3811ab"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-visual-replay-fixtures"
+path = "codetracer-visual-replay-fixtures"
+remote = "metacraft-labs"
+revision = "1e7d94a533ddf771f3e4d52c9a2048906f85f1a4"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-native-backend"
+path = "codetracer-native-backend"
+remote = "metacraft-labs"
+revision = "b52249f579260d42714cbf711a80318ac537602a"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-rr"
+path = "codetracer-rr"
+remote = "metacraft-labs"
+revision = "e8630103b8b2be90fb743e42960e316644d9ef77"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-specs"
+path = "codetracer-specs"
+remote = "metacraft-labs"
+revision = "72e870595d6c118a02c7ed5f73976ca6a1c12c30"
+branch = "latest"
+
+[[repo]]
+name = "codetracer-design-system"
+path = "codetracer-design-system"
+remote = "metacraft-labs"
+revision = "148b2505c8b17566c469c8fd6b49720a05d51a8d"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-trace-format"
+path = "codetracer-trace-format"
+remote = "metacraft-labs"
+revision = "ec6986ecf3351d83650c3c6f9756f9a974d034e9"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-trace-format-nim"
+path = "codetracer-trace-format-nim"
+remote = "metacraft-labs"
+revision = "7b39936db10662ba293984eb58ca351913fcb77b"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-trace-format-spec"
+path = "codetracer-trace-format-spec"
+remote = "metacraft-labs"
+revision = "ff0a23ea11229b3e71024e467f6a45d115320bb6"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-snapshot-codecs"
+path = "codetracer-snapshot-codecs"
+remote = "metacraft-labs"
+revision = "d2e77d0d5337a1a3d6b417ece5386d0d166c0773"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-image-diff"
+path = "codetracer-image-diff"
+remote = "metacraft-labs"
+revision = "9aaf8a127c616a97e5dc422a2ca9125da7727643"
+branch = "js-support"
+
+[[repo]]
+name = "ctfs-poc"
+path = "ctfs-poc"
+remote = "metacraft-labs"
+revision = "f17f10866b93749265906dbff371695ada8cb600"
+branch = "js-support"
+
+[[repo]]
+name = "tracing-formats-benchmarks"
+path = "tracing-formats-benchmarks"
+remote = "metacraft-labs"
+revision = "211bdad888d1bde88176849d3c8f145f1163ee8d"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-vscode-extension"
+path = "codetracer-vscode-extension"
+remote = "metacraft-labs"
+revision = "17f6e0a7886afd7419857538c0dbd390c6f0800d"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-browser-extension"
+path = "codetracer-browser-extension"
+remote = "metacraft-labs"
+revision = "fffaf8dd5487a10495e82884c7337ba4e94ed063"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-agent-evals"
+path = "codetracer-agent-evals"
+remote = "metacraft-labs"
+revision = "638989d2a40fb092f839224e1650c7f5b0397d7a"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-example-recordings"
+path = "codetracer-example-recordings"
+remote = "metacraft-labs"
+revision = "2befaf99e19a28b17ee23b2080bba90a1995b9c2"
+branch = "js-support"
+
+[[repo]]
+name = "nix-codetracer-toolchains"
+path = "nix-codetracer-toolchains"
+remote = "metacraft-labs"
+revision = "8e48d78a9f89d63fe7e8d5a2426cfc8a374dab9d"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-ci"
+path = "codetracer-ci"
+remote = "metacraft-labs"
+revision = "22eddf0d10288798d16e696bf594ab9d319a084d"
+branch = "js-support"
+
+[[repo]]
+name = "nix-blockchain-development"
+path = "nix-blockchain-development"
+remote = "metacraft-labs"
+revision = "79800cccaddd07c15ea2649ee3c207227de9431a"
+branch = "js-support"
+
+[[repo]]
+name = "nim-faststreams"
+path = "nim-faststreams"
+remote = "metacraft-labs"
+revision = "82c8c3edb5fa7a4fdfcdb5d8ab53bbe1830d4503"
+branch = "js-support"
+
+[[repo]]
+name = "nim-stew"
+path = "nim-stew"
+remote = "metacraft-labs"
+revision = "cc405401637dc7a32bea708374e26e33f6deca44"
+branch = "js-support"
+
+[[repo]]
+name = "nim-results"
+path = "nim-results"
+remote = "arnetheduck"
+revision = "b319652e98a198fa881ca70a76754c2dd6f09804"
+branch = "js-support"
+
+[[repo]]
+name = "nix-nim-development"
+path = "nix-nim-development"
+remote = "metacraft-labs"
+revision = "d20ea1788bd9d027f3cd01866e121841927fc2c7"
+branch = "js-support"
+
+[[repo]]
+name = "miden-vm"
+path = "miden-vm"
+remote = "0xMiden"
+revision = "b4f62104cc6fb24b8e89b8fff8e7d219cd34bf55"
+branch = "js-support"
+
+[[repo]]
+name = "compiler"
+path = "miden-compiler"
+remote = "0xMiden"
+revision = "6def83ad05ede576b83cf6bd0f37a23184b8fcec"
+branch = "js-support"
+
+[[repo]]
+name = "protocol"
+path = "miden-protocol"
+remote = "0xMiden"
+revision = "dbe4e38797207ce09fee1668ea204aafec275f63"
+branch = "js-support"
+
+[[repo]]
+name = "sui"
+path = "sui"
+remote = "MystenLabs"
+revision = "5d4bcf04d14b3612becf51e3b72e2ae40d979db1"
+branch = "js-support"
+
+[[repo]]
+name = "sway"
+path = "sway"
+remote = "FuelLabs"
+revision = "91be236f71fbb541ee6639ef0d955b2b8cf0a658"
+branch = "js-support"
+
+[[repo]]
+name = "fuel-vm"
+path = "fuel-vm"
+remote = "FuelLabs"
+revision = "2760bd09a9fead002d25449e79cad60584997107"
+branch = "js-support"
+
+[[repo]]
+name = "sbpf"
+path = "sbpf"
+remote = "anza-xyz"
+revision = "5e501a5952b12a80b14f1e2af55a573e1ed3a485"
+branch = "js-support"
+
+[[repo]]
+name = "mollusk"
+path = "mollusk"
+remote = "anza-xyz"
+revision = "80e20ebd25122849f0e60aafe692f7238cba19ce"
+branch = "js-support"
+
+[[repo]]
+name = "revm"
+path = "revm"
+remote = "bluealloy"
+revision = "4a646d2c4c352bd84a5948eec2283b104d246588"
+branch = "js-support"
+
+[[repo]]
+name = "foundry"
+path = "foundry"
+remote = "foundry-rs"
+revision = "c3285d58442a45dd62d57f0bf79c1d7934042f0d"
+branch = "js-support"
+
+[[repo]]
+name = "dynamorio"
+path = "dynamorio"
+remote = "DynamoRIO"
+revision = "3280e26f0e36da1aa3bf3207cc1ac9488a23c853"
+branch = "js-support"
+
+[[repo]]
+name = "castor"
+path = "castor"
+remote = "rcslab"
+revision = "a727f76ffd2e835e2078c0222418a078362bd7ba"
+branch = "js-support"
+
+[[repo]]
+name = "renderdoc"
+path = "renderdoc"
+remote = "baldurk"
+revision = "d0030787c640f9cf5dcd2c3a495c04271da7bd5c"
+branch = "js-support"
+
+[[repo]]
+name = "zeekstd"
+path = "zeekstd"
+remote = "rorosen"
+revision = "e56d3875a8e5c652521ef7d09792a734ecb09b8f"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-observability-jaeger"
+path = "codetracer-observability-jaeger"
+remote = "metacraft-labs"
+revision = "3d1ad04f2ad3f907d180c635892c842749864236"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-observability-grafana"
+path = "codetracer-observability-grafana"
+remote = "metacraft-labs"
+revision = "c586d7be1d1de4df60c8f172405d8078bc988bbe"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-observability-e2e"
+path = "codetracer-observability-e2e"
+remote = "metacraft-labs"
+revision = "7f26ab3c7edf5df1e6d8a1aed36850cc3c20edd7"
+branch = "js-support"
+
+[[repo]]
+name = "cairo"
+path = "cairo-corelib-vendor"
+remote = "starkware-libs"
+revision = "88fd4e946fa37cc5c0102f2e847f5a0cbcce477f"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-php-recorder"
+path = "codetracer-php-recorder"
+remote = "metacraft-labs"
+revision = "1c1d2efce4e41b32f627f0d569f8983ee91f3afd"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert"
+path = "GuiAssert"
+remote = "metacraft-labs"
+revision = "93f5f3b504f0be428fee43c8198cf61c01395fa3"
+branch = "js-support"
+
+[[repo]]
+name = "codetracer-marketing"
+path = "codetracer-marketing"
+remote = "metacraft-labs"
+revision = "6cce44c2f54ac140983511978c9e6f1a286ac81c"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-HeyGen"
+path = "GuiAssert-HeyGen"
+remote = "metacraft-labs"
+revision = "3a286e94dc4cd7a2d737cea75ea5386a3e38112f"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-ElevenLabs"
+path = "GuiAssert-ElevenLabs"
+remote = "metacraft-labs"
+revision = "b0cb3b58d84445d23c36d10335b8ede9b08bd8dc"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-SadTalker"
+path = "GuiAssert-SadTalker"
+remote = "metacraft-labs"
+revision = "d31d9f6cedf63e8bde7a0083bc191864d8efda43"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-Wav2Lip"
+path = "GuiAssert-Wav2Lip"
+remote = "metacraft-labs"
+revision = "a42fb3362e2129a4b7f54d10052e4ca99010148f"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-MuseTalk"
+path = "GuiAssert-MuseTalk"
+remote = "metacraft-labs"
+revision = "8509f4681a5766f74dba75e2368553cf1a9c151a"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-Did"
+path = "GuiAssert-Did"
+remote = "metacraft-labs"
+revision = "6fee4cdd4bf6065fbbaf746a0b187f8176cfc779"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-Synthesia"
+path = "GuiAssert-Synthesia"
+remote = "metacraft-labs"
+revision = "cc6939c60935f34894a8f3bb379bb333adbc4138"
+branch = "js-support"
+
+[[repo]]
+name = "GuiAssert-Tavus"
+path = "GuiAssert-Tavus"
+remote = "metacraft-labs"
+revision = "b70f1abc74322c303bd9a8b3990a49410b588939"
+branch = "js-support"
+
+[[repo]]
+name = "reprobuild-test-adapters"
+path = "reprobuild-test-adapters"
+remote = "metacraft-labs"
+revision = "517a484b3781d0132698394f451a11f52363e719"
+branch = "js-support"
+
+[[repo]]
+name = "isonim"
+path = "isonim"
+remote = "metacraft-labs"
+revision = "03f8349784b2642ba5b49101f1a04b454b3476f3"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-tui"
+path = "isonim-tui"
+remote = "metacraft-labs"
+revision = "1371266e1b38cc7eef21f3a0f804b507db45c6ad"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-gpui"
+path = "isonim-gpui"
+remote = "metacraft-labs"
+revision = "406ac4e1eeed805481fbe6004aec7dcdaf7a2834"
+branch = "js-support"
+
+[[repo]]
+name = "nim-pty"
+path = "nim-pty"
+remote = "metacraft-labs"
+revision = "b9451f0ee6c24bc4180f6eaad0739b45bd4ac32b"
+branch = "js-support"
+
+[[repo]]
+name = "nim-termctl"
+path = "nim-termctl"
+remote = "metacraft-labs"
+revision = "c722378980a80f6558b3dabfd25a9d2fdb639eae"
+branch = "js-support"
+
+[[repo]]
+name = "runquota"
+path = "runquota"
+remote = "metacraft-labs"
+revision = "845cb6da0d3ab7560b214e40d166228566e7941a"
+branch = "js-support"
+
+[[repo]]
+name = "grip-lang-pre-bootstrap"
+path = "grip-lang-pre-bootstrap"
+remote = "metacraft-labs"
+revision = "f33bd8e3a38a277703c04256a3fcc61b308829aa"
+branch = "js-support"
+
+[[repo]]
+name = "grip-specs"
+path = "grip-specs"
+remote = "metacraft-labs"
+revision = "ebb31295ca1b9f08e81a788507d22f45fefb7ec7"
+branch = "js-support"
+
+[[repo]]
+name = "turing-db-specs"
+path = "turing-db-specs"
+remote = "metacraft-labs"
+revision = "a29a0ff01ceb3ec04470c99bba2a6ae4b436837c"
+branch = "latest"
+
+[[repo]]
+name = "grip-lang"
+path = "grip-lang"
+remote = "metacraft-labs"
+revision = "c1fa54a02fb62797dea297a4c3bb7d9d37bc8d68"
+branch = "dev"
+
+[[repo]]
+name = "grip-stdlib-research"
+path = "grip-stdlib-research"
+remote = "metacraft-labs"
+revision = "b478053ac57bdcae1e9eb3ddbf76a54237613760"
+branch = "latest"
+
+[[repo]]
+name = "reprobuild-specs"
+path = "reprobuild-specs"
+remote = "metacraft-labs"
+revision = "fa7e3931a67cf68e9029a0bcafd91c1829c33590"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-examples"
+path = "isonim-examples"
+remote = "metacraft-labs"
+revision = "b95dd6324fe15eef72d448f1b9658a708076f71e"
+branch = "js-support"
+
+[[repo]]
+name = "ngx-isonim"
+path = "ngx-isonim"
+remote = "metacraft-labs"
+revision = "414b6bffdfd4b374f22359766da0f7856931ef0d"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-freya"
+path = "isonim-freya"
+remote = "metacraft-labs"
+revision = "4ae32205ba8ba1b9a8e556bf33e84bebd284d1e9"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-cocoa"
+path = "isonim-cocoa"
+remote = "metacraft-labs"
+revision = "69d835c9cff51ac394908397fdb7b68cf4a129ea"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-android"
+path = "isonim-android"
+remote = "metacraft-labs"
+revision = "66d34973b3735dba90c5a91ad6e01268dd90af5f"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-tui-serve"
+path = "isonim-tui-serve"
+remote = "metacraft-labs"
+revision = "5809b09285e4df3e4d43c78213ef3aa4ed2ff954"
+branch = "js-support"
+
+[[repo]]
+name = "nim-libvterm"
+path = "nim-libvterm"
+remote = "metacraft-labs"
+revision = "95fecdb4fced7a370aa77730277b856aec9c2649"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-render-serve"
+path = "isonim-render-serve"
+remote = "metacraft-labs"
+revision = "6a26a8ef3c1196afa29d0be518e858b9c8ee2af3"
+branch = "js-support"
+
+[[repo]]
+name = "TermAssert"
+path = "TermAssert"
+remote = "metacraft-labs"
+revision = "fb32473f6b1ad07c1e983fc8c338c44f5d148f05"
+branch = "js-support"
+
+[[repo]]
+name = "TermAssertClient"
+path = "TermAssertClient"
+remote = "metacraft-labs"
+revision = "69afcb404f10c7170f3a8ac00ce3ef8e54d1d54b"
+branch = "js-support"
+
+[[repo]]
+name = "term-assert-cmd"
+path = "term-assert-cmd"
+remote = "metacraft-labs"
+revision = "ac4d91a5499c2b480f3fff1d93d7b6265c4af36d"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-website"
+path = "isonim-website"
+remote = "metacraft-labs"
+revision = "09f089523d8494f7b7e81c53874944f04f6405f3"
+branch = "js-support"
+
+[[repo]]
+name = "isonim-platform"
+path = "isonim-platform"
+remote = "metacraft-labs"
+revision = "453be5dfd907abe9c87bbf58edb8be66af638c16"
+branch = "js-support"
+
+[[repo]]
+name = "reprobuild"
+path = "reprobuild"
+remote = "metacraft-labs"
+revision = "d6430575cfca148bb166b356fcd9ab1c02b2c385"
+branch = "dev"
+
+[[repo]]
+name = "reprobuild-ct-test-runner"
+path = "reprobuild-ct-test-runner"
+remote = "metacraft-labs"
+revision = "1a2fceae68cf7ac4f3352c8eb9897b2646dbcf08"
+branch = "js-support"
+
+[[repo]]
+name = "reprobuild-cmake"
+path = "reprobuild-cmake"
+remote = "metacraft-labs"
+revision = "5c6cb2d86a8913ec852a430d9b8b3f50d7c1f27f"
+branch = "js-support"
+
+[[repo]]
+name = "reprobuild-examples"
+path = "reprobuild-examples"
+remote = "metacraft-labs"
+revision = "670eba5afa2f5d3ee8f47dd05ade99e24f77ce6e"
+branch = "js-support"
+
+[[repo]]
+name = "vm-harness"
+path = "vm-harness"
+remote = "metacraft-labs"
+revision = "a86a748e14ec9f9bdaee2b4459945977f58b780b"
+branch = "dev"
+
+[[repo]]
+name = "vivafolio"
+path = "vivafolio"
+remote = "vivafolio"
+revision = "99f86eab41f3d6823898cb1aff780432312b4483"
+branch = "js-support"
+
+[[repo]]
+name = "vivafolio-specs"
+path = "vivafolio-specs"
+remote = "vivafolio"
+revision = "2611f79e75a27230251a1f802c205a3a5ce0bb93"
+branch = "js-support"
+
+[[repo]]
+name = "vivafolio-manifests"
+path = "vivafolio-manifests"
+remote = "vivafolio"
+revision = "277dd395b68f050d4dd9582628f3577dc8758e1e"
+branch = "js-support"
+
+[extensions]
+unmaterialized_repos = [
+  { name = "garm", path = "garm", remote = "cloudbase", reason = "no on-disk checkout" },
+  { name = "fstar", path = "fstar", remote = "FStarLang", reason = "no on-disk checkout" },
+  { name = "seL4", path = "references-gpl/seL4", remote = "seL4", reason = "no on-disk checkout" },
+  { name = "l4v", path = "references-gpl/l4v", remote = "seL4", reason = "no on-disk checkout" },
+  { name = "marketingskills", path = "marketingskills", remote = "coreyhaines31", reason = "no on-disk checkout" },
+  { name = "claude-for-legal", path = "claude-for-legal", remote = "anthropics", reason = "no on-disk checkout" },
+  { name = "Claude-Skills-Governance-Risk-and-Compliance", path = "grc-skills", remote = "Sushegaad", reason = "no on-disk checkout" },
+  { name = "awesome-claude-corporate-skills", path = "awesome-claude-corporate-skills", remote = "w95", reason = "no on-disk checkout" },
+  { name = "nim-shm-lease", path = "nim-shm-lease", remote = "metacraft-labs", reason = "no on-disk checkout" },
+]

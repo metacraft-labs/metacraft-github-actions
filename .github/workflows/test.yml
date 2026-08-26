@@ -48,6 +48,40 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings-step-test.sh .github/assert-no-persisted-credential.sh
 
+  publish-workspace-lock:
+    # The write half of the same mechanism. `clone-siblings` READS a per-commit
+    # lock; this action is the only thing in CI that WRITES one, into a store
+    # that is append-only and whose records are immutable. A defect here does
+    # not fail this repo — it publishes a wrong sibling set under a mainline
+    # commit, where it is immutable and every consumer builds against it.
+    #
+    # Same stock runner as the job above, and for the same reason: the suites
+    # stand up their own bare repositories and a URL-rewriting `git` shim, so
+    # they need no network, no Nix, no secrets and no self-hosted runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: no credential persisted into the checkout
+        run: bash .github/assert-no-persisted-credential.sh
+
+      - name: anchor-workspace-lock.sh contract suite
+        run: bash publish-workspace-lock/anchor-workspace-lock-test.sh
+
+      # The transform suite covers what one field move must and must not touch;
+      # this one covers the publishing step around it — the `run:` body is
+      # extracted from action.yml and executed against local bares, so
+      # immutability, idempotency, the lost-push-race recovery and the
+      # "did it actually land on mainline" proof are exercised against real git
+      # rather than described in a comment.
+      - name: publish-workspace-lock step contract suite
+        run: bash publish-workspace-lock/publish-workspace-lock-step-test.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
+
   setup-nix-git-auth:
     # `setup-nix` runs in almost every job in this org, so a mistake in how it
     # scopes the CI token does not fail this repo — it either leaks a live
