@@ -91,85 +91,76 @@ cleanup() { rm -rf "$TMPROOT"; }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. Extract the step body from action.yml.
+# 1. The step body is a script FILE now; run the shipped one.
 # ---------------------------------------------------------------------------
 #
-# The block is the last `run: |` in the file, indented by six spaces with a body
-# indented by eight. Read it with pure bash so this suite has no more
-# dependencies than the action it tests.
-STEP="$TMPROOT/step.sh"
-TRUNCATED_AT=""
-{
-	in_run=0
-	lineno=0
-	while IFS= read -r line || [[ -n $line ]]; do
-		lineno=$((lineno + 1))
-		if [[ $in_run -eq 0 ]]; then
-			[[ $line == "      run: |" ]] && in_run=1
-			continue
-		fi
-		# A non-empty line indented less than the block terminates a YAML block
-		# scalar. The `run:` block is the last thing in this file, so seeing one
-		# means a body line lost its indentation — which does not merely confuse
-		# this harness, it truncates the script the RUNNER executes. Report it
-		# rather than silently testing the fragment.
-		if [[ -n $line && $line != "        "* ]]; then
-			[[ -z $TRUNCATED_AT ]] && TRUNCATED_AT="$lineno: $line"
-			in_run=2
-			continue
-		fi
-		[[ $in_run -eq 2 ]] && continue
-		printf '%s\n' "${line#        }"
-	done <"$ACTION"
-} >"$STEP"
-
-[[ -s $STEP ]] || {
-	echo "clone-siblings-step-test: extracted an empty run: body from $ACTION" >&2
+# This suite used to scrape the `run: |` block out of action.yml with a bash
+# YAML reader and substitute its `${{ }}` expressions from a table. That was the
+# best available option while the body lived inside YAML, and it is no longer
+# needed: the body moved into `clone-siblings.sh` because a composite `run:`
+# body is a TEMPLATE STRING that GitHub refuses past a length limit, and the
+# block had 76 characters of headroom left (see
+# .github/assert-composite-run-size.sh for the outage that established the
+# budget, and clone-siblings.sh's own header). So the file that ships is now the
+# file this suite executes, with no extraction step in between to drift.
+#
+# What extraction used to buy — "action.yml cannot change out from under this
+# suite without failing it" — is bought instead by the two checks below: the
+# action must still INVOKE this script, and it must still declare every
+# environment variable the script reads. A rename, or an `env:` entry dropped
+# while refactoring, would otherwise leave a green suite exercising a script
+# that nothing runs, or running it with an input the action no longer passes.
+STEP="$HERE/clone-siblings.sh"
+[[ -f $STEP ]] || {
+	echo "clone-siblings-step-test: cannot find $STEP" >&2
 	exit 2
 }
-[[ -z $TRUNCATED_AT ]] || {
-	echo "clone-siblings-step-test: the run: block in $ACTION is cut short by an under-indented line." >&2
-	echo "  first offending line -> $TRUNCATED_AT" >&2
-	echo "  Every line of a 'run: |' body must be indented by at least 8 spaces, including" >&2
-	echo "  continuation lines inside multi-line string literals. YAML ends the block scalar" >&2
-	echo "  at the first line that is not, so the runner would execute a truncated script." >&2
-	exit 2
-}
-# The body must at least be parseable. A syntax error here is the loudest and
-# cheapest possible signal, and it is one every individual contract below would
-# otherwise report as an inscrutable exit 2.
 bash -n "$STEP" || {
-	echo "clone-siblings-step-test: the extracted run: body is not valid bash (see above)." >&2
+	echo "clone-siblings-step-test: $STEP is not valid bash (see above)." >&2
 	exit 2
 }
 
-# The `${{ }}` substitution table. Each expression becomes a shell expansion of
-# an environment variable this suite sets per case, so the extracted body stays
-# a faithful copy of what the runner executes.
-subst() { # <file> — in place
-	local body
-	body="$(<"$1")"
-	body="${body//\$\{\{ github.action_path \}\}/$HERE}"
-	body="${body//\$\{\{ github.event_name \}\}/\$\{EVENT_NAME\}}"
-	body="${body//\$\{\{ github.event.pull_request.base.sha \}\}/\$\{PR_BASE_SHA:-\}}"
-	body="${body//\$\{\{ github.sha \}\}/\$\{GITHUB_SHA\}}"
-	body="${body//\$\{\{ github.event.before \}\}/\$\{EVENT_BEFORE:-\}}"
-	printf '%s\n' "$body" >"$1"
-}
-subst "$STEP"
-
-# An unsubstituted expression means action.yml grew one this harness does not
-# model. Failing here is the whole reason the body is extracted rather than
-# copied.
-case "$(<"$STEP")" in
-*'${{'*)
-	echo "clone-siblings-step-test: action.yml contains a \${{ }} expression this suite does not substitute:" >&2
-	while IFS= read -r l; do
-		case "$l" in *'${{'*) echo "  $l" >&2 ;; esac
-	done <"$STEP"
+ACTION_TEXT="$(<"$ACTION")"
+case "$ACTION_TEXT" in
+*'run: bash "${GITHUB_ACTION_PATH}/clone-siblings.sh"'*) ;;
+*)
+	echo "clone-siblings-step-test: $ACTION no longer runs clone-siblings.sh." >&2
+	echo "  This suite executes that file directly, so it would keep passing while the" >&2
+	echo "  action ran something else entirely. Expected the step to be exactly:" >&2
+	echo '      run: bash "${GITHUB_ACTION_PATH}/clone-siblings.sh"' >&2
 	exit 2
 	;;
 esac
+# Line-wise, and only a line that IS the key: the prose above and in action.yml
+# both mention `run: |` in passing, and a substring match on the whole file
+# would fire on the comment explaining why the key must not come back.
+while IFS= read -r _l || [[ -n $_l ]]; do
+	_s="${_l#"${_l%%[![:space:]]*}"}"
+	if [[ $_s == "run: |" || $_s == "run: |-" ]]; then
+		echo "clone-siblings-step-test: $ACTION has grown an inline block 'run:' body again." >&2
+		echo "  A composite run: body is a template string GitHub rejects past a length" >&2
+		echo "  limit, failing every consumer's job before its first step. Put the code in" >&2
+		echo "  a script file beside the action; see .github/assert-composite-run-size.sh." >&2
+		exit 2
+	fi
+done <"$ACTION"
+
+# Every environment variable clone-siblings.sh reads that is not a runner
+# builtin must be declared in the step's `env:`.
+for _v in GH_TOKEN SIBLINGS_INPUT SIBLING_OWNER JOB_TOKEN_OWNERS \
+	MANIFESTS_REPO INPUT_MANIFESTS_REF PRIVATE_MANIFESTS_REPO \
+	INPUT_PRIVATE_MANIFESTS_REF ON_LOCK_OVERRIDE GIT_AUTH_DIR \
+	PR_BASE_SHA EVENT_BEFORE; do
+	case "$ACTION_TEXT" in
+	*"        ${_v}: "*) ;;
+	*)
+		echo "clone-siblings-step-test: $ACTION does not pass '${_v}' in the step's env:." >&2
+		echo "  clone-siblings.sh reads it, so the action would run with it unset while" >&2
+		echo "  this suite supplies it and passes." >&2
+		exit 2
+		;;
+	esac
+done
 
 # ---------------------------------------------------------------------------
 # 2. Fixtures: local bare repositories + a `git` shim that maps GitHub URLs.
@@ -285,14 +276,16 @@ LOCK_LATE_BAD="$TMPROOT/lock-late-bad.toml"
 # 3. The driver.
 # ---------------------------------------------------------------------------
 WS_PARENT="$TMPROOT/ws"
+SUMMARY="$TMPROOT/step-summary.md"
 OUT=""
 RC=0
-run_step() { # <siblings-input>
+run_step() { # <siblings-input> [<on-lock-override>]
 	rm -rf "$WS_PARENT"
 	mkdir -p "$WS_PARENT/codetracer" "$TMPROOT/runner-temp"
 	rm -rf "$TMPROOT/runner-temp"
 	mkdir -p "$TMPROOT/runner-temp"
 	: >"$TMPROOT/github-env"
+	: >"$SUMMARY"
 	OUT="$(
 		PATH="$TMPROOT/bin:$PATH" \
 			GH_TOKEN="" \
@@ -303,14 +296,18 @@ run_step() { # <siblings-input>
 			INPUT_MANIFESTS_REF="latest" \
 			PRIVATE_MANIFESTS_REPO="" \
 			INPUT_PRIVATE_MANIFESTS_REF="" \
+			ON_LOCK_OVERRIDE="${2:-warn}" \
 			GIT_AUTH_DIR="$ROOT/git-auth" \
+			GITHUB_ACTION_PATH="$HERE" \
 			GITHUB_WORKSPACE="$WS_PARENT/codetracer" \
 			GITHUB_REPOSITORY="metacraft-labs/codetracer" \
 			GITHUB_SHA="$SELF_SHA" \
-			EVENT_NAME="push" \
+			GITHUB_EVENT_NAME="push" \
 			EVENT_BEFORE="" \
+			PR_BASE_SHA="" \
 			RUNNER_TEMP="$TMPROOT/runner-temp" \
 			GITHUB_ENV="$TMPROOT/github-env" \
+			GITHUB_STEP_SUMMARY="$SUMMARY" \
 			bash "$STEP" 2>&1
 	)"
 	RC=$?
@@ -497,6 +494,132 @@ run_step "nim-acp"
 check "a commit with no lock still fails" "$RC" "1"
 contains "...with the no-lock diagnostic" "$OUT" "No workspace lock for codetracer"
 lacks "...and never falls back to a branch tip" "$OUT" "(override)"
+
+# ===========================================================================
+# 9. An explicit ref that REPLACES a revision the lock pins.
+#
+# The other direction of the same loss, and the one that used to be completely
+# silent. `nim-acp` IS pinned by the lock in this fixture, so `nim-acp=dev`
+# un-pins a repo the workspace had pinned: CI keeps passing while it tracks a
+# branch tip, and the drift surfaces days later somewhere unrelated.
+#
+# RED against the unfixed action: `nim-acp=dev` printed
+#     nim-acp -> dev (override)
+# and a warning that `dev` is not a 40-hex SHA — but nothing anywhere said the
+# lock had an answer for `nim-acp`, because with no bare entry in the list the
+# manifests repo was never cloned and the lock was never read at all.
+# ===========================================================================
+mk_manifests "$LOCK_OK"
+
+run_step "nim-acp=dev"
+check "an override of a lock pin still succeeds by default (warn)" "$RC" "0"
+contains "...raising a warning that says it overrides the lock" "$OUT" \
+	"::warning::clone-siblings: 1 sibling entry/entries override a revision the workspace lock already pins"
+contains "...naming BOTH revisions" "$OUT" \
+	"nim-acp: the lock pins $(sha_of nim-acp) -> this entry requests 'dev'"
+contains "...marked UNACKNOWLEDGED in the resolution table" "$OUT" \
+	"nim-acp -> dev (override)  <- UNACKNOWLEDGED; the lock pins $(sha_of nim-acp)"
+contains "...teaching the pin-preserving fix first" "$OUT" \
+	"IF THE PIN IS WHAT YOU WANT (it usually is): delete the '=<ref>'"
+contains "...and showing the exact acknowledged spelling" "$OUT" "      nim-acp!=dev"
+contains "...with a row on the run's job summary, not only in the raw log" \
+	"$(<"$SUMMARY")" "| \`nim-acp\` | \`$(sha_of nim-acp)\` | \`dev\` |"
+check "...and the sibling is cloned at the ref the caller asked for" \
+	"$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$(sha_of nim-acp)"
+
+# A 40-hex override is a real pin, so section 5b asserts it is not warned about
+# as "unpinned". It is still an OVERRIDE when it names a different commit than
+# the lock — which is the state a real `.github/sibling-repos` in this org is in
+# right now, its hand-written SHA having drifted from the lock's. The shape of
+# the ref is not what makes an override dangerous; disagreeing with the lock is.
+#
+# Asserted under `error` so the contract is about the CLASSIFICATION and not
+# about what git then does: a SHA from another repository is not fetchable, so
+# under `warn` this case would exit 1 from the clone and prove nothing.
+run_step "nim-acp=$(sha_of nim-agents)" "error"
+check "a 40-hex override that DISAGREES with the lock is still an override" "$RC" "1"
+contains "...and is reported as one" "$OUT" \
+	"nim-acp: the lock pins $(sha_of nim-acp) -> this entry requests '$(sha_of nim-agents)'"
+lacks "...and is not mistaken for the unpinned-ref case" "$OUT" "is not a 40-hex commit SHA"
+
+# The same entry under `on-lock-override: error`.
+run_step "nim-acp=dev" "error"
+check "on-lock-override=error turns it into a failure" "$RC" "1"
+contains "...as an ::error:: annotation" "$OUT" \
+	"::error::clone-siblings: 1 sibling entry/entries override a revision the workspace lock already pins"
+check "...and nothing is cloned" \
+	"$([[ -e "$WS_PARENT/nim-acp" ]] && echo yes || echo no)" "no"
+
+# `name!=ref` acknowledges the override: allowed, labelled, and not warned
+# about — under BOTH modes, since the caller has said they mean it.
+run_step "nim-acp!=dev" "error"
+check "'name!=ref' acknowledges the override even under error mode" "$RC" "0"
+lacks "...so no annotation is raised" "$OUT" "::warning::"
+contains "...but the table still records that it overrides the lock" "$OUT" \
+	"nim-acp -> dev (override)  <- acknowledged with '!='; the lock pins $(sha_of nim-acp)"
+
+# THE NEAR-MISS SHAPE. A list in which EVERY entry carries an explicit ref used
+# to skip the manifests clone entirely, so it was the one list this action never
+# checked against anything — while being the list most likely to have un-pinned
+# something. All four of these are lock-pinned.
+FOUR_PINNED=""
+for n in "${IN_LOCK[@]}"; do FOUR_PINNED="${FOUR_PINNED}${n}=dev"$'\n'; done
+run_step "$FOUR_PINNED" "error"
+check "an all-explicit list is checked against the lock too" "$RC" "1"
+contains "...reporting all four at once" "$OUT" \
+	"clone-siblings: 4 sibling entry/entries override"
+for n in "${IN_LOCK[@]}"; do
+	contains "...naming $n and the revision it un-pins" "$OUT" \
+		"$n: the lock pins $(sha_of "$n")"
+done
+
+# Acknowledging one entry must not exempt the others. This is the whole reason
+# the acknowledgement is per-entry rather than one action-level switch: the
+# near-miss was a single blunt decision applied to a whole list.
+run_step "nim-acp!=dev
+nim-agents=dev" "error"
+check "acknowledging one entry does not exempt another" "$RC" "1"
+contains "...only the unacknowledged one is reported" "$OUT" \
+	"clone-siblings: 1 sibling entry/entries override"
+contains "...and it is the right one" "$OUT" "nim-agents: the lock pins $(sha_of nim-agents)"
+
+# An explicit ref for a repo the lock does NOT pin is the legitimate escape
+# hatch. It must not be caught by the override check — a false positive here
+# would push callers straight back to `!=` on everything.
+run_step "isonim=dev" "error"
+check "an explicit ref the lock has no opinion on is not an override" "$RC" "0"
+lacks "...so no override is reported" "$OUT" "override a revision the workspace lock"
+contains "...it is labelled 'explicit' with the reason" "$OUT" \
+	"isonim -> dev (explicit)  <- the lock does not pin this repo"
+
+# An explicit ref equal to the lock's revision overrides nothing.
+run_step "nim-acp=$(sha_of nim-acp)" "error"
+check "an explicit ref equal to the lock's revision is not an override" "$RC" "0"
+contains "...and is labelled as agreeing with the lock" "$OUT" \
+	"(explicit-agrees)  <- the same revision the lock pins"
+
+# A trailing `!` on a bare entry is a typo, not a spelling. Left alone it would
+# become a clone of a repository named `nim-acp!`.
+run_step "nim-acp!"
+check "a bare trailing '!' is refused as a typo" "$RC" "1"
+contains "...pointing at the spelling that was meant" "$OUT" "'name!=ref' means"
+
+# ===========================================================================
+# 10. Losing the lock must not fail a job that never asked it for a revision.
+#
+# The lock is now read for every list, so a list of purely explicit entries
+# reaches the manifests clone where it previously did not. That must not turn a
+# missing lock into a new failure for callers who were never resolving from it.
+# ===========================================================================
+mk_manifests ""
+run_step "nim-acp=dev"
+check "no lock + an all-explicit list still succeeds" "$RC" "0"
+contains "...saying the override check could not run" "$OUT" \
+	"this run cannot tell you whether any of those refs is replacing a revision the lock pins"
+contains "...and the table says no lock was consulted" "$OUT" \
+	"no workspace lock was consulted"
+check "...and the sibling is still cloned" \
+	"$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$(sha_of nim-acp)"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

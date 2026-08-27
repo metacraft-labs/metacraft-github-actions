@@ -192,6 +192,15 @@ inputs:
       `manifests-ref`.
     required: false
     default: ""
+  on-lock-override:
+    description: >
+      Passed straight through to `clone-siblings`. `warn` (the default) reports
+      a `siblings` entry whose `=ref` replaces a revision the workspace lock
+      DOES pin; `error` fails the job instead. Set this to `error` once every
+      deliberate override in the repo's sibling list is spelled `name!=ref`, so
+      an accidental one cannot be added later without CI saying so.
+    required: false
+    default: "warn"
 
 runs:
   using: "composite"
@@ -239,6 +248,7 @@ runs:
         manifests-ref: ${{ inputs.manifests-ref }}
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
+        on-lock-override: ${{ inputs.on-lock-override }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
