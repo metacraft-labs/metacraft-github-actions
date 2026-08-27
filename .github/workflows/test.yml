@@ -36,17 +36,17 @@ jobs:
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
-      # The resolver suite covers the lock reader; this one covers the composite
-      # step that calls it — the `run:` body is extracted from action.yml and
-      # executed against local repositories, so a defect downstream of a
-      # correctly-behaving resolver (an unvalidated `name=ref` override reaching
-      # `git fetch`, a workspace-membership gap reported as a broken lock) is
-      # caught here rather than in a consumer's CI.
+      # The resolver suite covers the lock reader; this one covers the step that
+      # calls it — `clone-siblings.sh`, executed against local repositories, so
+      # a defect downstream of a correctly-behaving resolver (an unvalidated
+      # `name=ref` override reaching `git fetch`, a workspace-membership gap
+      # reported as a broken lock, a `name=ref` silently replacing a revision
+      # the lock pins) is caught here rather than in a consumer's CI.
       - name: clone-siblings step contract suite
         run: bash clone-siblings/clone-siblings-step-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit

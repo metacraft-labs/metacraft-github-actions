@@ -18,7 +18,13 @@
 # only nim-everywhere / nim-acp / nim-agent-harbor / nim-agents are members —
 # isonim, isonim-tui, isonim-gpui, nim-pty and nim-termctl belong to the
 # `isonim` project). This action now says exactly that when asked to resolve
-# them; see the PASS 1 error below.
+# them, for all five at once; see the PASS 1 error in clone-siblings.sh.
+#
+# The first attempt at that migration is why `name=ref` is no longer silent. It
+# pinned all nine to `=dev`, which would have cleared the error — and un-pinned
+# the four the lock was pinning correctly, turning them into branch tips while
+# CI went on passing. An entry that replaces a revision the lock DOES pin is now
+# reported on every run, warned about, and refusable with `on-lock-override`.
 #
 # WHICH COMMIT'S LOCK, AND WHY MAINLINE DOES NOT LOCK ITSELF
 #
@@ -53,6 +59,12 @@
 # took the whole org's CI down on 2026-08-26. `.github/assert-composite-run-
 # size.sh` is the guard that now measures it. A YAML comment out here costs the
 # template nothing.
+#
+# THE BODY ITSELF is now ./clone-siblings.sh, which is the remedy that guard's
+# header prescribes: it had 76 characters of headroom left, and a script file
+# has no template limit at all. It is also shellchecked and executed directly by
+# ./clone-siblings-step-test.sh. The step below must stay a one-line call to it;
+# that suite fails if an inline `run: |` body reappears here.
 name: Clone cross-repo siblings
 description: >
   Clone the cross-repo sibling repositories a repo's CI needs, each at the
@@ -68,6 +80,14 @@ description: >
   fails just as loudly, but as what it is — a workspace-membership gap, i.e. a
   repo the project manifest does not declare — reported for every such sibling
   at once and before anything is cloned, not as a broken lock.
+
+  An entry that REPLACES a revision the lock does pin (`name=ref` where the lock
+  has an answer for `name`) is the other direction of the same loss, and it is
+  no longer silent: every run prints a resolution table, an unacknowledged
+  override raises a `::warning::` and a job-summary entry, and
+  `on-lock-override: error` turns it into a failure. The lock is read for EVERY
+  entry, including the explicit ones, so a list in which every entry carries a
+  ref — the shape that used to skip the lock lookup entirely — is checked too.
 
   MANIFEST LAYERS. The locks are read from one or more manifest repos, layered
   by visibility per reprobuild-specs/Workspace-And-Develop-Mode.md §"Workspace
@@ -98,6 +118,16 @@ inputs:
       `name=ref` (clone `ref` directly — used for workflow_dispatch /
       repository_dispatch overrides; a trailing `=` falls back to the lock).
       When empty, `.github/sibling-repos` is read.
+
+      PREFER THE BARE `name`. It means "whatever revision the workspace lock
+      pins for the commit under test", which is the only spelling that stays
+      reproducible with nothing to maintain: every future commit's lock carries
+      the pin automatically. `name=ref` is for a repo the lock genuinely cannot
+      answer for, and for a human-supplied dispatch override.
+
+      An entry may also be spelled `name!=ref`. That is `name=ref` plus an
+      acknowledgement that the ref REPLACES a revision the lock pins; see
+      `on-lock-override`. The `!` is meaningful only immediately before the `=`.
 
       An override `ref` is shape-checked before anything is cloned: it must be
       `[0-9A-Za-z._/-]` only and must not begin with `-`, `.` or `/`. That is
@@ -180,6 +210,33 @@ inputs:
       The branch of the private manifest repo. Defaults to `manifests-ref`.
     required: false
     default: ""
+  on-lock-override:
+    description: >
+      What to do when a `name=ref` entry replaces a revision the workspace lock
+      DOES pin for `name`:
+
+        - "warn"  (default) — report it in the resolution table, raise a
+                    `::warning::` naming both revisions, add a row to the job
+                    summary, and continue.
+        - "error" — fail the step.
+
+      An entry spelled `name!=ref` is exempt either way: it says the override is
+      deliberate. That acknowledgement is PER-ENTRY on purpose. A single
+      action-level "allow overrides" switch would reproduce the mistake this
+      check exists to catch — set once under pressure, it exempts every entry in
+      the list, including the ones the lock was pinning perfectly well. An
+      acknowledgement written on the entry it applies to cannot spread on its
+      own, and it shows up in a diff next to the thing it excuses.
+
+      WHY THE DEFAULT IS `warn`. Every consumer of this action pins `@main`, so
+      a new hard failure lands on all of them at once with no way to prepare,
+      and there are callers overriding lock pins today. Failing by default would
+      be the fleet-wide outage this check exists to prevent. A repo that has
+      acknowledged its overrides sets `error` here and can never regress; the
+      default flips once the fleet is clean, at which point every deliberate
+      override is already spelled `!=` and nothing breaks at the flip.
+    required: false
+    default: "warn"
 
 runs:
   using: composite
@@ -195,416 +252,13 @@ runs:
         INPUT_MANIFESTS_REF: ${{ inputs.manifests-ref }}
         PRIVATE_MANIFESTS_REPO: ${{ inputs.private-manifests-repo }}
         INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
+        ON_LOCK_OVERRIDE: ${{ inputs.on-lock-override }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
-      run: |
-        set -euo pipefail
-        MANIFESTS_REF="${INPUT_MANIFESTS_REF:-${MANIFESTS_REF:-latest}}"
-        PRIVATE_MANIFESTS_REF="${INPUT_PRIVATE_MANIFESTS_REF:-${MANIFESTS_REF}}"
-        # The explicit `siblings` input (if provided) overrides the
-        # repo-level `.github/sibling-repos` declaration; otherwise read the
-        # file. Both accept '#' comments and whitespace/newline separation.
-        # Each entry is either `name` (revision resolved from the workspace
-        # lock) or `name=ref` (clone `ref` directly — used for
-        # workflow_dispatch / repository_dispatch overrides; an empty ref,
-        # i.e. a trailing `=`, falls back to the lock).
-        # Parsing is pure bash (no awk/sed/cat): this step runs in the
-        # consumer's dev-env shell, which may be a minimal nix bash with no
-        # coreutils/gawk on PATH. Strip '#' comments per line and split the
-        # remainder on whitespace, collecting every token (one repo per line
-        # in the file; whitespace- or newline-separated in the input).
-        if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
-          RAW="${SIBLINGS_INPUT}"
-        else
-          SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
-          if [ ! -f "${SIBS_FILE}" ]; then
-            echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
-            exit 0
-          fi
-          RAW="$(<"${SIBS_FILE}")"
-        fi
-        SIBLINGS=()
-        # On Windows, `actions/checkout@v4` respects git's
-        # `core.autocrlf=true` default and converts LF-in-repo to
-        # CRLF-in-worktree.  With `IFS= read -r`, that trailing `\r`
-        # sticks to the last token on each line, and downstream
-        # comparisons (`grep -E 'name="$SIBLING"'`, path lookups) then
-        # miss because the CR is a literal part of the value.  Strip
-        # any `\r` per line before tokenising.
-        while IFS= read -r _line || [ -n "${_line}" ]; do
-          _line="${_line%$'\r'}"
-          _line="${_line%%#*}"
-          for _tok in ${_line}; do
-            # `_tok` inherits the CRLF too when the trailing CR was
-            # before a `#` comment marker (rare); belt-and-braces trim.
-            _tok="${_tok%$'\r'}"
-            SIBLINGS+=("${_tok}")
-          done
-        done <<< "${RAW}"
-        if [ "${#SIBLINGS[@]}" -eq 0 ]; then
-          echo "No cross-repo siblings to clone."
-          exit 0
-        fi
-
-        SELF="${GITHUB_REPOSITORY##*/}"
-        RESOLVER="${{ github.action_path }}/resolve-sibling-rev.sh"
-
-        # Split entries into owner + name + optional explicit ref.
-        #
-        # An entry is `[owner/]name[=ref]`. The owner half is optional and
-        # defaults to `sibling-owner`; the NAME half is the workspace-lock key
-        # and the directory the clone lands in, so `owner/` is stripped before
-        # either is used. The `=ref` split happens first because a ref may
-        # itself contain `/` (a branch name), which would otherwise be mistaken
-        # for an owner separator.
-        # First word only; see the `sibling-owner` input description.
-        for _w in ${SIBLING_OWNER}; do DEFAULT_OWNER="${_w}"; break; done
-        DEFAULT_OWNER="${DEFAULT_OWNER:-}"
-
-        NAMES=(); REFS=(); OWNERS=(); NEED_LOCK=0
-        for entry in "${SIBLINGS[@]}"; do
-          spec="${entry%%=*}"; rf=""
-          case "${entry}" in *=*) rf="${entry#*=}" ;; esac
-          case "${spec}" in
-            */*) ow="${spec%%/*}"; nm="${spec#*/}" ;;
-            *)   ow="${DEFAULT_OWNER}"; nm="${spec}" ;;
-          esac
-          case "${nm}" in
-            */*)
-              echo "::error::sibling entry '${entry}' has more than one '/'; the form is [owner/]name[=ref]."
-              exit 1
-              ;;
-          esac
-          NAMES+=("${nm}"); REFS+=("${rf}"); OWNERS+=("${ow}")
-          [ -z "${rf}" ] && NEED_LOCK=1
-        done
-
-        # ------------------------------------------------------------------
-        # An explicit `name=ref` override is a REVISION, and it was the one
-        # revision in this action nothing checked.
-        #
-        # `resolve-sibling-rev.sh` shape-checks every revision it reads out of a
-        # lock (its `check_rev_shape`), for two reasons that are on the record.
-        # A value like `main` makes CI build a branch TIP, which is the silent,
-        # unpinned resolve this whole mechanism exists to prevent. And a value
-        # starting with `-` is not a refspec at all: this step substitutes it
-        # into `git fetch <remote> <rev>`, git parses options AFTER the remote,
-        # and `--upload-pack=<cmd>` is handed to `sh -c` — command execution on
-        # the runner, after which the fetch SUCCEEDS and the step goes green.
-        #
-        # The override path reached `git fetch` without passing through any of
-        # that, because it never goes near the resolver. Same substitution, same
-        # git, so it gets the same standard.
-        #
-        # The check is a whitelist over the characters a branch, tag or SHA can
-        # contain, which is deliberately narrower than `git check-ref-format`:
-        # everything this org actually passes today (`main`,
-        # `mcr-backend-integration`, `refs/heads/dev`, a 40-hex SHA) is inside
-        # it, and everything that makes git do something other than name a
-        # revision — a leading `-`, whitespace, `;`, `$`, `:`, `~`, `^`, `?`,
-        # `*`, `[`, `\` — is outside it. Pure bash, no `git check-ref-format`
-        # subprocess: this step runs in the consumer's dev-env shell.
-        ref_shape_ok() { # <ref>
-          local r="$1" i=0 c
-          [ -n "${r}" ] || return 1
-          case "${r}" in
-            -* | .* | /*) return 1 ;;
-            */ | *.) return 1 ;;
-            *..* | *//* | *@\{*) return 1 ;;
-            *.lock) return 1 ;;
-          esac
-          while [ "${i}" -lt "${#r}" ]; do
-            c="${r:${i}:1}"
-            case "${c}" in
-              [0-9A-Za-z._/-]) ;;
-              *) return 1 ;;
-            esac
-            i=$((i + 1))
-          done
-          return 0
-        }
-
-        is_sha40() { # <rev>
-          local r="$1" i=0 c
-          [ "${#r}" -eq 40 ] || return 1
-          while [ "${i}" -lt 40 ]; do
-            c="${r:${i}:1}"
-            case "${c}" in
-              [0-9a-f]) ;;
-              *) return 1 ;;
-            esac
-            i=$((i + 1))
-          done
-          return 0
-        }
-
-        # Validated before ANYTHING is cloned — including the manifests repo —
-        # so a hostile or malformed entry costs no network and leaves no
-        # half-populated workspace parent behind.
-        BAD_REFS=""
-        for i in "${!NAMES[@]}"; do
-          [ -z "${REFS[$i]}" ] && continue
-          if ! ref_shape_ok "${REFS[$i]}"; then
-            BAD_REFS="${BAD_REFS} ${NAMES[$i]}=${REFS[$i]}"
-            continue
-          fi
-          # A shape-legal override is still an override: it bypasses the
-          # workspace lock by construction. When it is not a 40-hex SHA it does
-          # not pin anything either — it resolves to wherever that ref points
-          # when the job happens to run — so the log has to say so. This is a
-          # warning and not a refusal on purpose: several workflows in this org
-          # pass `<name>=main` today for deliberate downstream-integration runs,
-          # and this action reaches them immediately at `@main`. Turning that
-          # into a hard failure is a separate, announced decision; making it
-          # invisible is not defensible either way.
-          if ! is_sha40 "${REFS[$i]}"; then
-            echo "::warning::sibling '${NAMES[$i]}' is pinned by the explicit override '${NAMES[$i]}=${REFS[$i]}', not by the workspace lock, and '${REFS[$i]}' is not a 40-hex commit SHA. This build is therefore not reproducible: it resolves to whatever that ref points at right now. Overrides are for workflow_dispatch / repository_dispatch experiments; a lasting pin belongs in the workspace lock."
-          fi
-        done
-        if [ -n "${BAD_REFS}" ]; then
-          echo "::error::refusing sibling override(s) whose revision is not a usable ref:${BAD_REFS}"
-          echo "::error::An override revision is substituted into 'git fetch <remote> <rev>'. git parses options after the remote, so a value beginning with '-' is an OPTION, and '--upload-pack=<cmd>' executes <cmd> on this runner. A revision must be a plain branch name, tag or 40-hex commit SHA: [0-9A-Za-z._/-] only, not starting with '-', '.' or '/'."
-          exit 1
-        fi
-
-        # ------------------------------------------------------------------
-        # The git credential for everything this step clones.
-        #
-        # This used to be a token embedded in every clone URL plus, in each
-        # sibling's own `.git/config`, a catch-all `url.<credentialed
-        # github.com>.insteadOf` covering the whole of github.com. That left a
-        # live App token in the `.git/config` of every sibling clone and every submodule
-        # of every sibling clone — files that sit next to the workspace, get
-        # archived as artifacts, and on this org's self-hosted runners survive
-        # into the next job — and it authenticated every github.com fetch those
-        # clones ever made, third parties included. A URL-borne credential is
-        # also the one shape git hands to `credential approve` on success, so on
-        # a runner with a `credential.helper` it was additionally written to
-        # `~/.git-credentials`.
-        #
-        # It is now an `http.https://github.com/<owner>/.extraHeader` in THIS
-        # STEP's process environment. Child processes inherit it (including
-        # `git submodule update --recursive`, at every depth); nothing else
-        # does, and nothing writes it down.
-        #
-        # THE SCOPE IS DERIVED, not configured: it is the exact set of owners
-        # this step is about to clone from — every sibling's owner plus the
-        # owners of the manifest repos. A sibling this action can name is
-        # therefore a sibling this action can authenticate, by construction.
-        # shellcheck source=../git-auth/scoped-git-auth.sh
-        . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
-
-        CLONE_OWNERS=()
-        add_owner() {
-          local o="$1" e
-          [ -z "${o}" ] && return 0
-          for e in ${CLONE_OWNERS[@]+"${CLONE_OWNERS[@]}"}; do
-            [ "${e}" = "${o}" ] && return 0
-          done
-          CLONE_OWNERS+=("${o}")
-        }
-        for ow in ${OWNERS[@]+"${OWNERS[@]}"}; do add_owner "${ow}"; done
-        if [ "${NEED_LOCK}" -eq 1 ]; then
-          add_owner "$(scoped_git_auth_owner_of "${MANIFESTS_REPO}")"
-          [ -n "${PRIVATE_MANIFESTS_REPO}" ] && \
-            add_owner "$(scoped_git_auth_owner_of "${PRIVATE_MANIFESTS_REPO}")"
-        fi
-
-        if [ "${#CLONE_OWNERS[@]}" -eq 0 ]; then
-          echo "::error::no GitHub owner to clone from: 'sibling-owner' is empty and no sibling entry is spelled owner/name."
-          exit 1
-        fi
-
-        export TOKEN_OWNERS="${CLONE_OWNERS[*]}"
-        export SCOPED_GIT_AUTH_REWRITES=1
-        export SCOPED_GIT_AUTH_MASK=1
-        scoped_git_auth_build
-        scoped_git_auth_export
-        scoped_git_auth_report
-
-        # ------------------------------------------------------------------
-        # The coupling this action used to hide.
-        #
-        # The sibling owner was hard-coded to `metacraft-labs` here while
-        # `setup-nix`'s `token-owner` defaulted to the same string in a
-        # different file. Nothing tied them together, and while the CI token
-        # authenticated all of github.com nothing had to: a mismatch simply
-        # worked. It no longer does — an owner outside `setup-nix`'s scope gets
-        # a 404 on a private repo, which reads as a wrong repository name — so
-        # the disagreement is detected here, by name, before anything is cloned.
-        if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ]; then
-          TOKEN_OWNERS="${JOB_TOKEN_OWNERS}" \
-            scoped_git_auth_require_covered "clone-siblings" \
-              ${CLONE_OWNERS[@]+"${CLONE_OWNERS[@]}"} || exit 1
-        fi
-
-        # The manifest repo holds the per-commit workspace locks. Only clone
-        # it when at least one sibling resolves from the lock.
-        #
-        # MANIFEST LAYERS. `LAYER_ARGS` accumulates one `--manifest-dir` per
-        # layer, least specific FIRST — the order is the resolver's precedence
-        # order (reprobuild-specs/Workspace-And-Develop-Mode.md §"Layering
-        # Rules": a repo declared in several layers is deduplicated with the
-        # more specific layer taking precedence). With no
-        # `private-manifests-repo` this is a one-element list, i.e. byte-for-
-        # byte the single-layer resolve every consumer already gets.
-        MAN=""; LOCK_SHA=""
-        LAYER_ARGS=()
-        if [ "${NEED_LOCK}" -eq 1 ]; then
-          MAN="${RUNNER_TEMP}/metacraft-manifests"
-          rm -rf "${MAN}"
-          # Credential-free URL. Authentication rides the scoped extraHeader
-          # installed above, which covers this repo's owner because the scope
-          # was derived from `manifests-repo` itself.
-          MAN_URL="https://github.com/${MANIFESTS_REPO}.git"
-          echo "Cloning manifests repo on branch '${MANIFESTS_REF}'..."
-          if ! git clone --depth 1 --branch "${MANIFESTS_REF}" "${MAN_URL}" "${MAN}"; then
-            echo "::error::Failed to clone manifests repo from ${MAN_URL} on branch ${MANIFESTS_REF}"
-            exit 1
-          fi
-          LAYER_ARGS+=(--manifest-dir "${MAN}")
-
-          # The org/team-private layer, when the caller declares one. It is
-          # cloned with the SAME token — a private manifest repo is
-          # access-controlled by definition, so a failure to clone it is a
-          # hard error and never a silent downgrade to the public layer: that
-          # would resolve private siblings to whatever the public layer
-          # happens to say, or fail much later with a misleading diagnostic.
-          if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
-            PRIV_MAN="${RUNNER_TEMP}/metacraft-manifests-private"
-            rm -rf "${PRIV_MAN}"
-            PRIV_URL="https://github.com/${PRIVATE_MANIFESTS_REPO}.git"
-            echo "Cloning PRIVATE manifests repo on branch '${PRIVATE_MANIFESTS_REF}'..."
-            if ! git clone --depth 1 --branch "${PRIVATE_MANIFESTS_REF}" "${PRIV_URL}" "${PRIV_MAN}"; then
-              echo "::error::Failed to clone the private manifests repo ${PRIVATE_MANIFESTS_REPO} on branch ${PRIVATE_MANIFESTS_REF}. A private manifest layer was declared, so this is fatal: resolving siblings from the public layer alone would silently drop every pin the private layer owns. Check that the CI App token has read access to it."
-              exit 1
-            fi
-            LAYER_ARGS+=(--manifest-dir "${PRIV_MAN}")
-          fi
-          # Which commit's lock to use; `--no-walk` needs that commit itself
-          # locked. See "WHICH COMMIT'S LOCK" at the top of this file.
-          case "${{ github.event_name }}" in
-            pull_request) CANDS="${{ github.event.pull_request.base.sha }}" ;;
-            push) CANDS="${{ github.sha }} ${{ github.event.before }}" ;;
-            *) CANDS="${{ github.sha }}" ;;
-          esac
-          PROBE=""
-          for i in "${!NAMES[@]}"; do
-            [ -z "${REFS[$i]}" ] && { PROBE="${NAMES[$i]}"; break; }
-          done
-          for c in ${CANDS}; do
-            [ -z "${c}" ] && continue
-            [ "${c}" = "0000000000000000000000000000000000000000" ] && continue
-            probe_rc=0
-            "${RESOLVER}" --repo "${SELF}" --sibling "${PROBE}" \
-              "${LAYER_ARGS[@]}" --sha "${c}" --no-walk >/dev/null || probe_rc=$?
-            # Exit 4 — "a lock exists for this commit, but no manifest layer
-            # names the probed sibling" — is an answer ABOUT THE SIBLING, not
-            # about the lock. The lock was found, so this commit IS the locked
-            # commit, and it is the right commit for every other sibling in the
-            # list. Treating it as "the lock cannot be used" made the whole
-            # step's success depend on whether the first lock-resolved entry
-            # happened to be a member of the workspace project, and reported a
-            # membership gap as a corrupt artifact. The per-sibling pass below
-            # reports it by name instead.
-            if [ "${probe_rc}" -eq 0 ] || [ "${probe_rc}" -eq 4 ]; then
-              LOCK_SHA="${c}"; break
-            fi
-            # Exit 3 is the resolver's only "this commit is not locked"
-            # answer, and the only one worth trying the next candidate for.
-            # What is left (5 malformed, 6 self-contradictory) means a lock
-            # EXISTS but cannot be trusted. Falling through to the next
-            # candidate would bury that behind the generic "no lock" error
-            # below and could pin siblings from a DIFFERENT commit, so stop
-            # here.
-            if [ "${probe_rc}" -ne 3 ]; then
-              echo "::error::Workspace lock for ${SELF}@${c} exists but cannot be used (resolve-sibling-rev exit ${probe_rc}); see its diagnostic above."
-              exit 1
-            fi
-          done
-          if [ -z "${LOCK_SHA}" ]; then
-            LAYERS_DESC="${MANIFESTS_REPO}@${MANIFESTS_REF}"
-            if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
-              LAYERS_DESC="${LAYERS_DESC} or ${PRIVATE_MANIFESTS_REPO}@${PRIVATE_MANIFESTS_REF}"
-            fi
-            echo "::error::No workspace lock for ${SELF} (candidates: ${CANDS}). Neither a repo-workspaces locks/<project>/${SELF}/<sha>.xml nor a reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${LAYERS_DESC}. The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook, or legacy 'workspace lock'), and its lock pushed to the manifest repo."
-            exit 1
-          fi
-          echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
-        fi
-
-        # ------------------------------------------------------------------
-        # PASS 1 — resolve every revision. Nothing is cloned yet.
-        #
-        # Resolution used to be interleaved with cloning under `set -e`, so the
-        # first sibling the lock could not answer for aborted the step with
-        # some of the others already on disk. Two things were wrong with that.
-        # A caller bringing N repos onto the lock at once learned about them one
-        # CI run at a time; and the workspace parent was left half-populated,
-        # which the next step then builds against.
-        #
-        # Resolver exit 4 gets its own bucket. It means "a lock exists and no
-        # manifest layer pins this sibling", which is a statement about the
-        # WORKSPACE MEMBERSHIP of that repo — its project does not declare it —
-        # and not about the health of the lock. The others (5 malformed, 6
-        # self-contradictory) are lock defects and still stop everything at
-        # once.
-        declare -a REVS=() SRCS=()
-        MISSING=""
-        for i in "${!NAMES[@]}"; do
-          name="${NAMES[$i]}"; ref="${REFS[$i]}"
-          if [ -n "${ref}" ]; then
-            REVS+=("${ref}"); SRCS+=("override")
-            continue
-          fi
-          rrc=0
-          rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
-            "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk)" || rrc=$?
-          if [ "${rrc}" -eq 4 ]; then
-            MISSING="${MISSING} ${name}"
-            REVS+=(""); SRCS+=("missing")
-            continue
-          fi
-          if [ "${rrc}" -ne 0 ]; then
-            echo "::error::Workspace lock for ${SELF}@${LOCK_SHA} exists but cannot be used for sibling '${name}' (resolve-sibling-rev exit ${rrc}); see its diagnostic above."
-            exit 1
-          fi
-          REVS+=("${rev}"); SRCS+=("lock")
-        done
-
-        if [ -n "${MISSING}" ]; then
-          FIX_IN="${MANIFESTS_REPO}"
-          if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
-            FIX_IN="${FIX_IN} (or ${PRIVATE_MANIFESTS_REPO}, for repos that belong in the private layer)"
-          fi
-          echo "::error::The workspace lock for ${SELF}@${LOCK_SHA} pins no revision for these sibling(s):${MISSING}. The lock is intact — it answered for the others — so this is not a corrupt or stale lock. A lock can only pin what its project declares, and these repos are not members of the workspace project that lock describes, so it has nothing to say about them. Declare them in ${SELF}'s project manifest in ${FIX_IN} and the next lock will pin them; until then a single run can name a revision explicitly with a '<name>=<40-hex sha>' entry in 'siblings'. Cloning a branch tip instead is precisely the unpinned, unreproducible fallback this action refuses to have."
-          exit 1
-        fi
-
-        # ------------------------------------------------------------------
-        # PASS 2 — clone, now that every revision is known and legal.
-        SIBLING_PATHS=""
-        for i in "${!NAMES[@]}"; do
-          name="${NAMES[$i]}"; owner="${OWNERS[$i]}"
-          rev="${REVS[$i]}"; src="${SRCS[$i]}"
-          WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
-          dest="${WORKSPACE_NORM}/../${name}"
-          echo "  ${owner}/${name} -> ${rev} (${src})"
-          # Credential-free URL; the scoped extraHeader in this step's
-          # environment authenticates it, and `git submodule update
-          # --recursive` inherits that environment at every depth — which is
-          # what keeps the PRIVATE submodule path working (codetracer's
-          # libs/tree-sitter-nim inside a public repo, codetracer-native-backend
-          # recursing into a private codetracer-rr) with nothing written to any
-          # `.git/config`.
-          #
-          # Failures are no longer discarded to /dev/null: an owner-scoped
-          # credential makes auth-denied a reachable configuration error, and
-          # the previous code produced no output at all for it.
-          bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
-            --repo "${owner}/${name}" --dest "${dest}" --rev "${rev}" \
-            --shallow --submodules-optional
-          SIBLING_PATHS="${SIBLING_PATHS} ${name}=$(cd "${dest}" && pwd)"
-        done
-        # Expose the clone locations for later steps (e.g. flake overrides).
-        echo "CT_SIBLING_PATHS=${SIBLING_PATHS# }" >> "${GITHUB_ENV}"
-        echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout."
+        # The two context values the runner exposes no environment variable
+        # for. Everything else the body needs — $GITHUB_ACTION_PATH,
+        # $GITHUB_EVENT_NAME, $GITHUB_SHA, $GITHUB_REPOSITORY,
+        # $GITHUB_WORKSPACE, $RUNNER_TEMP — is a builtin, so it reads them
+        # directly rather than through a `${{ }}` expression.
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        EVENT_BEFORE: ${{ github.event.before }}
+      run: bash "${GITHUB_ACTION_PATH}/clone-siblings.sh"
