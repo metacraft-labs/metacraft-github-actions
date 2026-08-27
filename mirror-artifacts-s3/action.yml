@@ -56,6 +56,15 @@ runs:
         AWS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
         AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
         AWS_EC2_METADATA_DISABLED: "true"
+        # AWS CLI v2 defaults to WHEN_SUPPORTED, which attaches a checksum
+        # algorithm to every PutObject and asks for one back. The in-house S3
+        # store does not implement that negotiation and rejects the request
+        # outright ("InvalidRequest: Bad request: invalid checksum algorithm"),
+        # so every upload failed while the step still exited 0. WHEN_REQUIRED
+        # keeps checksums for the operations the S3 API genuinely requires them
+        # on, and drops them elsewhere.
+        AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+        AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
         MCL_S3_PATH: ${{ inputs.path }}
         MCL_S3_PREFIX: ${{ inputs.prefix }}
       run: |
