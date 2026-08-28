@@ -539,11 +539,46 @@ done
 
 # The coupling from TASK 3, as wiring rather than as documentation: one input
 # value reaches both the sibling remote and the token scope.
+#
+# Stated as an INVARIANT over every occurrence rather than as an expected
+# count. It used to be "sibling-owner appears once, token-owner twice", which
+# is a fact about how many steps the action happened to have: `setup-dev-env`
+# now invokes `clone-siblings` a second time (the follow-on clone for whatever
+# a repo's committed `repro.lock` could not supply), and a literal count failed
+# on the addition of a step that was wired perfectly correctly. Worse, the
+# count would have PASSED had that new step hard-coded an owner while an
+# existing one was deleted. What the contract is actually about is that no
+# occurrence anywhere in the file is fed from anything other than the single
+# `token-owner` input — which is what these two check, at any number of steps.
 DEV_ENV="$ROOT/setup-dev-env/action.yml"
-check "setup-dev-env feeds sibling-owner from token-owner" \
-	"$(grep -cE '^[[:space:]]*sibling-owner:[[:space:]]*\$\{\{[[:space:]]*inputs\.token-owner[[:space:]]*\}\}[[:space:]]*$' "$DEV_ENV" || true)" "1"
-check "setup-dev-env feeds clone-siblings' token-owner from the same input" \
-	"$(grep -cE '^[[:space:]]*token-owner:[[:space:]]*\$\{\{[[:space:]]*inputs\.token-owner[[:space:]]*\}\}[[:space:]]*$' "$DEV_ENV" || true)" "2"
+count_owner_lines() { # <key> [--from-input]
+	local key="$1"
+	if [[ ${2:-} == "--from-input" ]]; then
+		grep -cE "^[[:space:]]*${key}:[[:space:]]*\\\$\{\{[[:space:]]*inputs\.token-owner[[:space:]]*\}\}[[:space:]]*\$" "$DEV_ENV" || true
+	else
+		grep -cE "^[[:space:]]*${key}:" "$DEV_ENV" || true
+	fi
+}
+# `token-owner:` also appears as the action's own input declaration, which is
+# a `token-owner:` line that is not an assignment; the totals below therefore
+# count only lines that assign a `${{ }}` expression.
+count_owner_assignments() { # <key>
+	grep -cE "^[[:space:]]*${1}:[[:space:]]*\\\$\{\{" "$DEV_ENV" || true
+}
+
+SIB_TOTAL="$(count_owner_assignments sibling-owner)"
+SIB_FROM="$(count_owner_lines sibling-owner --from-input)"
+check "setup-dev-env feeds every sibling-owner from token-owner" \
+	"${SIB_FROM}/${SIB_TOTAL}" "${SIB_TOTAL}/${SIB_TOTAL}"
+check "  and there is at least one to feed" "$((SIB_TOTAL > 0))" "1"
+
+TOK_TOTAL="$(count_owner_assignments token-owner)"
+TOK_FROM="$(count_owner_lines token-owner --from-input)"
+check "setup-dev-env feeds every token-owner from the same input" \
+	"${TOK_FROM}/${TOK_TOTAL}" "${TOK_TOTAL}/${TOK_TOTAL}"
+# One for `setup-nix` (the job-wide Git credential scope) and one per
+# `clone-siblings` invocation; fewer than two means the coupling is gone.
+check "  and it reaches setup-nix as well as clone-siblings" "$((TOK_TOTAL >= 2))" "1"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

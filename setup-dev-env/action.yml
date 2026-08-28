@@ -593,7 +593,7 @@ runs:
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@main
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@dev
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ steps.repro-siblings.outputs.late-siblings }}
