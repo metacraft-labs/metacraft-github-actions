@@ -8,13 +8,14 @@ description: >
   <cmd>` once reprobuild is available).
 
   This is a thin orchestrator over composable sub-actions:
-    - cross-repo sibling cloning (from the workspace lock) is delegated to
-      `metacraft-labs/metacraft-github-actions/clone-siblings` — it reads the
-      repo's `.github/sibling-repos` (or the `siblings` input). (The lock-based
-      sibling-resolution contract it implements is served for both workspace
-      tools — reprobuild `<sha>.toml` locks and legacy repo-workspaces
-      `<sha>.xml` locks; the action lives here in the public actions repo so it
-      is usable via `uses:` from any workflow.);
+    - cross-repo siblings come from one of two mechanisms, chosen by
+      `sibling-strategy` (default `auto`) and reported on one line every run:
+      `clone-siblings` (the workspace-PROJECT lock in `metacraft-manifests`,
+      via `metacraft-labs/metacraft-github-actions/clone-siblings`, reading the
+      repo's `.github/sibling-repos` or the `siblings` input; both lock layouts
+      are served — reprobuild `<sha>.toml` and legacy repo-workspaces
+      `<sha>.xml`), or `repro-lock` (the consuming repo's own committed
+      `repro.lock`, via `repro develop --all`);
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
     - the `reprobuild` flavor uses
@@ -43,6 +44,45 @@ inputs:
                             cached env; `dev-exec` becomes
                             `repro exec -- <cmd>`.
     required: true
+  sibling-strategy:
+    description: >
+      WHICH mechanism provisions this repo's cross-repo siblings. There are
+      two, they answer different questions, and until this input existed a
+      caller picked between them by hand:
+
+        - "clone-siblings" — resolve each sibling from the WORKSPACE-PROJECT
+              lock in `metacraft-manifests`. Those project manifests describe a
+              repo SET convenient for a human setting up a workspace: typically
+              a superset of what any one build needs, and not that build's
+              source of truth.
+        - "repro-lock"     — resolve each sibling from the consuming repo's own
+              committed `repro.lock` (the solved dependency graph of the build
+              itself, pinned to exact commit SHAs) via `repro develop --all`.
+              This is the consumer path `reprobuild-provision` already
+              documents; see the note on `env-flavor: reprobuild` below.
+        - "auto" (default) — decide, and say which and why.
+
+      `auto` picks `repro-lock` only when ALL of: a `repro.lock` at the
+      workspace root declares a solved-graph-lock schema; it pins at least one
+      SIBLING dependency (a dep whose `path` is not "."); `env-flavor` is
+      `reprobuild` (the one flavor where the `repro` CLI is installed anyway);
+      and the repo declares NO sibling list of its own. Otherwise it picks
+      `clone-siblings` and names the check that failed. It is conservative on
+      purpose: this action is consumed at `@main` fleet-wide, so a caller that
+      passes nothing today keeps behaving exactly as it does today.
+
+      A FORCED VALUE NEVER SILENTLY DOES NOTHING. `repro-lock` on a repo with
+      no usable committed lock FAILS, naming what is missing, rather than
+      quietly resolving from the manifests the caller was trying to stop using.
+      Forcing it also installs the `repro` CLI under any flavor, which `auto`
+      will not do on its own.
+
+      The decision — value, path taken, and reason — is printed on one line and
+      added to the job summary on EVERY run, including the default one. The
+      incident this input was written after was an invisible resolution; a
+      second invisible decision would be the same bug.
+    required: false
+    default: "auto"
   siblings:
     description: >
       Optional whitespace/newline-separated list of cross-repo
@@ -52,6 +92,21 @@ inputs:
       declared siblings (e.g. a fast `ci` job that does not need
       the full `codetracer` checkout that the cross-repo test job
       pulls). When empty, `.github/sibling-repos` is read.
+
+      UNDER `sibling-strategy` THIS IS NEVER SILENTLY IGNORED, on either path:
+
+        - `auto` treats a non-empty list (here or in
+          `.github/sibling-repos`) as a hand-declared set and keeps
+          `clone-siblings`, even when a usable `repro.lock` exists, saying so.
+          Such lists routinely name build-time siblings that are NOT
+          solved-graph dependencies — `reprobuild`'s own list names two —
+          and switching them to the lock would drop those siblings.
+        - forced `repro-lock` makes the lock authoritative and reconciles this
+          list against it: an entry the lock already pins is reported as
+          redundant, by name and locked revision, and dropped (any `=ref` it
+          carried with it); an entry the lock does not name is reported as
+          outside the lock and cloned ADDITIONALLY by a follow-on
+          `clone-siblings` step.
     required: false
     default: ""
   gh-token:
@@ -217,6 +272,39 @@ runs:
         esac
 
     # ------------------------------------------------------------------
+    # Cross-repo siblings (all flavors): WHICH mechanism, decided and said
+    #
+    # Two mechanisms exist and they answer different questions —
+    # `clone-siblings` reads the workspace-PROJECT lock (a repo set convenient
+    # for a human setting up a workspace, typically a superset of any one
+    # build's needs), `repro develop` reads the consuming repo's own committed
+    # `repro.lock` (the solved dependency graph of the build itself). Callers
+    # used to pick by hand, and a caller that picked wrong hand-wrote nine
+    # siblings through `clone-siblings` of which four were a DEPENDENCY's
+    # siblings that nothing could ever pin, failing every job on every pull
+    # request; the first fix for that silently un-pinned the four the lock had
+    # been pinning correctly.
+    #
+    # So the choice is made here, from evidence, and REPORTED — one line to the
+    # log and one to the job summary, on every run and every path. The whole
+    # incident was an invisible resolution; a second invisible decision would
+    # be the same bug.
+    #
+    # The rationale for each rule lives in decide-sibling-strategy.sh's header
+    # (a YAML comment out here costs the step template nothing; see
+    # .github/assert-composite-run-size.sh for why that matters).
+    # ------------------------------------------------------------------
+
+    - name: Decide the sibling-provisioning strategy
+      id: sibling-strategy
+      shell: bash
+      env:
+        SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
+        ENV_FLAVOR: ${{ inputs.env-flavor }}
+        SIBLINGS_INPUT: ${{ inputs.siblings }}
+      run: bash "${GITHUB_ACTION_PATH}/decide-sibling-strategy.sh"
+
+    # ------------------------------------------------------------------
     # Cross-repo siblings (all flavors)
     #
     # The repo declares which sibling repos its build/tests need in
@@ -233,6 +321,11 @@ runs:
     # ------------------------------------------------------------------
 
     - name: Clone cross-repo siblings from the workspace lock
+      # Skipped only when the step above chose the repro path, which resolves
+      # the same siblings from the repo's own committed lock instead. Every
+      # other caller reaches this step exactly as it did before this input
+      # existed.
+      if: ${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}
       uses: metacraft-labs/metacraft-github-actions/clone-siblings@dev
       with:
         gh-token: ${{ inputs.gh-token }}
@@ -430,16 +523,31 @@ runs:
     # Windows via reprobuild's own `env.ps1` DIY toolchain.  Both
     # paths drop a `repro` (or `repro.exe`) at a known location which
     # we then prepend to PATH.
+    #
+    # HOW THIS RELATES TO `sibling-strategy`. These two steps are NOT a third
+    # sibling mechanism and the repro path does not duplicate them. They
+    # provision REPROBUILD'S OWN build inputs — the flake inputs the `repro`
+    # CLI build needs — which is what `reprobuild-provision`'s own header says
+    # its remaining scope is. It also says, in the same header, that a CONSUMER
+    # project's from-source dependency siblings come from `repro develop --all`
+    # against the project's committed `repro.lock`. That consumer half is what
+    # `sibling-strategy: repro-lock` runs, below, and it is exactly why `auto`
+    # prefers the repro path under this flavor: the CLI it needs is installed
+    # here regardless. Under another flavor `auto` declines, because silently
+    # adding a from-source CLI build to a `nix` job is not a decision `auto`
+    # may take on its own — but a FORCED `repro-lock` gets the CLI installed
+    # under any flavor, which is what the two `|| ... == 'repro-lock'`
+    # conditions below are for.
     # ------------------------------------------------------------------
 
     - name: Provision reprobuild dependencies (reprobuild)
-      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       uses: metacraft-labs/reprobuild/.github/actions/reprobuild-provision@dev
       with:
         gh-token: ${{ inputs.gh-token }}
 
     - name: Install the repro CLI (reprobuild)
-      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@dev
       with:
         gh-token: ${{ inputs.gh-token }}
@@ -449,6 +557,52 @@ runs:
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
+
+    # ------------------------------------------------------------------
+    # sibling-strategy: repro-lock — the consumer half
+    #
+    # Runs only when the decision step chose the repro path, and only after the
+    # `repro` CLI exists, because the authoritative "is this lock usable"
+    # evidence is what the CLI reports: `repro develop --list --json`, which is
+    # read-only, needs no network and no token, and names the BACKEND that
+    # supplied each pin. The decision step's file-level probe is deliberately
+    # only enough to route the composite; see this script's header for the six
+    # checks that decide usability, for why a stale lock is not one of them,
+    # and for what happens to a declared `siblings:` list on this path.
+    # ------------------------------------------------------------------
+
+    - name: Provision cross-repo siblings from the committed repro.lock
+      id: repro-siblings
+      if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
+      shell: bash
+      env:
+        SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
+        SIBLINGS_INPUT: ${{ inputs.siblings }}
+      run: bash "${GITHUB_ACTION_PATH}/provision-siblings-from-lock.sh"
+
+    - name: Clone the siblings the repro.lock path did not provide
+      # Two mutually exclusive cases, one step, because both are "hand the
+      # remainder back to clone-siblings":
+      #   * `auto` chose the repro path and the CLI evidence did not hold up,
+      #     so `late-siblings` is the caller's own list (empty means
+      #     `.github/sibling-repos`, exactly as the early step would have read
+      #     it) — the fallback, taken loudly;
+      #   * a forced `repro-lock` had declared entries the lock does not name,
+      #     so `late-siblings` is precisely those, each already reported as
+      #     outside the lock.
+      # A forced `repro-lock` whose evidence fails never reaches here: it fails
+      # the step above instead.
+      if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@main
+      with:
+        gh-token: ${{ inputs.gh-token }}
+        siblings: ${{ steps.repro-siblings.outputs.late-siblings }}
+        sibling-owner: ${{ inputs.token-owner }}
+        token-owner: ${{ inputs.token-owner }}
+        manifests-ref: ${{ inputs.manifests-ref }}
+        private-manifests-repo: ${{ inputs.private-manifests-repo }}
+        private-manifests-ref: ${{ inputs.private-manifests-ref }}
+        on-lock-override: ${{ inputs.on-lock-override }}
 
     - name: Configure reprobuild binary-cache publishing (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.repro-publish-key != '' && inputs.repro-publish-cert != '' }}
