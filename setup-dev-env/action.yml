@@ -233,7 +233,7 @@ runs:
     # ------------------------------------------------------------------
 
     - name: Clone cross-repo siblings from the workspace lock
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@main
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@dev
       with:
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
@@ -256,7 +256,7 @@ runs:
 
     - name: Setup Nix
       if: ${{ inputs.env-flavor == 'nix' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-nix@main
+      uses: metacraft-labs/metacraft-github-actions/setup-nix@dev
       with:
         gh-token: ${{ inputs.gh-token }}
         token-owner: ${{ inputs.token-owner }}
