@@ -45,8 +45,17 @@ jobs:
       - name: clone-siblings step contract suite
         run: bash clone-siblings/clone-siblings-step-test.sh
 
+      # `setup-dev-env` now CHOOSES between clone-siblings and the consuming
+      # repo's own `repro.lock`, so a defect in that choice is not a wrong
+      # revision — it is the wrong mechanism, silently, which is the failure
+      # mode the whole sibling-resolution contract exists to prevent. Same
+      # stock runner: the suite stubs only the `repro` CLI (a compiled binary
+      # from another repo) and runs the shipped scripts against real files.
+      - name: sibling-strategy step contract suite
+        run: bash setup-dev-env/sibling-strategy-step-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/sibling-strategy-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit
