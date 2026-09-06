@@ -27,8 +27,21 @@ description: >
   fetching this repo to read `setup-dev-env`.
 
   This action does not read the reprobuild worktree: `install-release.sh`
-  comes along via `${{ github.action_path }}`, and the source-build fallback
-  clones reprobuild itself, at that point and only then.
+  comes along via the `github.action_path` context, and the source-build
+  fallback clones reprobuild itself, at that point and only then.
+
+  Name that context in prose only, as `github.action_path`. Do NOT write it in
+  the double-brace expression form anywhere in this field: GitHub's
+  action-manifest parser EVALUATES expressions inside `description:`, against a
+  context that has no `github`. Written that way it is not a quotation, it is a
+  template error, and it fails every consumer's `Set up job` before its first
+  step with
+
+    Unrecognized named-value: 'github'. Located at position 1 within
+    expression: github.action_path
+
+  which is how this was found: on the run that confirmed the 546 MB archive had
+  left the critical path.
 
 inputs:
   gh-token:
