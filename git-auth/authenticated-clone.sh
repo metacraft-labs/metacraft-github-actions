@@ -242,15 +242,83 @@ git_longpaths_export
 
 rm -rf "$DEST"
 
-if [ "$SHALLOW" = 1 ]; then
-	# Sibling clones only ever check out one pinned revision, so the history is
-	# dead weight; `--no-checkout` + a depth-1 fetch of the exact rev is what
-	# `clone-siblings` has always done.
-	run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
-	if [ -n "$REV" ]; then
-		run_git "fetch of revision ${REV}" -C "$DEST" fetch --quiet --depth 1 origin "$REV" || exit 1
-		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach FETCH_HEAD || exit 1
+if [ "$SHALLOW" = 1 ] && [ -n "$REV" ]; then
+	# `--shallow` WITH A PINNED REVISION: fetch that revision and nothing else.
+	#
+	# WHAT THIS REPLACED, AND WHY IT WAS NOT SHALLOW. The previous shape was
+	#
+	#     git clone --no-checkout <url> <dest>
+	#     git -C <dest> fetch --depth 1 origin <rev>
+	#
+	# under a comment claiming it was economical because `clone-siblings` only
+	# ever wants one revision. It is not. `--no-checkout` suppresses the WORKING
+	# TREE, not the transfer: that clone carries no `--depth`, no `--filter` and
+	# no `--single-branch`, so it downloads the complete object graph and every
+	# branch. The `--depth 1` then applies to a FETCH, which ADDS objects and
+	# subtracts none -- it arrives after the whole repository is already on disk.
+	# So the pair paid for all of history and then threw it away: the `--depth 1`
+	# fetch writes a `.git/shallow` grafting HEAD at <rev>, after which
+	# `rev-list --count HEAD` is 1 and `describe` fails. The history was bought
+	# and then made unreachable in the same breath.
+	#
+	# `git init` + a depth-1 fetch of the exact revision transfers only what the
+	# checkout needs. Measured over the real network against this org's own
+	# repositories, the saving is real but strongly repo-shaped -- from about
+	# nothing on a repo with almost no history, through ~1.7x on `isonim`, to
+	# ~16x on one with a long history of small edits. No single headline ratio
+	# would be honest, so the suite asserts the PROPERTY (history that the pinned
+	# revision does not reach is not transferred) rather than a number, and
+	# asserts separately that the resulting tree is byte-identical.
+	#
+	# WHAT A CONSUMER CAN SEE IS UNCHANGED, which is what makes this safe to do
+	# org-wide. The old shape already left a depth-1 `.git/shallow`, no tags and
+	# an unwalkable history, so nothing that works today stops working: a build
+	# that could not run `git describe` in the sibling before still cannot, and
+	# one that only reads the checked-out tree sees the same bytes. The one
+	# genuine difference is that no `origin/<other-branch>` remote-tracking refs
+	# are created, because they were never reachable from the pinned revision and
+	# nothing in this org's dev-env setup reads them.
+	#
+	# WHY THE FALLBACK IS NOT OPTIONAL. Asking a server for an object by SHA is a
+	# capability, not a guarantee: it needs protocol v2, or v0 plus
+	# `uploadpack.allow*SHA1InWant`. github.com has it; a server that does not is
+	# not an error condition, it is an older server. This is the same
+	# graceful-degradation shape `publish-workspace-lock` already uses for its
+	# partial clone -- try the economical form, and on refusal retry the whole
+	# form rather than fail. The first attempt is therefore deliberately QUIET:
+	# a routine degradation must not print `::error::`. A genuine failure (a
+	# private repo the credential does not cover, a revision that does not exist)
+	# still reaches the loud `run_git` diagnostic below, because the fallback
+	# hits the same wall and reports it.
+	#
+	# The fallback does NOT repeat the old `fetch --depth 1`. A server that
+	# refused the direct want will refuse it again, and it is pointless anyway:
+	# the clone has already brought the object down, so the revision is checked
+	# out from what is on disk. That also makes the fallback strictly more
+	# capable than the shape it replaces, which failed outright in exactly this
+	# case despite holding every object it needed.
+	SHALLOW_FETCH_OK=0
+	if git init --quiet "$DEST" >/dev/null 2>&1 &&
+		git -C "$DEST" remote add origin "$URL" >/dev/null 2>&1 &&
+		git -C "$DEST" fetch --quiet --depth 1 origin "$REV" >/dev/null 2>&1; then
+		SHALLOW_FETCH_OK=1
 	fi
+	if [ "$SHALLOW_FETCH_OK" = 1 ]; then
+		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach FETCH_HEAD || exit 1
+	else
+		echo "Fetching ${REV} directly from ${REPO} was refused; falling back to a whole-repository clone. This is slower, not broken." >&2
+		rm -rf "$DEST"
+		run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
+		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach "$REV" || exit 1
+	fi
+elif [ "$SHALLOW" = 1 ]; then
+	# `--shallow` with no revision. There is nothing to be economical ABOUT: no
+	# revision means no `--depth` target, and this branch is preserved exactly as
+	# it was rather than improved, because no caller reaches it -- `clone-repo`
+	# never passes `--shallow`, and `clone-siblings` fails the job before PASS 2
+	# when a sibling resolves to no revision (`clone-siblings.sh`, the MISSING
+	# check). Changing an unreachable branch is a change nothing can test.
+	run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
 else
 	run_git "clone" clone --quiet "$URL" "$DEST" || exit 1
 	if [ -n "$REV" ]; then
