@@ -1,0 +1,42 @@
+name: assert-workflow-triggers
+description: >
+  Fail when a workflow's push / pull_request branch filters do not name the
+  branch this repository actually merges into. A filter naming a branch the
+  repository does not have produces no error and no run, and an empty check
+  list on a mainline commit is indistinguishable from a clean one.
+
+inputs:
+  mainline:
+    description: >
+      The branch completed work merges into. Leave empty to detect it from the
+      branches that exist on origin, in branching-policy order - dev, then
+      latest, then live. Forks whose mainline is a product name, such as
+      codetracer or isonim, must state it here; detection has no fallback and
+      will refuse rather than guess.
+    required: false
+    default: ''
+  workflows:
+    description: >
+      Optional space-separated list of workflow files to check. Defaults to
+      every file under .github/workflows.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: workflow branch filters name the mainline
+      shell: bash
+      env:
+        WORKFLOW_MAINLINE_BRANCH: ${{ inputs.mainline }}
+        WORKFLOWS: ${{ inputs.workflows }}
+        # The guard ships in THIS action's checkout; the tree it must inspect
+        # is the caller's. They are different repositories, so the root is
+        # passed explicitly rather than inferred from the script's location.
+        WORKFLOW_TRIGGERS_ROOT: ${{ github.workspace }}
+        GUARD_DIR: ${{ github.action_path }}
+      run: |
+        set -uo pipefail
+        # shellcheck disable=SC2086 # deliberate word splitting of the file list
+        bash "$GUARD_DIR/../.github/assert-workflow-triggers-mainline.sh" \
+          "$WORKFLOW_MAINLINE_BRANCH" $WORKFLOWS
