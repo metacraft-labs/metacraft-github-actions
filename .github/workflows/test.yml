@@ -11,7 +11,16 @@ name: test
 
 on:
   push:
-    branches: [main]
+    # `dev`, not `main`. This repository's mainline was renamed and there is no
+    # `main` branch, so this trigger matched nothing: every guard below ran on
+    # pull requests and manual dispatch only, and a push straight to the
+    # mainline — which is how a shared-actions repo is usually corrected in a
+    # hurry — ran no check at all. That is not a hypothetical: the archive-size
+    # guard and the manifest-prose guard were each added after a defect that
+    # reached all 64 consuming repos, and the second of those two defects was
+    # itself pushed directly to the mainline past a suite that could have
+    # caught it, because this line said `main`.
+    branches: [dev]
   pull_request:
   workflow_dispatch:
 
