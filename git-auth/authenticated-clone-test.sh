@@ -408,7 +408,200 @@ check "...and nothing was committed" \
 	"$(git -C "$TMPROOT/poison" log -1 --format=%s 2>/dev/null)" "init"
 
 # ===========================================================================
-# 5. Nothing the scripts print carries the credential.
+# 5. `--shallow` is economical -- and the tree is unchanged by being so.
+#
+# WHY THIS IS ASSERTED AS AN ABSENT OBJECT AND NOT AS A BYTE COUNT. A byte
+# threshold over a network is a measurement of the machine and the day: it
+# drifts with the pack heuristics, the git version and how the fixture happens
+# to delta-compress, and a test that fails on a fast laptop and passes in CI is
+# worse than no test. So the fixture is built so the economy has a NAME. One
+# early commit adds a large blob; a later commit deletes it; the pinned revision
+# is after the deletion. That blob is therefore unreachable from the pin and
+# reachable from history, which makes "did this transfer history?" a question
+# with a yes/no answer: `git cat-file -e <blob>` in the resulting clone.
+#
+# The shape this replaces answered YES. It ran `git clone --no-checkout`, which
+# has no `--depth`, no `--filter` and no `--single-branch`, so it downloaded the
+# complete object graph; the `--depth 1` that followed was on a FETCH, which
+# adds objects and subtracts none. The comment above it claimed the opposite.
+# `legacy_shallow_clone` below is that shape, reproduced, so the assertion is
+# shown to be capable of failing -- the same mutation convention section 2 uses.
+# ===========================================================================
+
+# A repository with real history: a big blob added early, deleted late.
+# The blob's content is deterministic (a seeded PRNG) so its object id is
+# stable, and incompressible enough that it cannot be delta'd into nothing.
+HIST_WORK="$TMPROOT/build/history"
+git_q init --bare -b main "$SRV/metacraft-labs/history.git"
+mkdir -p "$HIST_WORK"
+git_q -C "$HIST_WORK" init -b main .
+python3 -c "
+import random, sys
+r = random.Random(20260906)
+sys.stdout.buffer.write(bytes(r.getrandbits(8) for _ in range(1 << 20)))
+" >"$HIST_WORK/big.bin"
+printf 'v1\n' >"$HIST_WORK/README"
+git_q -C "$HIST_WORK" add big.bin README
+git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "add big" >/dev/null 2>&1
+BIG_BLOB="$(git -C "$HIST_WORK" rev-parse HEAD:big.bin)"
+for n in 2 3 4 5; do
+	printf 'v%s\n' "$n" >"$HIST_WORK/README"
+	git_q -C "$HIST_WORK" add README
+	git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "edit $n" >/dev/null 2>&1
+done
+git_q -C "$HIST_WORK" rm -q big.bin
+git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "drop big" >/dev/null 2>&1
+HIST_SHA="$(git -C "$HIST_WORK" rev-parse HEAD)"
+git_q -C "$HIST_WORK" push "$SRV/metacraft-labs/history.git" main
+
+# `legacy_shallow_clone <repo> <rev> <dest>` -- the `--shallow` arm as it was
+# before this change, reproduced verbatim. THIS IS THE MUTATION.
+#
+# It authenticates the way `legacy_clone` above does, with the token in the URL,
+# for the same reason: the point is to reproduce the OLD SHAPE, and reproducing
+# it means getting a populated clone out of it. An unauthenticated attempt would
+# produce an empty directory, and an empty directory holds no blob -- which
+# would make the mutation assertion below pass for the wrong reason, the exact
+# false-pass this suite's header is about. It runs in the LEGACY sandbox so the
+# credential it stores cannot answer for a later assertion.
+legacy_shallow_clone() {
+	local repo="$1" rev="$2" dest="$3"
+	local tok="${BASE%%//*}//x-access-token:${TOKEN}@${BASE#*//}"
+	rm -rf "$dest"
+	sandboxed_legacy git clone --no-checkout --quiet "${tok}${repo}.git" "$dest" >/dev/null 2>&1
+	sandboxed_legacy git -C "$dest" fetch --quiet --depth 1 origin "$rev" >/dev/null 2>&1
+	sandboxed_legacy git -C "$dest" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1
+}
+
+has_object() { # <dir> <oid> -> yes/no
+	if sandboxed git -C "$1" cat-file -e "$2" >/dev/null 2>&1; then echo yes; else echo no; fi
+}
+# `held_objects <dir>` -- how many objects the clone PHYSICALLY holds.
+#
+# Deliberately `count-objects`, not `rev-list --objects --all`. The two answer
+# different questions and only one of them is "what did this transfer":
+# `rev-list` measures REACHABILITY, and the shape this replaces ends with a
+# `.git/shallow` grafting the history at the pinned revision, so `rev-list`
+# reports the same small number for both shapes while one of them has the whole
+# repository on disk. That is precisely the illusion the old comment traded on.
+held_objects() { # <dir> -> loose + packed
+	local loose packed k v
+	loose=0
+	packed=0
+	while read -r k v; do
+		case "$k" in
+		count:) loose="$v" ;;
+		in-pack:) packed="$v" ;;
+		esac
+	done < <(sandboxed git -C "$1" count-objects -v 2>/dev/null)
+	echo "$((loose + packed))"
+}
+tree_id() { # <dir> -> the id of the checked-out tree
+	sandboxed git -C "$1" rev-parse 'HEAD^{tree}' 2>/dev/null
+}
+
+run_clone hist --repo metacraft-labs/history --dest "$TMPROOT/hist" \
+	--rev "$HIST_SHA" --shallow
+check "the economical --shallow arm clones a pinned revision" "$CASE_RC" "0"
+check "  and checks the revision out" \
+	"$(sandboxed git -C "$TMPROOT/hist" rev-parse HEAD)" "$HIST_SHA"
+
+legacy_shallow_clone metacraft-labs/history "$HIST_SHA" "$TMPROOT/hist-legacy"
+# The mutation has to have WORKED to be worth comparing against. A legacy clone
+# that silently produced nothing would satisfy every "fewer than" assertion
+# below by being empty.
+check "mutation: the shape this replaces produced a real clone" \
+	"$(sandboxed_legacy git -C "$TMPROOT/hist-legacy" rev-parse HEAD 2>/dev/null)" "$HIST_SHA"
+
+# THE PROPERTY. The blob is unreachable from the pinned revision, so an
+# economical clone has no reason to hold it.
+check "a blob deleted before the pinned revision is NOT transferred" \
+	"$(has_object "$TMPROOT/hist" "$BIG_BLOB")" "no"
+# MUTATION: the same probe on the shape this replaces. If this says "no", the
+# assertion above is vacuous -- it would pass against the unfixed script.
+check "mutation: the shape this replaces DID transfer it" \
+	"$(has_object "$TMPROOT/hist-legacy" "$BIG_BLOB")" "yes"
+
+NEW_OBJS="$(held_objects "$TMPROOT/hist")"
+OLD_OBJS="$(held_objects "$TMPROOT/hist-legacy")"
+check "strictly fewer objects than the shape this replaces" \
+	"$((NEW_OBJS < OLD_OBJS))" "1"
+# The fixture has six commits; the pinned revision needs one commit, one tree
+# and one blob. Anything close to the legacy count would mean history came
+# down anyway, so the margin is stated rather than left to "strictly fewer".
+check "  and the reduction is history-sized, not incidental ($NEW_OBJS vs $OLD_OBJS)" \
+	"$((OLD_OBJS - NEW_OBJS >= 10))" "1"
+
+# ...and none of that changed the answer. Same tree id, and the working files
+# are the ones the revision names.
+check "the resulting tree is identical to the one the old shape produced" \
+	"$(tree_id "$TMPROOT/hist")" "$(tree_id "$TMPROOT/hist-legacy")"
+check "the working tree holds the pinned revision's content" \
+	"$(cat "$TMPROOT/hist/README" 2>/dev/null)" "v5"
+check "  and not the file the pinned revision deleted" \
+	"$([[ -e $TMPROOT/hist/big.bin ]] && echo present || echo absent)" "absent"
+
+# The economy must not have cost the credential contract, which is what the
+# rest of this suite exists for. A private repo is still reached with a
+# matching credential, and still writes nothing down.
+V="$(journal_verdicts "/metacraft-labs/history.git/info/refs")"
+case "$V" in
+*ok*) ok "the economical arm still authenticates through the scoped header" ;;
+*) bad "the economical arm still authenticates through the scoped header" "journal said: ${V:-<nothing>}" ;;
+esac
+check "the economical arm writes no credential to disk" \
+	"$(credential_files "$TMPROOT/hist" | grep -c . || true)" "0"
+check "  and records a credential-free remote" \
+	"$(sandboxed git -C "$TMPROOT/hist" config --get remote.origin.url)" \
+	"${BASE}metacraft-labs/history.git"
+
+# ---------------------------------------------------------------------------
+# 5b. The fallback, exercised for real: a server that will not serve an object
+# by id.
+#
+# Asking for a revision by SHA is a server CAPABILITY. Protocol v2 always
+# offers it; protocol v0 offers it only when the repository sets one of the
+# `uploadpack.allow*SHA1InWant` switches. A server that does neither is not
+# broken, it is old -- and `publish-workspace-lock` already treats exactly this
+# case as "retry whole", which is the shape this fallback copies.
+#
+# NOT A MOCK. Both halves are real git: the served repository really does
+# refuse unadvertised objects, and the client really does speak v0. Nothing
+# about `authenticated-clone.sh` is stubbed, replaced or told it is under test;
+# it discovers the refusal the same way it would against an old server.
+git_q init --bare -b main "$SRV/metacraft-labs/oldserver.git"
+git_q -C "$HIST_WORK" push "$SRV/metacraft-labs/oldserver.git" main
+for k in allowAnySHA1InWant allowReachableSHA1InWant allowTipSHA1InWant; do
+	git_q -C "$SRV/metacraft-labs/oldserver.git" config "uploadpack.${k}" false
+done
+# A revision that is NOT the branch tip, so it is not advertised and the
+# refusal is reached rather than dodged.
+OLD_SHA="$(git -C "$HIST_WORK" rev-parse 'HEAD~1')"
+
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.version GIT_CONFIG_VALUE_0=0 \
+	run_clone oldsrv --repo metacraft-labs/oldserver --dest "$TMPROOT/oldsrv" \
+	--rev "$OLD_SHA" --shallow
+check "a server that refuses an object-by-id request still yields a clone" "$CASE_RC" "0"
+check "  at exactly the pinned revision" \
+	"$(sandboxed git -C "$TMPROOT/oldsrv" rev-parse HEAD)" "$OLD_SHA"
+check "  with the revision's content" \
+	"$(cat "$TMPROOT/oldsrv/README" 2>/dev/null)" "v5"
+# Non-vacuity: the fallback must have been REACHED. If the economical path had
+# quietly succeeded here, the assertions above would pass without testing the
+# fallback at all.
+if grep -q "falling back to a whole-repository clone" "$TMPROOT/oldsrv.out"; then
+	ok "  by taking the fallback, not by the economical path succeeding"
+else
+	bad "  by taking the fallback, not by the economical path succeeding" \
+		"the run never reported a fallback: $(head -c 400 "$TMPROOT/oldsrv.out")"
+fi
+check "  and the degradation is not reported as an error" \
+	"$(grep -c '::error::' "$TMPROOT/oldsrv.out" || true)" "0"
+check "  and it still wrote no credential" \
+	"$(credential_files "$TMPROOT/oldsrv" | grep -c . || true)" "0"
+
+# ===========================================================================
+# 6. Nothing the scripts print carries the credential.
 # ===========================================================================
 LEAKED=0
 for f in "$TMPROOT"/*.out; do
@@ -436,7 +629,7 @@ fi
 check "...without printing the token" "$(grep -cF "$TOKEN" "$TMPROOT/denied.out" || true)" "0"
 
 # ===========================================================================
-# 6. The scoping library's own contracts.
+# 7. The scoping library's own contracts.
 # ===========================================================================
 lib_case() { # runs a snippet with the library sourced, prints its output
 	env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" bash -c "
@@ -514,7 +707,7 @@ OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" TOKEN_OWNERS="metacraft-labs blocksen
 check "owners that agree are accepted silently" "$?|$OUT" "0|"
 
 # ===========================================================================
-# 7. Static contracts over the two action.yml files.
+# 8. Static contracts over the two action.yml files.
 #
 # These are what fail against `main` on inspection alone, and they are cheap
 # enough to be worth pinning: the defect is a single grep-visible shape, and a
