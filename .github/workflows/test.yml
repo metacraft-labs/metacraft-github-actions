@@ -239,5 +239,23 @@ jobs:
       - name: manifest-prose guard contract suite
         run: bash .github/assert-no-expression-in-manifest-prose-test.sh
 
+      # Fourth property of the same class, and the one this workflow is itself
+      # the cautionary tale for. The `branches:` line above said `main` while
+      # this repository's mainline was `dev`, so every guard in this file ran
+      # on pull requests only and a push straight to the mainline — how a
+      # shared-actions repo is usually corrected in a hurry — ran nothing. The
+      # failure is silent by construction: an empty check list on a mainline
+      # commit looks exactly like a clean one. A sweep afterwards found the
+      # same defect in 33 workflows across 22 repositories.
+      #
+      # Needs no network here: the mainline is stated rather than detected, so
+      # the guard cannot be quietly satisfied by a runner that cannot reach
+      # origin.
+      - name: workflow branch filters name the mainline
+        run: bash .github/assert-workflow-triggers-mainline.sh dev
+
+      - name: mainline-trigger guard contract suite
+        run: bash .github/assert-workflow-triggers-mainline-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
