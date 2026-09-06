@@ -540,15 +540,53 @@ runs:
     # conditions below are for.
     # ------------------------------------------------------------------
 
+    # WHY THESE TWO ACTIONS LIVE IN THIS REPO AND NOT IN `reprobuild`.
+    #
+    # They used to be referenced as
+    # `metacraft-labs/reprobuild/.github/actions/<name>@dev`, and that single
+    # `uses:` was enough to break every Windows job in the org.
+    #
+    # GitHub materialises a composite action by downloading its WHOLE
+    # REPOSITORY as a zip, and it resolves the entire action graph during
+    # `Set up job` — BEFORE any `if:` is evaluated. So the two conditions above
+    # bought nothing: a `windows-diy` job, which can never take either step,
+    # still paid for the archive. Measured from codeload:
+    #
+    #   metacraft-labs/reprobuild@dev                  545,765,842 bytes
+    #   metacraft-labs/metacraft-github-actions@dev        185,806 bytes
+    #
+    # The runner applies a fixed 100-second HttpClient.Timeout per action
+    # download, so 546 MB had to sustain 5.46 MB/s inside the guest or die.
+    # It died, three attempts deep, 8m16s into `Set up job`, before `env.ps1`
+    # or any workflow step ran. Four other action archives on the same
+    # connection minutes earlier (189 KB, 492 KB, ...) were fine: the
+    # discriminator was size, not the network.
+    #
+    # Moving them here costs ZERO additional download. The runner keys action
+    # archives by repo@sha, so `setup-dev-env`, `clone-siblings`, `setup-nix`
+    # and now these two all arrive in the one 186 KB archive the job was
+    # already fetching to read THIS file. The 546 MB archive leaves the
+    # critical path of every job in every consumer repo outright, rather than
+    # being made less likely to time out.
+    #
+    # Nothing was lost by relocating them: neither action reads the reprobuild
+    # worktree. `setup-reprobuild` resolves its helper through
+    # `${{ github.action_path }}` (which travels with the action) and clones
+    # reprobuild itself at runtime, only on the source-build fallback.
+    #
+    # `.github/assert-action-archive-size.sh` now measures the real archive of
+    # every repo this one reaches into, so the next `uses:` that points at a
+    # large repo fails HERE instead of in a consumer's `Set up job`.
+
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/reprobuild/.github/actions/reprobuild-provision@dev
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@dev
       with:
         gh-token: ${{ inputs.gh-token }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/reprobuild/.github/actions/setup-reprobuild@dev
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@dev
       with:
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}

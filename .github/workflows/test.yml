@@ -179,8 +179,20 @@ jobs:
     # repo in the org down at once, which is what happened on 2026-08-26 when
     # `clone-siblings` grew 1,419 characters of comment.
     #
-    # Same stock runner as the suites above: this one reads YAML with bash and
-    # counts characters. It needs no Nix, no secrets and no network.
+    # The archive-size guard below is the same CLASS of problem, which is why it
+    # shares this job: a property of what this repo publishes that fails inside
+    # SOMEBODY ELSE'S `Set up job`, before their first step, and that no suite
+    # above can see because they all extract a step body and run it locally.
+    # The runner downloads a `uses:` target's WHOLE repository against a fixed
+    # 100-second timeout, so a nested `uses:` into a large repo takes every
+    # consumer down; `metacraft-labs/reprobuild@dev` at 546 MB did exactly that
+    # to the Windows lane. See .github/assert-action-archive-size.sh.
+    #
+    # Same stock runner as the suites above. The template-limit check reads YAML
+    # with bash and needs no network; the archive-size check does need network,
+    # because codeload advertises no Content-Length and ignores Range, so a size
+    # can only be measured by downloading (bounded to the budget, ~32 MiB worst
+    # case). Neither needs Nix or secrets.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -193,5 +205,19 @@ jobs:
       - name: "composite run: bodies stay inside the template limit"
         run: bash .github/assert-composite-run-size.sh
 
+      - name: referenced action archives stay downloadable in 100s
+        env:
+          # Only to authenticate the codeload fetches; the guard reads sizes and
+          # nothing else. Anonymous access is rate-limited per IP and the whole
+          # runner fleet shares one, which would turn a pass into an
+          # unmeasurable-archive failure.
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/assert-action-archive-size.sh
+
+      - name: archive-size guard contract suite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/assert-action-archive-size-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh
