@@ -219,5 +219,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/assert-action-archive-size-test.sh
 
+      # Third property of the same class: one manifest, every consumer, before
+      # any step they could have used to notice. An action's `description:` is
+      # evaluated, not quoted, and against a context with no `github` — so a
+      # comment written as an expression is a parse error in all 64 consuming
+      # repos. Needs no network.
+      - name: manifest prose carries no evaluated expressions
+        run: bash .github/assert-no-expression-in-manifest-prose.sh
+
+      - name: manifest-prose guard contract suite
+        run: bash .github/assert-no-expression-in-manifest-prose-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh
