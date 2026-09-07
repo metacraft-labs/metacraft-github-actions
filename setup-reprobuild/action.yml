@@ -249,19 +249,39 @@ runs:
       shell: bash
       env:
         REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        GH_TOKEN: ${{ inputs.gh-token }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
       run: |
         # Reprobuild's CI matrix builds `repro` on every push, so the
         # default-branch tip is always a known-good source tree. Honour an
         # optional pin so repos can lock reprobuild to a known SHA across runs.
+        #
+        # THIS GOES THROUGH `authenticated-clone.sh` and not a bare `git clone`.
+        # `metacraft-labs/reprobuild` is PUBLIC, and git does not send a URL's
+        # credential to a repository that never answers 401 -- so a plain clone
+        # here is anonymous, and anonymous github.com traffic is rate-limited
+        # per IP across this org's whole ephemeral-runner fleet. It is a 546 MB
+        # repository, which makes it the single worst clone in this repo to be
+        # doing on the shared anonymous budget. See
+        # `reprobuild-provision/provision-reprobuild-siblings.sh` for the full
+        # account of the same defect on the sibling path.
+        #
+        # The previous shape also sent the first attempt's stderr to
+        # /dev/null, so the rate-limit message -- the one line that says what
+        # actually went wrong -- was discarded, and the fallback then failed
+        # with no explanation at all. `authenticated-clone.sh` prints git's own
+        # output, scrubbed, naming the repository.
+        set -uo pipefail
         REF="${REPRO_BUILD_PIN:-dev}"
         DEST="${GITHUB_WORKSPACE}/.reprobuild-src"
-        rm -rf "${DEST}"
-        if ! git clone --depth 1 --branch "${REF}" --single-branch \
-          "https://github.com/metacraft-labs/reprobuild.git" "${DEST}" 2>/dev/null; then
-          rm -rf "${DEST}"
-          git clone --no-checkout "https://github.com/metacraft-labs/reprobuild.git" "${DEST}"
-          git -C "${DEST}" checkout "${REF}"
-        fi
+        . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
+        export TOKEN_OWNERS="metacraft-labs"
+        export SCOPED_GIT_AUTH_MASK=1
+        scoped_git_auth_build || exit 1
+        scoped_git_auth_export
+        scoped_git_auth_report
+        bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
+          --repo metacraft-labs/reprobuild --dest "${DEST}" --rev "${REF}" --shallow
 
     - name: Install Nix (Linux/macOS, to build repro)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' }}

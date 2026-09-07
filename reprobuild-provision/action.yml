@@ -29,102 +29,50 @@ description: >
   locked dep in develop mode. When reprobuild joins the lock contract, these
   remaining pins move to reprobuild's own lock too.
 
+  HOW THE CREDENTIAL REACHES THESE CLONES, AND WHY IT USED NOT TO. Every clone
+  below goes through `../git-auth/authenticated-clone.sh`: a credential-free URL
+  plus an owner-scoped `http.<url>.extraHeader`. The previous shape put the
+  token in the URL, which git only sends AFTER a 401 -- so the PUBLIC siblings
+  in these lists (`runquota`, `io-mon`, `nim-stackable-hooks`, `codetracer`)
+  were cloned entirely anonymously, and died on GitHub's per-IP unauthenticated
+  download limit that the whole ephemeral-runner fleet shares. The long-form
+  account is at the top of `provision-reprobuild-siblings.sh`.
+
+  ONE CLONE HERE IS STILL ANONYMOUS AND CANNOT BE FIXED FROM THIS REPO:
+  `status-im/nim-bearssl`, on the Windows path. The CI credential is a GitHub
+  App installation token for `metacraft-labs`; authenticating a `status-im`
+  URL would need either an installation of that app in the `status-im` org
+  (which is not ours to create) or a separate credential passed in as a new
+  input. Until one exists, that single clone keeps the old exposure, and says
+  so in the log rather than pretending otherwise.
+
 inputs:
   gh-token:
     description: GitHub token (CI App token) for cloning private metacraft-labs repos.
     required: false
     default: ""
+  sibling-owner:
+    description: >
+      The GitHub owner these siblings are cloned from, and the owner the CI
+      credential is scoped to. One knob for both, for the reason
+      `clone-siblings` gives under its input of the same name: when the two can
+      disagree, a mismatch surfaces as a bare 404 on a private repo and reads
+      as a typo rather than as an auth failure.
+    required: false
+    default: "metacraft-labs"
 
 runs:
   using: composite
   steps:
-    - name: Clone reprobuild flake-input siblings (Linux/macOS)
-      # Reprobuild's flake.nix references private metacraft-labs repos
-      # (codetracer-native-recorder, runquota) as flake inputs. The default
-      # repo-scoped token can't read sibling private repos via the tarball URL,
-      # so clone them adjacent and override the flake inputs to local paths.
-      if: ${{ runner.os != 'Windows' }}
+    # ONE step, not two. The Linux/macOS and Windows lists used to be separate
+    # steps discriminated by `if: runner.os`, which meant two copies of the
+    # clone logic and -- as it turned out -- two copies of the credential
+    # defect, fixed in neither. The script branches on $RUNNER_OS internally,
+    # so there is one place where a clone is spelled.
+    - name: Provision reprobuild dependency siblings
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.gh-token }}
-      run: |
-        set -euo pipefail
-        WS="${GITHUB_WORKSPACE}"
-        for entry in \
-          "codetracer-native-recorder:stable" \
-          "runquota:main" \
-        ; do
-          name="${entry%%:*}"
-          ref="${entry##*:}"
-          dest="${WS}/${name}"
-          rm -rf "${dest}"
-          git clone --depth 1 --branch "${ref}" --single-branch \
-            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-            "${dest}"
-        done
-
-    - name: Clone reprobuild env.ps1 sibling deps (Windows)
-      # The Windows reprobuild env.ps1 dot-sources ../repo-workspaces/env.ps1
-      # (toolchain bootstrap) and reads sibling repos for source-only Nim deps:
-      #   repo-workspaces, codetracer (nim-* submodules), runquota,
-      #   nim-stackable-hooks, and status-im/nim-bearssl.
-      # These must be siblings of the reprobuild checkout, i.e. under
-      # $GITHUB_WORKSPACE.
-      if: ${{ runner.os == 'Windows' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.gh-token }}
-      run: |
-        set -euo pipefail
-        WS="${GITHUB_WORKSPACE}"
-        clone_repo() {
-          local name="$1"
-          local ref="$2"
-          local dest="${WS}/${name}"
-          local submodule_flags="${3:-}"
-
-          rm -rf "${dest}"
-          if ! git clone --depth 1 --branch "${ref}" --single-branch ${submodule_flags} \
-            "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-            "${dest}"; then
-            rm -rf "${dest}"
-            git clone --depth 1 ${submodule_flags} \
-              "https://x-access-token:${GH_TOKEN}@github.com/metacraft-labs/${name}.git" \
-              "${dest}"
-          fi
-        }
-
-        for entry in \
-          "repo-workspaces:main" \
-          "runquota:main" \
-          "nim-stackable-hooks:main" \
-          "io-mon:main" \
-        ; do
-          name="${entry%%:*}"
-          ref="${entry##*:}"
-          clone_repo "${name}" "${ref}" "--recurse-submodules"
-        done
-
-        clone_repo "codetracer" "main"
-        git -C "${WS}/codetracer" config \
-          url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf \
-          "https://github.com/"
-        git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
-          libs/nim-serialization \
-          libs/nim-faststreams \
-          libs/nim-json-serialization \
-          libs/nim-stew \
-          libs/nimcrypto
-
-        # Reprobuild's peer-cache apps import status-im/nim-bearssl. The Nix
-        # dev shell supplies this through BEARSSL_SRC; Windows env.ps1 resolves
-        # the same source as a sibling checkout.
-        bearssl_ref="9a4eed052abbded2d94feaf3f5bbd95a30ec4671"
-        bearssl_dest="${WS}/nim-bearssl"
-        rm -rf "${bearssl_dest}"
-        git clone --depth 1 --recurse-submodules \
-          "https://github.com/status-im/nim-bearssl.git" \
-          "${bearssl_dest}"
-        git -C "${bearssl_dest}" fetch --depth 1 origin "${bearssl_ref}"
-        git -C "${bearssl_dest}" checkout --detach FETCH_HEAD
-        git -C "${bearssl_dest}" submodule update --init --recursive --depth 1
+        SIBLING_OWNER: ${{ inputs.sibling-owner }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
+      run: bash "${GITHUB_ACTION_PATH}/provision-reprobuild-siblings.sh"

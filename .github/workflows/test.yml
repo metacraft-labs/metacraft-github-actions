@@ -194,7 +194,7 @@ jobs:
         run: bash git-auth/longpaths-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh
+        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh
 
   action-template-limits:
     # Every suite above EXTRACTS a composite action's `run:` body and executes
@@ -235,6 +235,17 @@ jobs:
 
       - name: "composite run: bodies stay inside the template limit"
         run: bash .github/assert-composite-run-size.sh
+
+      # Fifth property of the same class, and the one that cost the most to
+      # find. A credential positioned in a clone URL is sent only after a 401,
+      # so it authenticates PRIVATE repos and silently does nothing for PUBLIC
+      # ones — which are then fetched on GitHub's per-IP anonymous budget that
+      # this org's whole ephemeral fleet shares, and fail under load with
+      # "temporarily limiting some unauthenticated downloads" and exit 128.
+      # `reprobuild-provision` carried that shape into all 51 repos using the
+      # reprobuild flavor. Needs no network: it reads the manifests.
+      - name: no action manifest embeds a credential in a URL
+        run: bash .github/assert-no-url-embedded-credential.sh
 
       - name: referenced action archives stay downloadable in 100s
         env:
@@ -280,4 +291,4 @@ jobs:
         run: bash .github/assert-workflow-triggers-mainline-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
