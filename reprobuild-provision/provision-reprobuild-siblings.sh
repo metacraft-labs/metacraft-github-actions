@@ -95,6 +95,28 @@ GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" 
 WS="${GITHUB_WORKSPACE//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
 
+# A directory that is NOT inside the consumer's checkout, for the repo-aware git
+# commands below to run from. See the long note in `preflight`: inside the
+# checkout, `actions/checkout`'s persisted catch-all credential and this
+# script's owner-scoped one BOTH match a github.com URL, and git sends two
+# `Authorization` headers, which GitHub answers with 400.
+NEUTRAL_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+NEUTRAL_DIR="${NEUTRAL_DIR//\\//}"
+[ -d "${NEUTRAL_DIR}" ] || NEUTRAL_DIR="/"
+
+# `scrub_token <text>` -- never let a diagnostic be the thing that prints the
+# credential. `authenticated-clone.sh` carries the same guard for the same
+# reason: a diagnostic path is exactly where an invariant gets discovered to be
+# false, and discovering it by printing the token into a public Actions log is
+# not an acceptable way to find out.
+scrub_token() {
+	local text="$1"
+	if [ -n "${GH_TOKEN:-}" ]; then
+		text="${text//${GH_TOKEN}/\*\*\*}"
+	fi
+	printf '%s' "${text}"
+}
+
 # ---------------------------------------------------------------------------
 # The credential, scoped to the owner this step clones from.
 # ---------------------------------------------------------------------------
@@ -153,14 +175,53 @@ preflight() { # <owner/name> <rev>
 	# wrong remote -- which, being a `ls-remote` of "https://github.com/.git",
 	# would fail every pin and look exactly like the defect this script fixes.
 	local url="https://github.com/${repo}.git"
-	git ls-remote --exit-code "${url}" "refs/heads/${rev}" >/dev/null 2>&1 && return 0
-	# A pinned SHA is legitimate and is not a ref; only fail on a name that
-	# looks like a branch and is not one.
+	local out rc=0
+	# `git -C "${NEUTRAL_DIR}"` -- RUN THIS FROM OUTSIDE THE CHECKOUT, and this
+	# is not a stylistic preference.
+	#
+	# `actions/checkout` defaults to `persist-credentials: true`, which writes
+	#
+	#     http.https://github.com/.extraheader = AUTHORIZATION: basic <token>
+	#
+	# into the LOCAL `.git/config` of the consumer's checkout. A composite step
+	# runs with its working directory set to that checkout, so a repo-aware git
+	# command there reads that catch-all header AND the owner-scoped header this
+	# script exports. `http.<url>.extraHeader` is MULTI-VALUED and both entries
+	# match a `https://github.com/metacraft-labs/...` URL, so git sends TWO
+	# `Authorization` headers and GitHub rejects the request:
+	#
+	#     remote: Duplicate header: "Authorization"
+	#     fatal: unable to access '...': The requested URL returned error: 400
+	#
+	# Observed on a real consumer run before this line existed. `git clone` is
+	# NOT affected -- it does not read a surrounding repository's local config,
+	# which is why `clone-siblings` and `authenticated-clone.sh` have never hit
+	# this -- but `ls-remote` is, so the preflight has to step outside.
+	out="$(git -C "${NEUTRAL_DIR}" ls-remote --exit-code "${url}" "refs/heads/${rev}" 2>&1)" || rc=$?
+
+	[ "${rc}" -eq 0 ] && return 0
+
+	# A pinned SHA is legitimate and is not a branch ref.
 	case "${rev}" in
 	[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) return 0 ;;
 	esac
+
+	# EXIT CODE 2 IS THE ONLY ONE THAT MEANS "NO SUCH BRANCH". `--exit-code`
+	# returns 2 when the query succeeded and matched nothing; anything else
+	# (128, typically) means the QUERY failed -- no credential, no network, a
+	# duplicated header -- and reporting that as a missing branch sends the
+	# reader to fix a pin that was never wrong. The first version of this
+	# function did exactly that, and announced "has no branch 'stable'" for a
+	# repository whose `stable` branch is perfectly present.
+	if [ "${rc}" -ne 2 ]; then
+		echo "::error::reprobuild-provision: could not ask ${repo} whether it has '${rev}' (git exit ${rc}). This is a FAILED QUERY, not a missing branch -- the pin may be fine. git said:"
+		printf '%s\n' "$(scrub_token "${out}")" >&2
+		return 1
+	fi
+
 	echo "::error::reprobuild-provision: ${repo} has no branch '${rev}'. This is a wrong pin in reprobuild-provision/provision-reprobuild-siblings.sh, not a transient failure. Branches that do exist:"
-	git ls-remote --heads "${url}" 2>&1 | sed -e 's#^.*refs/heads/#    #' >&2
+	git -C "${NEUTRAL_DIR}" ls-remote --heads "${url}" 2>&1 |
+		sed -e 's#^.*refs/heads/#    #' >&2
 	return 1
 }
 
