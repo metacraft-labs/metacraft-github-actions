@@ -368,6 +368,75 @@ case "$V" in
 esac
 
 # ===========================================================================
+# 3b. THE MIRROR IMAGE, AND THE ONE THIS SUITE WAS MISSING: an IN-SCOPE repo
+#     that the server never challenges must STILL receive the credential.
+# ===========================================================================
+#
+# Every case above authenticates against `/metacraft-labs/`, which this server
+# protects — so every one of them is a repo that answers 401. That is the
+# PRIVATE shape, and it hid a defect for as long as this suite has existed,
+# because git's behaviour differs on exactly the axis nothing here varied:
+#
+#   git does NOT preemptively send a URL's userinfo. It issues the first
+#   `info/refs` request anonymously and attaches `Authorization` only after a
+#   401. A private repo challenges, so a URL credential works. A PUBLIC repo
+#   answers 200, so a URL credential is never sent at all and the whole clone
+#   is anonymous — with the token sitting in the URL, looking authenticated.
+#
+# `reprobuild-provision` cloned its siblings with a URL credential and was
+# therefore fetching the PUBLIC ones (`runquota`, `io-mon`, `codetracer`,
+# `nim-stackable-hooks`) anonymously. Anonymous github.com traffic is
+# rate-limited per IP and this org's ephemeral fleet shares one address, so
+# those clones died with "GitHub is temporarily limiting some unauthenticated
+# downloads" and exit 128, three seconds after a PRIVATE sibling in the same
+# list had cloned fine with the same token. Nothing in the suite could see it:
+# case 3 asserts the credential does NOT go to a public THIRD-PARTY repo, which
+# is a different and also-correct property, and no case asked whether it DOES
+# go to a public repo we own.
+#
+# An `http.<url>.extraHeader` is not conditional on being challenged — git
+# attaches it to every request, including the first — which is precisely what
+# makes it correct here and a URL credential wrong. This case observes that on
+# the wire: the server records `public-auth` (a credential arrived at a path it
+# does not protect) rather than `public-noauth`.
+#
+# `metacraft-labs-open` is outside the server's `--auth-prefix
+# /metacraft-labs/` — git's path match breaks on `/`, which case 3's
+# `metacraft-labs-evil` fixture already pins — so the server serves it
+# publicly, with no 401, which is the whole point.
+mkdir -p "$SRV/metacraft-labs-open"
+OPEN_SHA="$(mk_repo metacraft-labs-open/pub.git)"
+
+CASE_OWNERS=metacraft-labs-open \
+	run_clone open --repo metacraft-labs-open/pub --dest "$TMPROOT/open" \
+	--rev "$OPEN_SHA" --shallow
+check "an in-scope PUBLIC repo clones" "$CASE_RC" "0"
+V="$(journal_verdicts "/metacraft-labs-open/pub.git/info/refs")"
+case "$V" in
+*public-auth*) ok "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" ;;
+"") bad "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" \
+	"it was never contacted" ;;
+*) bad "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" \
+	"journal said: $V — the clone was ANONYMOUS. This is the reprobuild-provision defect: on a repo that never answers 401, the credential is not sent, and the fetch burns GitHub's per-IP anonymous budget." ;;
+esac
+
+# THE MUTATION. Without this, the assertion above could pass for a reason that
+# has nothing to do with the code — and this is a suite whose own header records
+# a previous case passing for the wrong reason. The shape being replaced is run
+# against the SAME public repo, and must be seen to fail the same check.
+legacy_clone metacraft-labs-open/pub "$TMPROOT/open-legacy"
+V="$(journal_verdicts "/metacraft-labs-open/pub.git/info/refs")"
+case "$V" in
+*public-noauth*)
+	ok "mutation: the URL-credential shape sends NOTHING to the same public repo"
+	;;
+*)
+	bad "mutation: the URL-credential shape sends NOTHING to the same public repo" \
+		"journal said: ${V:-<nothing>} — no unauthenticated fetch was recorded, so the assertion above proves nothing"
+	;;
+esac
+
+# ===========================================================================
 # 4. .gitmodules: normalised for Nix, and never carrying a credential.
 # ===========================================================================
 run_clone gm --repo metacraft-labs/host --dest "$TMPROOT/gm" \
