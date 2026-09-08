@@ -38,13 +38,26 @@ description: >
   download limit that the whole ephemeral-runner fleet shares. The long-form
   account is at the top of `provision-reprobuild-siblings.sh`.
 
-  ONE CLONE HERE IS STILL ANONYMOUS AND CANNOT BE FIXED FROM THIS REPO:
-  `status-im/nim-bearssl`, on the Windows path. The CI credential is a GitHub
-  App installation token for `metacraft-labs`; authenticating a `status-im`
-  URL would need either an installation of that app in the `status-im` org
-  (which is not ours to create) or a separate credential passed in as a new
-  input. Until one exists, that single clone keeps the old exposure, and says
-  so in the log rather than pretending otherwise.
+  NO CLONE HERE IS ANONYMOUS ANY MORE, INCLUDING THE THIRD-PARTY ONE. This
+  paragraph used to say that `status-im/nim-bearssl` could not be fixed from
+  here, because the CI credential is a GitHub App installation token for
+  `metacraft-labs` and `status-im` has no installation of that app. The premise
+  is true; the conclusion was not. GitHub does not require a credential to be
+  scoped to a repository in order to accept it on a PUBLIC one -- only to be
+  valid -- so the existing installation token authenticates that fetch and
+  lifts it off the fleet's shared per-IP anonymous budget. Measured directly,
+  run 34273033056 / job 102219153977; the experiment and its controls are
+  recorded at `EXTRA_TOKEN_URL_PREFIXES` in
+  `provision-reprobuild-siblings.sh`.
+
+  This matters well beyond the Windows path, which is why the correction is
+  worth its length. The same repository is a `git+https://` Nix FLAKE INPUT
+  (`bearssl-src` in reprobuild's flake.nix), fetched by Nix's own `git`
+  subprocess during evaluation of the dev shell. Nix attaches neither
+  `access-tokens` nor `netrc-file` to that subprocess -- it shells out to plain
+  `git` -- so that fetch is authenticated by ambient/process git configuration
+  or not at all. Believing the credential COULD not cover `status-im` is what
+  left it uncovered on both paths.
 
 inputs:
   gh-token:

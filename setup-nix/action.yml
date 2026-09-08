@@ -20,12 +20,22 @@ inputs:
   extra-token-url-prefixes:
     description: >
       Optional whitespace/newline-separated extra `https://github.com/...` URL
-      prefixes the Git CLI credential should also cover. This is the deliberate
-      path for a cross-org PRIVATE clone authenticated by a per-repo minted
-      secret: name the repository (e.g.
-      `https://github.com/some-partner/one-repo.git`) or that owner's prefix
-      (`https://github.com/some-partner/`). Matching is by slash-delimited path
-      prefix, so naming one repository does not authenticate its neighbours.
+      prefixes the Git CLI credential should also cover. Name the repository
+      (e.g. `https://github.com/some-partner/one-repo.git`) or that owner's
+      prefix (`https://github.com/some-partner/`). Matching is by slash-delimited
+      path prefix, so naming one repository does not authenticate its
+      neighbours.
+
+      Two distinct uses, and the second one is easy to miss. (1) A cross-org
+      PRIVATE clone authenticated by a per-repo minted secret. (2) A cross-org
+      PUBLIC fetch that needs to stop being anonymous: GitHub accepts any VALID
+      credential on a public repository without requiring it to be scoped to
+      that repository, so this org's own App installation token authenticates
+      e.g. `https://github.com/status-im/` and lifts those fetches off the
+      per-IP unauthenticated budget the whole ephemeral fleet shares. Measured
+      in run 34273033056; see `reprobuild-provision/provision-reprobuild-siblings.sh`.
+      Use (2) is the fix for a third-party fetch that fails INTERMITTENTLY under
+      fleet load, which is the shape a shared anonymous quota produces.
     required: false
     default: ""
   substituters:
@@ -106,9 +116,48 @@ runs:
         #     `github.com/<owner>=` as an entry matching nothing — silently
         #     unauthenticating every private flake input in the org.
         #
-        # Both send the token only to github.com, which issued it; the exposure
-        # is that Nix attaches it to fetches of third-party github.com repos.
-        # Narrowing them needs a Nix version floor, which is a separate change.
+        # Both send the token only to github.com, which issued it.
+        #
+        # THE EXPOSURE IS NARROWER THAN THIS COMMENT USED TO CLAIM, and the
+        # difference is worth stating because the old wording sent a diagnosis
+        # in exactly the wrong direction. It said "Nix attaches it to fetches of
+        # third-party github.com repos". Nix attaches neither of these to a
+        # `git+https://` fetch. That fetcher shells out to the `git` BINARY
+        # (`GitRepoImpl::fetch` in `src/libfetchers/git-utils.cc`) and passes it
+        # no credential at all: no `-c http.extraHeader`, no `GIT_CONFIG_*`, no
+        # `NETRC`. Verified two ways -- by intercepting the `git` argv+env Nix
+        # actually execs (identical on 2.25.2, 2.28.5 and 2.28.7), and by
+        # grepping `libfetchers/{git,git-utils}.cc` at 2.25.2, 2.28.7 and
+        # 2.35.2, where `netrc`, `accessToken`, `extraHeader` and
+        # `Authorization` do not appear at all.
+        #
+        # So these two reach `github:`/tarball and `builtins.fetch*` traffic,
+        # NOT git fetches. A third-party `git+https://` flake input is fetched
+        # ANONYMOUSLY, which is a different problem with the opposite sign: it
+        # rides GitHub's per-IP unauthenticated budget, shared by the whole
+        # ephemeral-runner fleet, and 401s under load with `fatal: could not
+        # read Username for 'https://github.com'`.
+        #
+        # DO NOT READ THAT MESSAGE AS "NO CREDENTIAL WAS SENT". It is tempting
+        # and it is wrong, and this note previously said so before the claim was
+        # tested. The line means only: a 401 arrived and git had no CREDENTIAL
+        # HELPER to retry with. Whether a preemptive `extraHeader` was sent and
+        # rejected does not change it. Measured, both against a bogus token on
+        # `status-im/nim-bearssl`:
+        #
+        #   helper reachable  -> `remote: Invalid username or token`
+        #                        / `fatal: Authentication failed`
+        #   GIT_CONFIG_GLOBAL=/dev/null + GIT_CONFIG_NOSYSTEM=1
+        #                     -> `fatal: could not read Username`  (identical to
+        #                        the anonymous-401 line, byte for byte)
+        #
+        # CI jobs routinely null their git config, so on a runner the two causes
+        # are indistinguishable from the message alone. Separate them
+        # STRUCTURALLY instead: ask which configured scope, if any, matches the
+        # failing URL. That is a question with an answer; the message is not.
+        #
+        # Narrowing `access-tokens` to `github.com/<owner>=` still needs the
+        # Nix version floor described above, and is still a separate change.
         cat << EOF > "$HOME/.config/nix/nix.conf"
           # Enable flakes + nix-command additively, so this holds even when the
           # DeterminateSystems installer is skipped because Nix is pre-installed
