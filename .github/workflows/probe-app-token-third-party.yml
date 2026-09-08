@@ -6,7 +6,14 @@ permissions:
   contents: read
 jobs:
   probe:
-    runs-on: eph-linux-x64
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - '["self-hosted","Linux","X64","bare-metal","nixos"]'
+          - '"eph-macos-arm64"'
+          - '"eph-linux-x64"'
+    runs-on: ${{ fromJSON(matrix.runner) }}
     steps:
       - name: Does an App installation token authenticate a third-party PUBLIC repo?
         env:
