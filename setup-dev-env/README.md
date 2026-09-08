@@ -49,6 +49,7 @@ jobs:
 | `env-ps1-path`          | no       | Path to `env.ps1` (windows-diy only). Defaults to `./env.ps1`.                                                                                                               |
 | `sibling-strategy`      | no       | `auto` (default) \| `repro-lock` \| `clone-siblings`. Which mechanism provisions cross-repo siblings — see below.                                                             |
 | `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                                 |
+| `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                               |
 
 ## Which mechanism clones the siblings
 
@@ -118,6 +119,49 @@ provision *reprobuild's own* build inputs and build the `repro` CLI;
 dependency siblings come from `repro develop --all` against its committed
 `repro.lock`. `sibling-strategy: repro-lock` is that consumer half, which is why
 `auto` prefers it under this flavor — the CLI is being installed regardless.
+
+## Which reprobuild store a job builds into
+
+The self-hosted Linux runners mount a **shared, persistent** reprobuild
+content-addressed store into every per-job container, at `/srv/repro-store`.
+The runners are ephemeral; the store is not, so an artefact realised by one job
+is meant to still be there for the next.
+
+Reprobuild uses that store only when `REPRO_STORE_ROOT` points at it. With the
+variable unset it falls back to a per-user cache directory
+(`$XDG_CACHE_HOME/repro/store`, else `$HOME/.cache/repro/store`) — which inside
+a one-job-then-destroyed container is discarded along with the container.
+
+This action now makes that choice, on every flavor, and reports it:
+
+| what it finds at `shared-store-path`   | what it does                    |
+| -------------------------------------- | ------------------------------- |
+| a writable directory                   | exports `REPRO_STORE_ROOT` to `$GITHUB_ENV` |
+| nothing                                | exports nothing; **does not fail** |
+| a directory it cannot write            | exports nothing; **does not fail** |
+| `REPRO_STORE_ROOT` already set         | leaves the caller's value alone |
+
+The two "exports nothing" rows are why this is safe to run fleet-wide: on
+GitHub-hosted runners, on macOS and on Windows there is no such mount, and
+falling back to the per-user default is not a degraded state — it is what every
+runner without a shared store already does. Turning a missing optimisation into
+a red build would take out the whole fleet the first time a mount was renamed.
+
+Writability is checked with a **real write**, not with `-w`. The store is shared
+between per-job containers and is therefore world-writable, and it is bounded by
+a quota, so `-w` reports yes for a store that is full. The probe creates and
+immediately removes a dotfile at the store root; a dotfile is not the shape of a
+store entry, and the suite asserts the store is left empty. An already-populated
+store is additionally checked for a writable `index.db` — the root of a shared
+mount is world-writable by construction, while the index belongs to whichever
+job reached the mount first, and that is the one remaining way a store could
+pass the root probe and then fail inside a build.
+
+The decision is printed on one line and added to the job summary on **every**
+run, including the ones that export nothing. The gap this closes went unnoticed
+for months precisely because nothing ever printed a store root.
+
+`shared-store-path: ""` switches the probe off entirely.
 
 ## Sibling-repo overrides
 

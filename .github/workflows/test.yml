@@ -63,8 +63,30 @@ jobs:
       - name: sibling-strategy step contract suite
         run: bash setup-dev-env/sibling-strategy-step-test.sh
 
+      # The other half of what setup-dev-env decides for every repo in the org:
+      # WHICH reprobuild store a job builds into. The self-hosted Linux runners
+      # mount a shared, persistent CAS into every per-job container, and until
+      # this step existed nothing pointed reprobuild at it — so every job built
+      # into a container-local directory that was destroyed with the container
+      # and the shared store stayed empty from the day it was created.
+      #
+      # The half that needs guarding is not the export. The same action runs on
+      # GitHub-hosted runners, on macOS and on Windows, where that mount does
+      # not exist and exporting a store root would be worse than the gap. So the
+      # suite covers all three shapes — present+writable, absent, present but
+      # unwritable — plus the quota-exhausted store, where the directory reports
+      # itself writable and a real write still fails. Each case is paired with a
+      # mutant of the shipped script with that one guard removed, and the suite
+      # fails if a case passes against its mutant.
+      #
+      # Same stock runner: bash, coreutils, and an unprivileged user namespace
+      # for the quota-exhausted fixture (announced as skipped, never silently,
+      # where namespaces are unavailable).
+      - name: store-root step contract suite
+        run: bash setup-dev-env/store-root-step-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/sibling-strategy-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit
