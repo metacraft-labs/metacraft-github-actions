@@ -247,6 +247,25 @@ inputs:
       `manifests-ref`.
     required: false
     default: ""
+  shared-store-path:
+    description: >
+      Path at which a SHARED, persistent reprobuild content-addressed store is
+      expected to be mounted on this runner. Default `/srv/repro-store`, which
+      is where the self-hosted Linux runners bind-mount theirs.
+
+      When a writable store is found there, this action exports
+      `REPRO_STORE_ROOT` pointing at it, so build outputs realised by one job
+      are still there for the next. Reprobuild's default is a per-user cache
+      directory, which inside a one-job-then-destroyed container is thrown away
+      with the container — a shared store nothing points at stays empty.
+
+      The probe is what makes this safe to run everywhere: on GitHub-hosted
+      runners, on macOS and on Windows there is no such mount, nothing is
+      exported, and the job behaves exactly as it does today. Set this to the
+      empty string to switch the probe off entirely. A `REPRO_STORE_ROOT` the
+      caller set itself is never overwritten.
+    required: false
+    default: "/srv/repro-store"
   on-lock-override:
     description: >
       Passed straight through to `clone-siblings`. `warn` (the default) reports
@@ -270,6 +289,45 @@ runs:
             exit 1
             ;;
         esac
+
+    # ------------------------------------------------------------------
+    # Which reprobuild store this job builds into (all flavors)
+    #
+    # Self-hosted Linux runners mount a SHARED, persistent reprobuild CAS into
+    # every per-job container. Reprobuild uses it only when `REPRO_STORE_ROOT`
+    # says so; with the variable unset it falls back to a per-user cache
+    # directory, which in a one-job-then-destroyed container is discarded with
+    # the container. Nothing in CI was setting it, so the mount was provisioned
+    # and never written to — every job rebuilt from scratch into a store that
+    # was thrown away, and the shared store stayed empty.
+    #
+    # WHY THIS STEP IS HERE AND NOT IN `setup-reprobuild`. This is the uniform
+    # entry point: one decision covers every repo and every flavor. And the
+    # discriminator is the MOUNT, not the flavor — a `nix` job whose devShell
+    # ships `repro` uses the same store, and `$REPRO_STORE_ROOT` is also the
+    # compat root of the action cache. A flavor gate would have excluded those
+    # for nothing, while the mount test already excludes every runner that has
+    # no shared store.
+    #
+    # WHY IT IS FIRST. `$GITHUB_ENV` reaches SUBSEQUENT steps only, and steps
+    # below already invoke `repro` (`repro develop --all` on the repro-lock
+    # path). A decision taken at the end would arrive after its first consumer.
+    #
+    # It never fails the job: an absent or unwritable mount leaves reprobuild on
+    # its per-user default, which is what every runner without a shared store
+    # uses successfully. What it always does is SAY which store was chosen — the
+    # gap above went unnoticed for as long as it did because nothing printed a
+    # store root. The rationale for each rule, and for probing writability with
+    # a real write rather than trusting `-w` on a world-writable mount, lives in
+    # decide-store-root.sh's header.
+    # ------------------------------------------------------------------
+
+    - name: Decide which reprobuild store this job builds into
+      id: store-root
+      shell: bash
+      env:
+        SHARED_STORE_PATH: ${{ inputs.shared-store-path }}
+      run: bash "${GITHUB_ACTION_PATH}/decide-store-root.sh"
 
     # ------------------------------------------------------------------
     # Cross-repo siblings (all flavors): WHICH mechanism, decided and said
