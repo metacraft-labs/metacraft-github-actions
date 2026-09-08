@@ -19,8 +19,10 @@ description: >
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
     - the `reprobuild` flavor uses
-      `metacraft-labs/reprobuild/.github/actions/reprobuild-provision` (clone the
+      `metacraft-labs/metacraft-github-actions/reprobuild-provision` (clone the
       dependency siblings) + `.../setup-reprobuild` (build the `repro` CLI).
+      Both moved OUT of `metacraft-labs/reprobuild` and into this repo; the
+      `uses:` lines below say so, and the note above them says why.
   This action then installs the unified `dev-exec` wrapper for the chosen flavor,
   so calling workflows carry no checkout/resolve/clone/toolchain-install steps.
 
@@ -641,6 +643,7 @@ runs:
       uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@dev
       with:
         gh-token: ${{ inputs.gh-token }}
+        sibling-owner: ${{ inputs.token-owner }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
