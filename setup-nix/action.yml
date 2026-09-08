@@ -136,10 +136,25 @@ runs:
         # ANONYMOUSLY, which is a different problem with the opposite sign: it
         # rides GitHub's per-IP unauthenticated budget, shared by the whole
         # ephemeral-runner fleet, and 401s under load with `fatal: could not
-        # read Username for 'https://github.com'`. Note what that message
-        # proves: git had NO credential to offer. A REJECTED credential reads
-        # `remote: Invalid username or token` instead. The two are worth telling
-        # apart before concluding which way to move a token.
+        # read Username for 'https://github.com'`.
+        #
+        # DO NOT READ THAT MESSAGE AS "NO CREDENTIAL WAS SENT". It is tempting
+        # and it is wrong, and this note previously said so before the claim was
+        # tested. The line means only: a 401 arrived and git had no CREDENTIAL
+        # HELPER to retry with. Whether a preemptive `extraHeader` was sent and
+        # rejected does not change it. Measured, both against a bogus token on
+        # `status-im/nim-bearssl`:
+        #
+        #   helper reachable  -> `remote: Invalid username or token`
+        #                        / `fatal: Authentication failed`
+        #   GIT_CONFIG_GLOBAL=/dev/null + GIT_CONFIG_NOSYSTEM=1
+        #                     -> `fatal: could not read Username`  (identical to
+        #                        the anonymous-401 line, byte for byte)
+        #
+        # CI jobs routinely null their git config, so on a runner the two causes
+        # are indistinguishable from the message alone. Separate them
+        # STRUCTURALLY instead: ask which configured scope, if any, matches the
+        # failing URL. That is a question with an answer; the message is not.
         #
         # Narrowing `access-tokens` to `github.com/<owner>=` still needs the
         # Nix version floor described above, and is still a separate change.
