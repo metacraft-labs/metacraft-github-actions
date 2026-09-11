@@ -35,7 +35,7 @@ for the immediate-run convenience copy); this action is the durable copy. See
 - name: Mirror logs to S3 (non-blocking)
   if: always()
   continue-on-error: true
-  uses: metacraft-labs/metacraft-github-actions/mirror-artifacts-s3@main
+  uses: metacraft-labs/metacraft-github-actions/mirror-artifacts-s3@dev
   with:
     path: test-logs/
     prefix: test-logs-${{ matrix.runner }}/${{ github.run_id }}

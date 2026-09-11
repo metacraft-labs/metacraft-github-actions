@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@main
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@dev
         with:
           env-flavor: ${{ matrix.env }}
           gh-token: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +74,7 @@ that has a `repro.lock` should be resolving from it.
    non-empty `.github/sibling-repos`).
 
 Otherwise it picks `clone-siblings` and names the check that failed. It is
-conservative on purpose: this action is consumed at `@main` fleet-wide, so a
+conservative on purpose: this action is consumed at `@dev` fleet-wide, so a
 caller that passes nothing keeps behaving exactly as it does today.
 
 The decision — the value, the path taken, and the reason — is printed on one
@@ -170,12 +170,12 @@ checkout (see [clone-repo](../clone-repo/)) and want the dev
 shell to consume them via `--override-input`:
 
 ```yaml
-- uses: metacraft-labs/metacraft-github-actions/clone-repo@main
+- uses: metacraft-labs/metacraft-github-actions/clone-repo@dev
   with:
     repo: metacraft-labs/codetracer-trace-format
     path: ${{ github.workspace }}/../codetracer-trace-format
     gh-token: ${{ secrets.GITHUB_TOKEN }}
-- uses: metacraft-labs/metacraft-github-actions/setup-dev-env@main
+- uses: metacraft-labs/metacraft-github-actions/setup-dev-env@dev
   with:
     env-flavor: nix
     gh-token: ${{ secrets.GITHUB_TOKEN }}
