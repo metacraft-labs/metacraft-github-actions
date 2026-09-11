@@ -206,7 +206,7 @@ jobs:
     #
     # That is not a failing step in a consumer's job — the job never starts, and
     # the diagnostic names a file in THIS repo from inside somebody else's run.
-    # Because every consumer pins `@main`, it takes the mainline CI of every
+    # Because every consumer pins `@dev`, it takes the mainline CI of every
     # repo in the org down at once, which is what happened on 2026-08-26 when
     # `clone-siblings` grew 1,419 characters of comment.
     #

@@ -228,7 +228,7 @@ inputs:
       acknowledgement written on the entry it applies to cannot spread on its
       own, and it shows up in a diff next to the thing it excuses.
 
-      WHY THE DEFAULT IS `warn`. Every consumer of this action pins `@main`, so
+      WHY THE DEFAULT IS `warn`. Every consumer of this action pins `@dev`, so
       a new hard failure lands on all of them at once with no way to prepare,
       and there are callers overriding lock pins today. Failing by default would
       be the fleet-wide outage this check exists to prevent. A repo that has

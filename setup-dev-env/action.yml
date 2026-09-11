@@ -70,7 +70,7 @@ inputs:
       `reprobuild` (the one flavor where the `repro` CLI is installed anyway);
       and the repo declares NO sibling list of its own. Otherwise it picks
       `clone-siblings` and names the check that failed. It is conservative on
-      purpose: this action is consumed at `@main` fleet-wide, so a caller that
+      purpose: this action is consumed at `@dev` fleet-wide, so a caller that
       passes nothing today keeps behaving exactly as it does today.
 
       A FORCED VALUE NEVER SILENTLY DOES NOTHING. `repro-lock` on a repo with
