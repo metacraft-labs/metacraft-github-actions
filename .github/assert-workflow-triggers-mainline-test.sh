@@ -146,7 +146,7 @@ on:
 
 jobs:
   lint:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-lint.yml@dev
 YAML
 )"
 expect_reject "rejects a block list naming only a LIVE non-mainline branch" dev "$f"
