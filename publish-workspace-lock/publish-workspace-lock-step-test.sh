@@ -417,6 +417,47 @@ check "idempotent: ...and adds no commit" "$(remote_tip)" "$BEFORE_TIP"
 contains "idempotent: ...and says the record was already published" "$OUT" "Already published"
 
 # ===========================================================================
+# 2b. IDEMPOTENCY WITHOUT `cmp`. The comparison that decides "already
+#     published" must not depend on a tool the runner may not have.
+#
+#     This is a regression test for a real outage, not a defensive flourish.
+#     The check was `cmp -s`, whose non-zero exit means "differ" OR "not on
+#     PATH", and the step read the second as the first: codetracer-launcher run
+#     34844401895 printed `line 198: cmp: command not found` and then announced
+#     "A DIFFERENT lock record is already published" against a destination whose
+#     bytes were identical. `cmp` comes from diffutils, which `ubuntu-latest`
+#     carries and a self-hosted nixos runner's PATH need not — and a PRIVATE
+#     repo has to use a self-hosted runner here, because a hosted job on such a
+#     repo does not start at all. So the dependency was missing exactly where
+#     this action is load-bearing, and it failed toward the louder wrong answer:
+#     a retried job claiming an immutability violation.
+#
+#     The shim below reproduces what the step actually observed — a `cmp` that
+#     exits 127 having compared nothing. A step that still consults `cmp` fails
+#     this case; one that compares the bytes itself does not.
+# ===========================================================================
+mk_manifests
+run_step   # publish it once, so the destination exists
+check "no-cmp: the record is published first" "$RC" "0"
+BEFORE_TIP="$(remote_tip)"
+
+cat >"$TMPROOT/bin/cmp" <<'NOCMP'
+#!/usr/bin/env bash
+echo "cmp: command not found" >&2
+exit 127
+NOCMP
+chmod +x "$TMPROOT/bin/cmp"
+
+run_step
+rm -f "$TMPROOT/bin/cmp"
+
+check "no-cmp: a re-run with cmp unavailable still succeeds" "$RC" "0"
+check "no-cmp: ...and still adds no commit" "$(remote_tip)" "$BEFORE_TIP"
+contains "no-cmp: ...and still recognises the published record" "$OUT" "Already published"
+lacks "no-cmp: ...and never claims a disagreement it did not measure" 	"$OUT" "Published records are immutable and this one is not rewritten"
+lacks "no-cmp: ...because it does not consult cmp at all" "$OUT" "cmp: command not found"
+
+# ===========================================================================
 # 3. IMMUTABILITY. A published record is never rewritten — not even by this
 #    action, which is the only thing in CI that can write to the store.
 # ===========================================================================

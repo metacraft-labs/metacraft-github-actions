@@ -354,7 +354,41 @@ runs:
                 # different bytes mean two different answers for one commit,
                 # which is the one thing that must never be resolved by
                 # overwriting.
-                if cmp -s "${body}" "${dest}"; then
+                #
+                # COMPARED WITH `git hash-object`, NOT `cmp`, AND THE REASON IS
+                # A REAL FAILURE. `cmp -s` exits non-zero for "the files
+                # differ" AND for "cmp is not on PATH", and this branch cannot
+                # tell those apart: it read the second as the first and
+                # announced a disagreement it had never measured. That is not
+                # hypothetical — `metacraft-labs/codetracer-launcher` run
+                # 34844401895 died with
+                #
+                #   line 198: cmp: command not found
+                #   A DIFFERENT lock record is already published at ...
+                #
+                # against a destination whose bytes were IDENTICAL (verified
+                # afterwards: both sha256
+                # 745e7fb54d06d88de96a343eb98c347892ac3bcfc72eb98f778726f455e261ac).
+                # `cmp` ships in diffutils, which a hosted `ubuntu-latest`
+                # image carries and a self-hosted nixos runner's PATH need not
+                # — and every PRIVATE repo wiring this action has to use a
+                # self-hosted runner, because a hosted job there does not
+                # start. So the tool this check depended on is absent exactly
+                # where the check matters most, and it fails in the worse
+                # direction: a retried job reports an immutability violation
+                # instead of a no-op.
+                #
+                # `git hash-object` is exact (a hash over the file's bytes),
+                # needs no repository, and git is already a hard dependency of
+                # every step in this action. An unavailable git is diagnosed as
+                # itself rather than silently read as "the records differ".
+                local body_id dest_id
+                body_id="$(git hash-object -- "${body}" 2>/dev/null || true)"
+                dest_id="$(git hash-object -- "${dest}" 2>/dev/null || true)"
+                if [ -z "${body_id}" ] || [ -z "${dest_id}" ]; then
+                  die "Cannot compare the re-anchored record with the one already published at ${dest#${dir}/}: 'git hash-object' produced no digest. Nothing is published and nothing is rewritten; this is a broken environment, NOT a disagreement about ${SELF_NAME}@${TARGET_SHA}."
+                fi
+                if [ "${body_id}" = "${dest_id}" ]; then
                   echo "Already published: ${dest#${dir}/} (identical bytes)."
                   continue
                 fi
