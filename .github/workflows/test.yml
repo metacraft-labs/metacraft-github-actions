@@ -122,6 +122,21 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
 
+      # The REFRESH half of the same lifecycle. `publish-workspace-lock` above
+      # carries a record verbatim and structurally cannot move a sibling pin;
+      # `refresh-workspace-lock` moves one, and the only safe way to move one is
+      # to generate a new record from a workspace that exists and propose it as
+      # a pull request. Everything that can go wrong there goes wrong silently
+      # -- a dirty checkout published as if this run had made it, a dry run that
+      # left the tree modified, a typo in `dry-run` read as permission -- so the
+      # suite is mostly refusals. Pure bash over real files with a `repro` shim;
+      # no network, no Nix.
+      - name: refresh-workspace-lock contract suite
+        run: bash refresh-workspace-lock/refresh-workspace-lock-test.sh
+
+      - name: shellcheck (refresh-workspace-lock)
+        run: shellcheck -S warning refresh-workspace-lock/refresh-workspace-lock.sh refresh-workspace-lock/refresh-workspace-lock-test.sh
+
   setup-nix-git-auth:
     # `setup-nix` runs in almost every job in this org, so a mistake in how it
     # scopes the CI token does not fail this repo — it either leaks a live

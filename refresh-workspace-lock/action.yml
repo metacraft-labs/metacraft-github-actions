@@ -1,0 +1,115 @@
+# REFRESH AS A FIRST-CLASS OPERATION.
+#
+# A workspace lock record is keyed by a COMMIT of the repo it describes, and it
+# is published by that repo's local pre-push gate, which GENERATES it from a
+# workspace that actually existed. `publish-workspace-lock` then CARRIES that
+# record forward onto each mainline commit: every sibling pin copied verbatim,
+# precisely one field changed. That carry is correct and must not refresh — a
+# refreshed pin would state a fact about a workspace nobody ever had, and a
+# fabricated lock succeeds silently where a missing one fails loudly with a
+# named remedy.
+#
+# The consequence, observed rather than theorised: `codetracer-js-recorder`'s
+# published lock pins `codetracer@ac0cec46` and `codetracer-launcher`'s pins
+# `codetracer@37fe0a75`, 92 and 95 commits behind `dev`. Fixes landed on
+# `codetracer@dev` therefore do not reach either repo's cross-repo CI, and every
+# future push to those repos re-anchors the same stale pin. Nothing in the
+# publish path can move it, and nothing in the publish path SHOULD.
+#
+# So the missing operation is REFRESH, and it has exactly one honest form:
+# materialise a real workspace, let the real `repro` generate a real lock from
+# it, and put the result up as a PULL REQUEST — so the refreshed composition is
+# BUILT by that pull request's own CI before anything is published, and the
+# existing carry propagates it from the merge onward. This action is that
+# operation. It is the only mechanism that can move a pin without inventing one.
+#
+# WHAT IT REFUSES TO DO, and each refusal is a contract with a test:
+#   * it never writes, edits or synthesises a lock document;
+#   * it refuses when the reprobuild CLI is absent, rather than deriving one;
+#   * it refuses when the workspace is not a real workspace;
+#   * it refuses a changed lock whose `[lock] created_at` does not prove THIS
+#     run generated it — a dirty checkout must not become a published record;
+#   * it opens a pull request and never pushes to a mainline.
+#
+# DRY RUN IS THE DEFAULT. A caller has to say `dry-run: false` to get a branch.
+# The dry run does everything except the push and then restores the checkout to
+# the bytes it found, so it can be scheduled on a busy fleet and still be
+# informative: its step summary names every pin that WOULD move.
+name: Refresh a repo's workspace lock and propose it
+description: >
+  Regenerate one repo's `repro.lock` from a materialised reprobuild workspace
+  and propose the result as a pull request, so the refreshed composition is
+  built by CI before it is published.
+
+  This is the REFRESH half of the lock lifecycle. The publish half
+  (`publish-workspace-lock`) carries a record verbatim and cannot move a sibling
+  pin; this action moves one, and only by generating a new record from a
+  workspace that exists.
+
+inputs:
+  gh-token:
+    description: >
+      GitHub token with read access to the workspace's repos and WRITE access
+      to the repo whose lock is being refreshed (to push the proposal branch).
+      Only consulted when `dry-run` is `false`.
+    required: false
+    default: ""
+  workspace-root:
+    description: >
+      The reprobuild workspace root — the directory holding `.repro/`, with the
+      participating repos checked out beside it. There is no default and no
+      fallback: a lock generated anywhere else describes a workspace that does
+      not exist.
+    required: true
+  repo-name:
+    description: >
+      The repo whose lock is refreshed. A checkout of that name must exist
+      under `workspace-root`. Defaults to the calling repository's name.
+    required: false
+    default: ""
+  repro:
+    description: The reprobuild CLI to invoke. Must be on PATH.
+    required: false
+    default: "repro"
+  dry-run:
+    description: >
+      `true` (the default) reports what would change and restores the checkout.
+      `false` pushes a proposal branch. Any other value is an error rather than
+      a permission.
+    required: false
+    default: "true"
+  branch-prefix:
+    description: Branch name prefix for the proposal.
+    required: false
+    default: "chore/refresh-workspace-lock"
+
+outputs:
+  status:
+    description: >
+      `unchanged`, `would-refresh` (dry run with a real difference),
+      `refreshed` (a branch was pushed), or `refused`.
+    value: ${{ steps.refresh.outputs.status }}
+  changed:
+    description: Whether the regenerated lock differs from the committed one.
+    value: ${{ steps.refresh.outputs.changed }}
+  branch:
+    description: The proposal branch, when one was prepared.
+    value: ${{ steps.refresh.outputs.branch }}
+
+runs:
+  using: composite
+  steps:
+    - name: Refresh the workspace lock
+      id: refresh
+      shell: bash
+      env:
+        # Routed through `env:` rather than interpolated into the script body,
+        # for the reason `setup-nix` states beside its own token: `${{ }}` is
+        # textual substitution into the command file the runner writes to disk.
+        GH_TOKEN: ${{ inputs.gh-token }}
+        WORKSPACE_ROOT: ${{ inputs.workspace-root }}
+        REPO_NAME: ${{ inputs.repo-name != '' && inputs.repo-name || github.event.repository.name }}
+        REPRO: ${{ inputs.repro }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        BRANCH_PREFIX: ${{ inputs.branch-prefix }}
+      run: bash "${GITHUB_ACTION_PATH}/refresh-workspace-lock.sh"

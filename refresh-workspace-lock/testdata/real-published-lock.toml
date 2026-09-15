@@ -1,0 +1,611 @@
+schema = "reprobuild.workspace.lock.v1"
+
+[lock]
+project = "codetracer"
+created_at = "2026-09-09T12:55:52Z"
+created_by = "repro workspace lock"
+
+[[repo]]
+name = "codetracer"
+path = "codetracer"
+remote = "metacraft-labs"
+revision = "37fe0a7595da7dae823e3dd932a6fbc64d2bcbfa"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-launcher"
+path = "codetracer-launcher"
+remote = "metacraft-labs"
+revision = "3afaaa47539cda40eb2935a8be967458e94c9a1a"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-test-mirror"
+path = "codetracer-test-mirror"
+remote = "metacraft-labs"
+revision = "892f57711dabe43d39c00dea6e1cb681cc29f321"
+branch = "dev"
+
+[[repo]]
+name = "nim-everywhere"
+path = "nim-everywhere"
+remote = "metacraft-labs"
+revision = "015a410ebd4257b0b0e5772a0a94e446a505f9b7"
+branch = "dev"
+
+[[repo]]
+name = "nim-acp"
+path = "nim-acp"
+remote = "metacraft-labs"
+revision = "a4e5ba49b5b9e6efa365a7bf80ceb8b4e0801425"
+branch = "dev"
+
+[[repo]]
+name = "nim-agent-harbor"
+path = "nim-agent-harbor"
+remote = "metacraft-labs"
+revision = "63cad843f4bdfcd4978ce7b40c16a2671e1dd23d"
+branch = "dev"
+
+[[repo]]
+name = "nim-agents"
+path = "nim-agents"
+remote = "metacraft-labs"
+revision = "c77fde2ccaa30233c49983ab5567b1e80d448288"
+branch = "dev"
+
+[[repo]]
+name = "nim-stackable-hooks"
+path = "nim-stackable-hooks"
+remote = "metacraft-labs"
+revision = "20085ca9a12cbe53d470c6dc61dc16fed5773fc0"
+branch = "dev"
+
+[[repo]]
+name = "io-mon"
+path = "io-mon"
+remote = "metacraft-labs"
+revision = "b736f369c4d6cfcc4bbbec00601cc686dfe195db"
+branch = "ci-unify-stable-dev"
+
+[[repo]]
+name = "codetracer-python-recorder"
+path = "codetracer-python-recorder"
+remote = "metacraft-labs"
+revision = "53edd25d6f31c79bad4636140d0d02eceae50003"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-ruby-recorder"
+path = "codetracer-ruby-recorder"
+remote = "metacraft-labs"
+revision = "710f3d41db78ac88082f1b828357f7ab420602a0"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-wasm-recorder"
+path = "codetracer-wasm-recorder"
+remote = "metacraft-labs"
+revision = "b336fb0e21c37d4f11bd9f076def77d93a3935a8"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-wasm-instrumenter"
+path = "codetracer-wasm-instrumenter"
+remote = "metacraft-labs"
+revision = "788bc121b7606745efa2bafb0c46df89a0768f5a"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-wasmi-recorder"
+path = "codetracer-wasmi-recorder"
+remote = "metacraft-labs"
+revision = "3f6b86d91601923ee4a0d04af1fd32f2c6ee84ba"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-native-recorder"
+path = "codetracer-native-recorder"
+remote = "metacraft-labs"
+revision = "87f547c9f323c80f4ba227a4473c9675b331d4a1"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-js-recorder"
+path = "codetracer-js-recorder"
+remote = "metacraft-labs"
+revision = "64adb57675ef65200e59fd490d9587867cd6ec3e"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-shell-recorders"
+path = "codetracer-shell-recorders"
+remote = "metacraft-labs"
+revision = "4158dc8801422ed8bb1090f6e3b83193240eead4"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-beam-recorder"
+path = "codetracer-beam-recorder"
+remote = "metacraft-labs"
+revision = "9024fe55ecc9d5863639e501bac47577762783b2"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-cairo-recorder"
+path = "codetracer-cairo-recorder"
+remote = "metacraft-labs"
+revision = "3c182899b39a2f675810187e84798af23dbbe849"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-cardano-recorder"
+path = "codetracer-cardano-recorder"
+remote = "metacraft-labs"
+revision = "fad6d2c6482f025c549e316907a1ef7142f06312"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-circom-recorder"
+path = "codetracer-circom-recorder"
+remote = "metacraft-labs"
+revision = "96dcab9777f53b222b5f7aeda19aa5637e33cbec"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-evm-recorder"
+path = "codetracer-evm-recorder"
+remote = "metacraft-labs"
+revision = "109fc1ba0270aed07b93a333984243e944a48816"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-flow-recorder"
+path = "codetracer-flow-recorder"
+remote = "metacraft-labs"
+revision = "e24217c419fd7d41d242a54d15bd853f2812830a"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-fuel-recorder"
+path = "codetracer-fuel-recorder"
+remote = "metacraft-labs"
+revision = "fb2bcab06fb9e1c0f1a291e86993d2349a04dcc9"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-leo-recorder"
+path = "codetracer-leo-recorder"
+remote = "metacraft-labs"
+revision = "54c9fd4f73635d6d742c10ccf0366be200f22351"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-miden-recorder"
+path = "codetracer-miden-recorder"
+remote = "metacraft-labs"
+revision = "395c5df49393be65ec9d01fda0e975527c110298"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-move-recorder"
+path = "codetracer-move-recorder"
+remote = "metacraft-labs"
+revision = "7c48bc063a655732f30df0be8844cfca7d4e51f9"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-polkavm-recorder"
+path = "codetracer-polkavm-recorder"
+remote = "metacraft-labs"
+revision = "84870855d14c14a4449511842682519a45bb3f60"
+branch = "ci-s3-artifact-mirror"
+
+[[repo]]
+name = "codetracer-solana-recorder"
+path = "codetracer-solana-recorder"
+remote = "metacraft-labs"
+revision = "853daf368082be40eb6a9750a8200648bf9ebf02"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-ton-recorder"
+path = "codetracer-ton-recorder"
+remote = "metacraft-labs"
+revision = "375c151fb38a9f1bec306e7201f603f76b0c98d1"
+branch = "dev"
+
+[[repo]]
+name = "nim"
+path = "codetracer-nim"
+remote = "metacraft-github"
+revision = "a2a46ddda70c9377147fdf9534a51870c66921b4"
+branch = "codetracer"
+
+[[repo]]
+name = "langserver"
+path = "nim-langserver"
+remote = "metacraft-labs"
+revision = "f3bd8c7b79b99a6662db22125afb9a4f9204bb84"
+branch = "master"
+
+[[repo]]
+name = "nim-chronos"
+path = "nim-chronos"
+remote = "metacraft-labs"
+revision = "7cdfae4f2876ef1af9546813229c49820992c45c"
+branch = "codetracer"
+
+[[repo]]
+name = "noir"
+path = "noir"
+remote = "metacraft-labs"
+revision = "c952fae38a915a2c23fdce73dbc360dda460f6fc"
+branch = "codetracer"
+
+[[repo]]
+name = "aiken"
+path = "metacraft-aiken-fork"
+remote = "metacraft-labs"
+revision = "7f392f70bcaec0fa91043030472264712804b0d7"
+branch = "codetracer"
+
+[[repo]]
+name = "localstripe"
+path = "localstripe"
+remote = "metacraft-labs"
+revision = "980a42fa922439df64292ba34c998cc55ce0510b"
+branch = "codetracer"
+
+[[repo]]
+name = "codetracer-native-test-programs"
+path = "codetracer-native-test-programs"
+remote = "metacraft-labs"
+revision = "81b2195b23d3e094357512cbb6a4846ace82c833"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-visual-replay"
+path = "codetracer-visual-replay"
+remote = "metacraft-labs"
+revision = "9a24374db597e3c76f1ecd6e09d8a4cb752795b0"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-visual-replay-fixtures"
+path = "codetracer-visual-replay-fixtures"
+remote = "metacraft-labs"
+revision = "1e7d94a533ddf771f3e4d52c9a2048906f85f1a4"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-native-backend"
+path = "codetracer-native-backend"
+remote = "metacraft-labs"
+revision = "4e7655a8202213a167e2f12da950dfcc0f4d2155"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-rr"
+path = "codetracer-rr"
+remote = "metacraft-labs"
+revision = "265e010d4d05653b4bc7ddf79c36dee639c4ffeb"
+branch = "codetracer"
+
+[[repo]]
+name = "metacraft-github-actions"
+path = "metacraft-github-actions"
+remote = "metacraft-labs"
+revision = "26631659dc99df9c2a90e650c9b106d70cb5b062"
+branch = "fix-mirror-action-vars-context"
+
+[[repo]]
+name = "metacraft-dev-guidelines"
+path = "metacraft-dev-guidelines"
+remote = "metacraft-labs"
+revision = "f47f7594b370a844c8212730b923b32cd33244cc"
+branch = "latest"
+
+[[repo]]
+name = "codetracer-specs"
+path = "codetracer-specs"
+remote = "metacraft-labs"
+revision = "680f11e0d4d523463cd4a5c64b5ec23899277295"
+branch = "latest"
+
+[[repo]]
+name = "codetracer-design-system"
+path = "codetracer-design-system"
+remote = "metacraft-labs"
+revision = "148b2505c8b17566c469c8fd6b49720a05d51a8d"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-trace-format"
+path = "codetracer-trace-format"
+remote = "metacraft-labs"
+revision = "6646afab8f2f236aa611e8ac717adf5d3e010142"
+branch = "reconcile-dev-stable"
+
+[[repo]]
+name = "codetracer-trace-format-nim"
+path = "codetracer-trace-format-nim"
+remote = "metacraft-labs"
+revision = "3fcd1666da3e21638dcd9716376b9ce126fcac8b"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-trace-format-spec"
+path = "codetracer-trace-format-spec"
+remote = "metacraft-labs"
+revision = "db84283ec42eccbe4a3a8b3fffe708c300cf7661"
+branch = "latest"
+
+[[repo]]
+name = "codetracer-snapshot-codecs"
+path = "codetracer-snapshot-codecs"
+remote = "metacraft-labs"
+revision = "2211c3900605d312e9d750a953f03d33379bb134"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-image-diff"
+path = "codetracer-image-diff"
+remote = "metacraft-labs"
+revision = "69c36bb290cbc41c12be6a817eb0437d4b6d90c6"
+branch = "dev"
+
+[[repo]]
+name = "ctfs-poc"
+path = "ctfs-poc"
+remote = "metacraft-labs"
+revision = "24fe5a99e44c4cf0ecb3d09d131eb33ddae7203a"
+branch = "dev"
+
+[[repo]]
+name = "tracing-formats-benchmarks"
+path = "tracing-formats-benchmarks"
+remote = "metacraft-labs"
+revision = "940cc7e2ef3e3bed11c68acf4d6163392d97ec11"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-vscode-extension"
+path = "codetracer-vscode-extension"
+remote = "metacraft-labs"
+revision = "be97dc730dbe40d5417cf79f8847826b978f6e34"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-browser-extension"
+path = "codetracer-browser-extension"
+remote = "metacraft-labs"
+revision = "7d29e6eb312b13658f2e22bf11926645c203c980"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-agent-evals"
+path = "codetracer-agent-evals"
+remote = "metacraft-labs"
+revision = "638989d2a40fb092f839224e1650c7f5b0397d7a"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-example-recordings"
+path = "codetracer-example-recordings"
+remote = "metacraft-labs"
+revision = "2befaf99e19a28b17ee23b2080bba90a1995b9c2"
+branch = "dev"
+
+[[repo]]
+name = "nix-codetracer-toolchains"
+path = "nix-codetracer-toolchains"
+remote = "metacraft-labs"
+revision = "29716b877a9557074169efd32c12a1c7c493c887"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-ci"
+path = "codetracer-ci"
+remote = "metacraft-labs"
+revision = "07ff8c9b057656483cbf2bdcaf6eb4b8d09c8997"
+branch = "dev"
+
+[[repo]]
+name = "nix-blockchain-development"
+path = "nix-blockchain-development"
+remote = "metacraft-labs"
+revision = "85ef8d0d4f98eed14b3f12812546bed18838ac8d"
+branch = "dev"
+
+[[repo]]
+name = "nim-faststreams"
+path = "nim-faststreams"
+remote = "metacraft-labs"
+revision = "82c8c3edb5fa7a4fdfcdb5d8ab53bbe1830d4503"
+branch = "dev"
+
+[[repo]]
+name = "nim-stew"
+path = "nim-stew"
+remote = "metacraft-labs"
+revision = "cc405401637dc7a32bea708374e26e33f6deca44"
+branch = "master"
+
+[[repo]]
+name = "nim-results"
+path = "nim-results"
+remote = "arnetheduck"
+revision = "b319652e98a198fa881ca70a76754c2dd6f09804"
+branch = "master"
+
+[[repo]]
+name = "nix-nim-development"
+path = "nix-nim-development"
+remote = "metacraft-labs"
+revision = "806cebd6196523a69982571b7c7983e0de3008ce"
+branch = "dev"
+
+[[repo]]
+name = "miden-vm"
+path = "miden-vm"
+remote = "0xMiden"
+revision = "f94f4e155d639a89b9901551c32591aa6151e949"
+branch = "next"
+
+[[repo]]
+name = "compiler"
+path = "miden-compiler"
+remote = "0xMiden"
+revision = "342594e5b82309557cf1ba970af20974ab166653"
+branch = "next"
+
+[[repo]]
+name = "protocol"
+path = "miden-protocol"
+remote = "0xMiden"
+revision = "1c915660ba16ac1a5c4d4c74c653570a22aa626c"
+branch = "next"
+
+[[repo]]
+name = "sui"
+path = "sui"
+remote = "MystenLabs"
+revision = "6a2e653d11140058ed554dd5fc8313ece5e4de2b"
+branch = "main"
+
+[[repo]]
+name = "sway"
+path = "sway"
+remote = "FuelLabs"
+revision = "4c3bc6e8b4063a621572fe97298358290c07c1e6"
+branch = "master"
+
+[[repo]]
+name = "fuel-vm"
+path = "fuel-vm"
+remote = "FuelLabs"
+revision = "2760bd09a9fead002d25449e79cad60584997107"
+branch = "master"
+
+[[repo]]
+name = "sbpf"
+path = "sbpf"
+remote = "anza-xyz"
+revision = "db4f0681951171ee97988989695ceef67fe3dbb3"
+branch = "main"
+
+[[repo]]
+name = "mollusk"
+path = "mollusk"
+remote = "anza-xyz"
+revision = "8bd96fd626f42319310a4d776a70e9dc8aa8236f"
+branch = "main"
+
+[[repo]]
+name = "revm"
+path = "revm"
+remote = "bluealloy"
+revision = "0602152ef71f68a917afdb9abe84b45bbd18dad3"
+branch = "main"
+
+[[repo]]
+name = "foundry"
+path = "foundry"
+remote = "foundry-rs"
+revision = "d9d47aac33ebaae3533de218ecfdf1f96f651305"
+branch = "master"
+
+[[repo]]
+name = "dynamorio"
+path = "dynamorio"
+remote = "DynamoRIO"
+revision = "6775f51d5ee66a9ed90c174f33e649669a20d51e"
+branch = "master"
+
+[[repo]]
+name = "castor"
+path = "castor"
+remote = "rcslab"
+revision = "a727f76ffd2e835e2078c0222418a078362bd7ba"
+branch = "master"
+
+[[repo]]
+name = "renderdoc"
+path = "renderdoc"
+remote = "baldurk"
+revision = "62a58c87b0ac789c01d925802c7fb9fbd5c5bfd4"
+branch = "v1.x"
+
+[[repo]]
+name = "zeekstd"
+path = "zeekstd"
+remote = "rorosen"
+revision = "180438029281db712763f69393947340278d2992"
+branch = "main"
+
+[[repo]]
+name = "infra"
+path = "infra"
+remote = "metacraft-labs"
+revision = "16709262f5bd4eeced452def3cae5e45056aaad1"
+branch = "live"
+
+[[repo]]
+name = "nixos-modules"
+path = "nixos-modules"
+remote = "metacraft-labs"
+revision = "9832536f97ce96b39ed964eafa472b06388908e0"
+branch = "fix/vmharness-provider-image-and-startup-failure"
+
+[[repo]]
+name = "metacraft-specs"
+path = "metacraft-specs"
+remote = "metacraft-labs"
+revision = "78522c580635ff7284667f356a4b359d29f8ecff"
+branch = "latest"
+
+[[repo]]
+name = "codetracer-observability-jaeger"
+path = "codetracer-observability-jaeger"
+remote = "metacraft-labs"
+revision = "165a6585494b60180753cda79e68e32fa423b941"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-observability-grafana"
+path = "codetracer-observability-grafana"
+remote = "metacraft-labs"
+revision = "1923fba916c58a09359fbc504c95f4c20e37f824"
+branch = "dev"
+
+[[repo]]
+name = "codetracer-observability-e2e"
+path = "codetracer-observability-e2e"
+remote = "metacraft-labs"
+revision = "3396ec4244759b0a2e98c836aefba6c041b0eec3"
+branch = "dev"
+
+[[repo]]
+name = "cairo"
+path = "cairo-corelib-vendor"
+remote = "starkware-libs"
+revision = "88fd4e946fa37cc5c0102f2e847f5a0cbcce477f"
+branch = "mainline"
+
+[extensions]
+unmaterialized_repos = [
+  { name = "nim-shm-queue", path = "nim-shm-queue", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "nim-shm-gset", path = "nim-shm-gset", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "codetracer-php-recorder", path = "codetracer-php-recorder", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert", path = "GuiAssert", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "codetracer-marketing", path = "codetracer-marketing", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-HeyGen", path = "GuiAssert-HeyGen", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-ElevenLabs", path = "GuiAssert-ElevenLabs", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-SadTalker", path = "GuiAssert-SadTalker", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-Wav2Lip", path = "GuiAssert-Wav2Lip", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-MuseTalk", path = "GuiAssert-MuseTalk", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-Did", path = "GuiAssert-Did", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-Synthesia", path = "GuiAssert-Synthesia", remote = "metacraft-labs", reason = "no on-disk checkout" },
+  { name = "GuiAssert-Tavus", path = "GuiAssert-Tavus", remote = "metacraft-labs", reason = "no on-disk checkout" },
+]
