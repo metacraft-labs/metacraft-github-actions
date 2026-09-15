@@ -37,7 +37,13 @@ inputs:
     required: false
     default: ""
   attic-token:
-    description: Attic token used to upload newly built store paths.
+    description: >
+      Attic token for the cache named by `attic-cache`. It is used for BOTH
+      directions: it is written into the netrc nix reads, so nix can SUBSTITUTE
+      from the private cache named in `substituters`, and it is handed to
+      `attic login` so `watch-store` can UPLOAD newly built paths. Supplying it
+      without `attic-cache` configures the read half only, which is the useful
+      half for a job that consumes the cache and publishes nothing.
     required: false
     default: ""
   attic-cache:
@@ -81,9 +87,17 @@ runs:
         GH_TOKEN: ${{ inputs.gh-token }}
         EXTRA_SUBSTITUTERS: ${{ inputs.substituters }}
         EXTRA_TRUSTED_PUBLIC_KEYS: ${{ inputs.trusted-public-keys }}
+        # The cache credential belongs here and not only in the Attic step
+        # below: that step configures the Attic CLI, which is the UPLOAD path.
+        # nix reads netrc, and netrc is written here.
+        ATTIC_TOKEN: ${{ inputs.attic-token }}
+        ATTIC_ENDPOINT: ${{ inputs.attic-endpoint }}
       run: |
         set -euo pipefail
         echo "::add-mask::$GH_TOKEN"
+        # `if`, not `[ … ] && echo`: under `set -e` the latter exits the step
+        # with status 1 on the empty-token path, which is every caller today.
+        if [ -n "${ATTIC_TOKEN:-}" ]; then echo "::add-mask::$ATTIC_TOKEN"; fi
 
         # nix.conf and netrc both carry the token. `umask 077` is not
         # cosmetic: on the self-hosted runners in this org $HOME is reused
@@ -128,10 +142,19 @@ runs:
           access-tokens = github.com=$GH_TOKEN
         EOF
 
-        # Create netrc for Nix's internal git fetcher (needed for
-        # ?submodules=1 flake references that clone via git)
-        printf 'machine github.com login x-access-token password %s\n' \
-          "$GH_TOKEN" > "$HOME/.config/nix/netrc"
+        # The netrc `netrc-file` above names. It carries github.com — for Nix's
+        # internal git fetcher, needed by `?submodules=1` flake references that
+        # clone via git — and, when `attic-token` is supplied, the private
+        # binary cache the caller just added to `substituters`. Without that
+        # second entry nix has no credential for a cache it has been told to
+        # use, gets 401 from `nix-cache-info`, disables it and builds
+        # everything not on cache.nixos.org from source.
+        #
+        # In its own file so the credential logic is shellcheck-covered and has
+        # a contract suite that observes what curl — the client nix hands this
+        # file to — actually presents to each host. Same reasoning as
+        # configure-git-auth.sh below. Suite: setup-nix/nix-netrc-test.sh.
+        bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
 
     - name: Configure Git authentication
       # Scoped to the org's own repositories and to this job. See the long

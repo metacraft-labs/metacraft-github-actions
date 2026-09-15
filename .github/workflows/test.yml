@@ -158,8 +158,26 @@ jobs:
       - name: configure-git-auth.sh contract suite
         run: bash setup-nix/configure-git-auth-test.sh
 
+      # The other credential this action installs, and the one that was
+      # MISSING. `setup-nix` puts the caller's private Attic cache into
+      # `substituters` and then wrote a netrc naming only github.com, so nix
+      # had no credential for the cache it had just been told to use: 401 on
+      # `nix-cache-info`, the substituter disabled, and everything not on
+      # cache.nixos.org built from source — invisible on a warm bare-metal
+      # runner, total on an ephemeral one.
+      #
+      # The suite asserts on the WIRE, not on the file: it runs the real curl
+      # (the client nix hands netrc to) against a local origin that journals
+      # the credential each request arrived with. A `machine` name carrying a
+      # port or a path is well-formed netrc that matches nothing, which looks
+      # exactly like the bug being fixed, and only the wire tells them apart.
+      # Same stock runner; needs curl and python3, both of which this image has
+      # and the git-auth suites already use.
+      - name: nix netrc contract suite
+        run: bash setup-nix/nix-netrc-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh
+        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh
 
   clone-git-auth:
     # `clone-siblings` and `clone-repo` clone into nearly every job in this org,
