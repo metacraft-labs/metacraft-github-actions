@@ -621,6 +621,109 @@ contains "...and the table says no lock was consulted" "$OUT" \
 check "...and the sibling is still cloned" \
 	"$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$(sha_of nim-acp)"
 
+# ===========================================================================
+# N. THE AGE OF THE PINS IS PRINTED BESIDE THE PINS.
+#
+# The resolution table says WHICH revision each sibling is at and said nothing
+# about WHEN that set of revisions was a fact about a real workspace. A lock
+# generated this morning and one generated four months ago produce byte-
+# identical tables, so "the fix I landed yesterday is not in this build" reads
+# as a wiring defect until somebody looks the record up by hand in the manifests
+# repo. That is what happened, across six runs.
+#
+# THE CONTRACT IS TWO-SIDED, and the second side is the one that matters. It is
+# not enough that a date is printed when the record has one: NO date may be
+# printed when the record has none. A fabricated or derived timestamp -- from
+# the file's mtime, from the clock, from anywhere -- would be worse than the
+# silence it replaces, because a reader acts on a date and cannot see where it
+# came from.
+#
+# AND IT IS REPORTING, NEVER ENFORCEMENT. Age is not a defect; a lock is a true
+# statement about a workspace that existed, and an old one is still true. Every
+# arm below also asserts the step still SUCCEEDS.
+# ===========================================================================
+
+# This section contracts the day count, so the platform has to be able to
+# compute one. Both flavours the helper tries are probed here, and neither
+# working is a loud failure rather than a quietly skipped section.
+if date -u -d "2026-09-09T12:55:52Z" +%s >/dev/null 2>&1 ||
+	date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-09-09T12:55:52Z" +%s >/dev/null 2>&1; then
+	ok "this platform's date can parse an ISO-8601 instant"
+else
+	bad "this platform's date can parse an ISO-8601 instant" \
+		"neither 'date -d' nor 'date -j -f' works here, so the age contracts below cannot run"
+fi
+
+# A lock identical to LOCK_OK but carrying the generation time reprobuild
+# writes. The date is the real one from
+# locks/codetracer/codetracer-launcher/3afaaa47....toml.
+LOCK_DATED="$TMPROOT/lock-dated.toml"
+{
+	printf 'schema = "reprobuild.workspace.lock.v1"\n\n[lock]\nrepo = "codetracer"\n'
+	printf 'created_at = "2026-09-09T12:55:52Z"\ncreated_by = "repro workspace lock"\n\n'
+	for n in "${IN_LOCK[@]}"; do
+		printf '[[repo]]\nname = "%s"\npath = "%s"\nrevision = "%s"\n\n' "$n" "$n" "$(sha_of "$n")"
+	done
+} >"$LOCK_DATED"
+
+mk_manifests "$LOCK_DATED"
+run_step "$FOUR"
+check "a dated lock still clones cleanly" "$RC" "0"
+contains "...and the log says when the pins were generated" "$OUT" \
+	"generated 2026-09-09T12:55:52Z"
+contains "...naming the lock the pins came from" "$OUT" \
+	"Workspace lock codetracer@$SELF_SHA:"
+contains "...with an age in days beside it" "$OUT" "day(s) ago"
+# The line is useless if it is not next to the thing it describes. It must
+# precede the resolution table, which is where a reader is looking.
+AGE_LINE_NO="$(printf '%s\n' "$OUT" | grep -n "generated 2026-09-09T12:55:52Z" | head -n1 | cut -d: -f1)"
+TABLE_LINE_NO="$(printf '%s\n' "$OUT" | grep -n "^Sibling resolution for " | head -n1 | cut -d: -f1)"
+if [[ -n $AGE_LINE_NO && -n $TABLE_LINE_NO && $AGE_LINE_NO -lt $TABLE_LINE_NO ]]; then
+	ok "...printed above the resolution table it describes"
+else
+	bad "...printed above the resolution table it describes" \
+		"age line at [${AGE_LINE_NO:-<absent>}], table at [${TABLE_LINE_NO:-<absent>}]"
+fi
+
+# A lock with no created_at: the absence is STATED, and no date is invented.
+# LOCK_OK's [lock] table carries no created_at, which is what the fixtures above
+# have always written -- so this arm is also the one that would catch a helper
+# that fell back to the clock.
+mk_manifests "$LOCK_OK"
+run_step "$FOUR"
+check "an undated lock still clones cleanly" "$RC" "0"
+contains "...and the absence of a generation time is stated" "$OUT" \
+	"generation time not recorded in the lock"
+lacks "...and no date is invented for it" "$OUT" "generated 20"
+lacks "...and no age in days is invented either" "$OUT" "day(s) ago"
+
+# A generation time in the FUTURE is a clock or a parse gone wrong. The
+# timestamp is still reported verbatim -- it is what the record says -- but no
+# day count is derived from it, because a confident wrong number beside a
+# correct timestamp is the part a reader would act on.
+LOCK_FUTURE="$TMPROOT/lock-future.toml"
+{
+	printf 'schema = "reprobuild.workspace.lock.v1"\n\n[lock]\nrepo = "codetracer"\n'
+	printf 'created_at = "2099-01-01T00:00:00Z"\n\n'
+	for n in "${IN_LOCK[@]}"; do
+		printf '[[repo]]\nname = "%s"\npath = "%s"\nrevision = "%s"\n\n' "$n" "$n" "$(sha_of "$n")"
+	done
+} >"$LOCK_FUTURE"
+mk_manifests "$LOCK_FUTURE"
+run_step "$FOUR"
+check "a lock dated in the future still clones cleanly" "$RC" "0"
+contains "...and its recorded time is still reported verbatim" "$OUT" \
+	"generated 2099-01-01T00:00:00Z"
+lacks "...but no age in days is derived from it" "$OUT" "day(s) ago"
+
+# No lock at all: nothing is said about a generation time, because there is no
+# record to have one. "unknown" here would describe a lock that does not exist.
+mk_manifests ""
+run_step "nim-acp=dev"
+check "no lock at all still succeeds" "$RC" "0"
+lacks "...and nothing is claimed about a generation time" "$OUT" "Workspace lock codetracer@"
+lacks "...and no date is printed" "$OUT" "generated 20"
+
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then

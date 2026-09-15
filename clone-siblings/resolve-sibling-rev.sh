@@ -163,6 +163,9 @@ SIBLING=""
 REPO_DIR="."
 PREFER_PROJECT=""
 NO_WALK=0
+# When 1, print the selected lock's `[lock] created_at` on stdout instead of a
+# revision. See "WHEN THE PINS WERE GENERATED" below for why this exists.
+PRINT_CREATED_AT=0
 declare -a SHAS=()
 # Manifest layers, least specific first. `--manifest-dir` appends; when none is
 # given, $CT_MANIFEST_DIR and then auto-discovery fill this in below.
@@ -198,6 +201,10 @@ while [[ $# -gt 0 ]]; do
 		NO_WALK=1
 		shift
 		;;
+	--print-created-at)
+		PRINT_CREATED_AT=1
+		shift
+		;;
 	*)
 		echo "resolve-sibling-rev: unknown argument: $1" >&2
 		exit 2
@@ -205,10 +212,18 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-for v in SELF_REPO SIBLING; do
+# `--sibling` names the thing whose revision is being asked for, so it is
+# required for every question except one: `--print-created-at` asks about the
+# LOCK, not about a repo in it, and a lock that pins no sibling at all still has
+# a creation time. Requiring a sibling name there would make the answer depend
+# on a repo the question is not about.
+REQUIRED_ARGS=(SELF_REPO SIBLING)
+[[ $PRINT_CREATED_AT -eq 1 ]] && REQUIRED_ARGS=(SELF_REPO)
+for v in "${REQUIRED_ARGS[@]}"; do
 	if [[ -z ${!v} ]]; then
 		echo "resolve-sibling-rev: missing required value for $v" >&2
 		echo "usage: resolve-sibling-rev.sh --repo SELF --sibling NAME [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
+		echo "       resolve-sibling-rev.sh --repo SELF --print-created-at [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
 		exit 2
 	fi
 done
@@ -873,6 +888,78 @@ if [[ -z $CHOSEN_SHA ]]; then
 		echo "  through that tooling, or its lock was not pushed to the manifest repo."
 	} >&2
 	exit 3
+fi
+
+# --- WHEN THE PINS WERE GENERATED ------------------------------------------
+#
+# `--print-created-at` answers a different question from the rest of this
+# script: not "what revision does the lock pin for X" but "how old is the
+# statement of fact the pins come from".
+#
+# A lock record is a claim about a workspace that EXISTED at a moment in time.
+# The consumer sees only the revisions, so a set of pins generated months ago
+# is indistinguishable, in a log, from one generated this morning -- and the
+# difference is exactly what matters when the fix you just landed does not
+# appear in a build. Six CI runs were diagnosed by hand against the manifests
+# repo for want of this one line; `created_at` was in the file the whole time,
+# already open in the loop below.
+#
+# The value is reported VERBATIM, not reformatted. It is written by
+# `repro workspace lock` and the only honest thing to do with a timestamp
+# somebody else wrote is to repeat it.
+#
+# `.xml` (repo-workspaces) locks carry no creation time at all -- the format has
+# no place for one. That answers `unknown`, which is a true statement about the
+# record, and never a fabricated date.
+created_at_from_toml() { # <lock>
+	local lock="$1" l key val in_lock=0
+	CREATED_AT=""
+	while IFS= read -r l || [[ -n $l ]]; do
+		l="${l%$'\r'}"
+		while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
+		while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
+		[[ -z $l ]] && continue
+		[[ ${l:0:1} == "#" ]] && continue
+		if [[ ${l:0:1} == "[" ]]; then
+			# `[lock]` only. `[[repo]]` entries have no created_at, and a
+			# future table that grows one must not be read as the lock's.
+			if [[ $l == "[lock]" ]]; then in_lock=1; else in_lock=0; fi
+			continue
+		fi
+		[[ $in_lock -eq 1 ]] || continue
+		key="${l%%=*}"
+		[[ $key == "$l" ]] && continue
+		val="${l#*=}"
+		while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
+		while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
+		case "$val" in
+		\"*\") val="${val#\"}" && val="${val%\"}" ;;
+		\'*\') val="${val#\'}" && val="${val%\'}" ;;
+		esac
+		if [[ $key == "created_at" ]]; then
+			CREATED_AT="$val"
+			return 0
+		fi
+	done <"$lock"
+	return 1
+}
+
+if [[ $PRINT_CREATED_AT -eq 1 ]]; then
+	# The MOST SPECIFIC layer that carries one wins, which is the same
+	# precedence the revision lookup below uses: the layers are read least
+	# specific first and each answer replaces the previous one.
+	FOUND_CREATED_AT=""
+	for lr in "${LOCKS_ROOTS[@]}"; do
+		find_locks "$lr" "$CHOSEN_SHA" || continue
+		for LOCK in "${LOCK_FILES[@]}"; do
+			[[ $LOCK == *.toml ]] || continue
+			if created_at_from_toml "$LOCK"; then
+				FOUND_CREATED_AT="$CREATED_AT"
+			fi
+		done
+	done
+	printf '%s\n' "${FOUND_CREATED_AT:-unknown}"
+	exit 0
 fi
 
 # --- read the sibling's revision, layer by layer --------------------------

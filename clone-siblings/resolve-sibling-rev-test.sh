@@ -32,7 +32,7 @@ if [[ ! -x $RESOLVER && ! -f $RESOLVER ]]; then
 	exit 3
 fi
 
-EXPECTED_ASSERTIONS=89
+EXPECTED_ASSERTIONS=98
 
 PASS=0
 FAIL=0
@@ -1169,6 +1169,137 @@ expect_fail "remedy: says where routed mode DOES publish the lock document" 3 \
 	"one per routed partition" -- \
 	--repo codetracer --sibling codetracer-native-backend \
 	--manifest-dir "$P/a" --sha "$SHA_SELF" --no-walk
+
+# =========================================================================
+# N. --print-created-at — WHEN the pins were generated
+#
+# The consumer of a lock sees revisions and nothing else, so a set of pins
+# generated months ago is indistinguishable, in a log, from one generated this
+# morning. `[lock] created_at` is the field that says which, and it was already
+# in the file this resolver has open.
+#
+# What is contracted here is that the resolver REPORTS the recorded value and
+# never a derived one. Every arm below that expects `unknown` is an arm where a
+# date could have been invented from something nearby — a `[[repo]]` table, a
+# missing field, a format that has no such field at all — and inventing one
+# would be worse than the silence this replaces, because a reader acts on it.
+# =========================================================================
+
+# expect_created_at DESC EXPECTED -- <resolver args...>
+expect_created_at() {
+	local desc="$1" want="$2"
+	shift 3
+	run_resolver "$@"
+	if [[ $_rc -ne 0 ]]; then
+		bad "$desc" "exit $_rc (expected 0); stderr: $_err"
+		return
+	fi
+	if [[ $_out != "$want" ]]; then
+		bad "$desc" "got '$_out', want '$want'"
+		return
+	fi
+	ok "$desc"
+}
+
+CA="$TMPROOT/createdat"
+
+# 1. The ordinary case: a reprobuild lock, read verbatim. `mk_toml_lock` writes
+#    created_at = "2026-08-10T11:55:29Z".
+mk_toml_lock "$CA/one/locks/codetracer/codetracer/$SHA_SELF.toml" "$REV_NB_TOML" "$REV_NIM_TOML"
+expect_created_at "created-at: reports the lock's recorded generation time" \
+	"2026-08-10T11:55:29Z" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/one" --sha "$SHA_SELF" --no-walk
+
+# 2. It is a question about the LOCK, not about a sibling, so no --sibling is
+#    required. Asking for one that the lock does not pin must not change the
+#    answer either: the record's age does not depend on who is asking.
+expect_created_at "created-at: needs no --sibling" \
+	"2026-08-10T11:55:29Z" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/one" --sha "$SHA_SELF" --no-walk
+expect_created_at "created-at: a sibling absent from the lock does not change it" \
+	"2026-08-10T11:55:29Z" -- \
+	--repo codetracer --sibling not-in-this-lock --print-created-at \
+	--manifest-dir "$CA/one" --sha "$SHA_SELF" --no-walk
+
+# 3. Without the flag, --sibling stays REQUIRED. The new mode must not have
+#    loosened the old one.
+expect_fail "created-at: --sibling is still required for a revision query" 2 \
+	"missing required value for SIBLING" -- \
+	--repo codetracer \
+	--manifest-dir "$CA/one" --sha "$SHA_SELF" --no-walk
+
+# 4. An XML (repo-workspaces) lock has no field for a generation time. The
+#    answer is `unknown` — a true statement about the record — and never a date
+#    taken from the file's mtime or from anywhere else.
+mk_xml_lock "$CA/xmlonly/locks/codetracer/codetracer/$SHA_SELF.xml" "$REV_NB_XML" "$REV_NIM_XML"
+expect_created_at "created-at: an xml lock answers unknown, not a guess" \
+	"unknown" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/xmlonly" --sha "$SHA_SELF" --no-walk
+
+# 5. A reprobuild lock whose [lock] table simply has no created_at.
+mkdir -p "$CA/nofield/locks/codetracer/codetracer"
+{
+	printf '%s\n' 'schema = "reprobuild.workspace.lock.v1"'
+	printf '%s\n' '[lock]'
+	printf '%s\n' 'project = "codetracer"'
+	printf '%s\n' '[[repo]]'
+	printf '%s\n' 'name = "codetracer-native-backend"'
+	printf '%s\n' "revision = \"$REV_NB_TOML\""
+} >"$CA/nofield/locks/codetracer/codetracer/$SHA_SELF.toml"
+expect_created_at "created-at: a lock with no created_at answers unknown" \
+	"unknown" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/nofield" --sha "$SHA_SELF" --no-walk
+
+# 6. THE ONE THAT MAKES THE PARSER'S TABLE SCOPING LOAD-BEARING. A created_at
+#    inside a [[repo]] table is that repo's, not the lock's. Reading it as the
+#    lock's would print a real-looking date for a record that never recorded
+#    one — the exact shape of invented provenance this field exists to prevent.
+mkdir -p "$CA/repofield/locks/codetracer/codetracer"
+{
+	printf '%s\n' 'schema = "reprobuild.workspace.lock.v1"'
+	printf '%s\n' '[lock]'
+	printf '%s\n' 'project = "codetracer"'
+	printf '%s\n' '[[repo]]'
+	printf '%s\n' 'name = "codetracer-native-backend"'
+	printf '%s\n' 'created_at = "1999-01-01T00:00:00Z"'
+	printf '%s\n' "revision = \"$REV_NB_TOML\""
+} >"$CA/repofield/locks/codetracer/codetracer/$SHA_SELF.toml"
+expect_created_at "created-at: a [[repo]] created_at is not the lock's" \
+	"unknown" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/repofield" --sha "$SHA_SELF" --no-walk
+
+# 7. Layer precedence is the same as for revisions: least specific first, and
+#    the most specific layer that carries one wins.
+mk_toml_lock "$CA/layers/pub/locks/codetracer/codetracer/$SHA_SELF.toml" "$REV_NB_TOML" "$REV_NIM_TOML"
+mkdir -p "$CA/layers/priv/locks/codetracer/codetracer"
+{
+	printf '%s\n' 'schema = "reprobuild.workspace.lock.v1"'
+	printf '%s\n' '[lock]'
+	printf '%s\n' 'project = "codetracer"'
+	printf '%s\n' 'created_at = "2026-09-09T12:55:52Z"'
+	printf '%s\n' '[[repo]]'
+	printf '%s\n' 'name = "codetracer-native-backend"'
+	printf '%s\n' "revision = \"$REV_NB_TOML\""
+} >"$CA/layers/priv/locks/codetracer/codetracer/$SHA_SELF.toml"
+expect_created_at "created-at: the most specific layer's value wins" \
+	"2026-09-09T12:55:52Z" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/layers/pub" --manifest-dir "$CA/layers/priv" \
+	--sha "$SHA_SELF" --no-walk
+
+# 8. No lock at all is still exit 3 — the resolver's one "this commit is not
+#    locked" answer — and prints nothing on stdout. A caller must never be able
+#    to mistake a missing lock for a lock of unknown age.
+mkdir -p "$CA/empty/locks"
+expect_fail "created-at: an unlocked commit is exit 3, not 'unknown'" 3 \
+	"no workspace lock found" -- \
+	--repo codetracer --print-created-at \
+	--manifest-dir "$CA/empty" --sha "$SHA_SELF" --no-walk
 
 # =========================================================================
 

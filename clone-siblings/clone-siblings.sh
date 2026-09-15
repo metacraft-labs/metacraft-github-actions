@@ -32,6 +32,41 @@
 set -euo pipefail
 
 RESOLVER="${GITHUB_ACTION_PATH}/resolve-sibling-rev.sh"
+
+# ---------------------------------------------------------------------------
+# lock_age_days <iso-8601-instant> -> whole days between then and now, on stdout
+#
+# Returns non-zero and prints nothing when it cannot compute one. That is the
+# whole contract: the timestamp itself is always printed by the caller, and the
+# age is a convenience on top of it. There is no portable `date` that parses an
+# arbitrary instant -- GNU takes `-d`, BSD/macOS takes `-j -f <format>` -- and
+# this action runs on both, so both are tried and neither is assumed.
+#
+# A NEGATIVE OR ABSURD RESULT IS REFUSED RATHER THAN PRINTED. A runner with a
+# skewed clock, or a `date` that parsed the string as something else entirely,
+# would otherwise put a confident wrong number next to a correct timestamp --
+# which is worse than printing no number at all, because the number is the part
+# a reader will act on.
+# ---------------------------------------------------------------------------
+lock_age_days() { # <iso-8601>
+  local ts="$1" then_s="" now_s days
+  # GNU date.
+  then_s=$(date -u -d "${ts}" +%s 2>/dev/null) || then_s=""
+  if [ -z "${then_s}" ]; then
+    # BSD/macOS date. `repro workspace lock` writes `%Y-%m-%dT%H:%M:%SZ`.
+    then_s=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${ts}" +%s 2>/dev/null) || then_s=""
+  fi
+  [ -n "${then_s}" ] || return 1
+  case "${then_s}" in
+  '' | *[!0-9-]*) return 1 ;;
+  esac
+  now_s=$(date -u +%s 2>/dev/null) || return 1
+  days=$(( (now_s - then_s) / 86400 ))
+  # Before the epoch of this project, or in the future: do not guess.
+  [ "${days}" -ge 0 ] 2>/dev/null || return 1
+  [ "${days}" -le 36500 ] 2>/dev/null || return 1
+  printf '%s\n' "${days}"
+}
 MANIFESTS_REF="${INPUT_MANIFESTS_REF:-${MANIFESTS_REF:-latest}}"
 PRIVATE_MANIFESTS_REF="${INPUT_PRIVATE_MANIFESTS_REF:-${MANIFESTS_REF}}"
 
@@ -417,6 +452,39 @@ if [ "${#LAYER_ARGS[@]}" -gt 0 ]; then
     lock_unavailable "No workspace lock for ${SELF} (candidates: ${CANDS}). Neither a repo-workspaces locks/<project>/${SELF}/<sha>.xml nor a reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${LAYERS_DESC}. The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook, or legacy 'workspace lock'), and its lock pushed to the manifest repo."
   else
     echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
+    # WHEN THE PINS WERE GENERATED, printed beside the pins themselves.
+    #
+    # Every line below says WHICH revision a sibling is at and none of them said
+    # WHEN that set of revisions was a fact about a real workspace. A lock from
+    # this morning and a lock from four months ago produce byte-identical
+    # resolution tables, so "the fix I just landed is not in this build" reads
+    # as a wiring defect until somebody goes to the manifests repo and looks the
+    # record up by hand. That happened, across six runs, for want of one line --
+    # and `created_at` was already in the file `resolve-sibling-rev.sh` had open.
+    #
+    # Reported, never enforced. Age is NOT a defect: a lock is a statement about
+    # a workspace that existed, and an old one is still true. Failing on age
+    # would be a guess about which of two true statements the job wanted. So
+    # this prints and nothing more, and nothing downstream branches on it.
+    #
+    # A failure here is not a failure of the step. The resolver already answered
+    # the question that matters (this commit IS locked) before we got here, and
+    # a missing timestamp -- a `.xml` lock, which has no field for one -- must
+    # not take down a clone that would otherwise work.
+    LOCK_CREATED_AT=""
+    LOCK_CREATED_AT=$("${RESOLVER}" --repo "${SELF}" --print-created-at \
+      "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk 2>/dev/null) || LOCK_CREATED_AT=""
+    case "${LOCK_CREATED_AT}" in
+    "" | unknown)
+      LOCK_AGE_NOTE="generation time not recorded in the lock"
+      ;;
+    *)
+      LOCK_AGE_NOTE="generated ${LOCK_CREATED_AT}"
+      age_days=$(lock_age_days "${LOCK_CREATED_AT}") || age_days=""
+      [ -n "${age_days}" ] && LOCK_AGE_NOTE="${LOCK_AGE_NOTE} (${age_days} day(s) ago)"
+      ;;
+    esac
+    echo "Workspace lock ${SELF}@${LOCK_SHA}: ${LOCK_AGE_NOTE}"
   fi
 fi
 
