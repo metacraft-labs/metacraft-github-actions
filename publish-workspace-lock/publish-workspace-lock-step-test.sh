@@ -17,11 +17,14 @@
 #
 # HOW THE STEP IS RUN
 # -------------------
-# The `run:` body is EXTRACTED FROM action.yml at test time and executed, on the
-# same terms as `clone-siblings/clone-siblings-step-test.sh`: not copied, not
-# re-implemented, and a `${{ }}` expression the substitution table does not know
-# about is a hard error, so adding one to action.yml fails this suite rather
-# than silently testing a different program.
+# The step body is `publish-workspace-lock.sh`, a file beside the action, and
+# this suite executes THAT FILE: not a copy, not a re-implementation, the same
+# bytes the runner executes. It lives outside action.yml because GitHub
+# evaluates a composite `run:` body as a template expression and rejects one
+# over 21000 characters at parse time -- a failure that lands on every
+# consumer's job, not on this repo's CI. The suite asserts that action.yml
+# still invokes the script, that no inline `run: |` body has come back, and
+# that the script carries no `${{ }}` expression (nothing would expand one).
 #
 # ONE SHIM, AND ONE DELIBERATE MOCK.
 #
@@ -98,53 +101,50 @@ trap 'rm -rf "$TMPROOT"' EXIT
 # ---------------------------------------------------------------------------
 # 1. Extract the step body from action.yml.
 # ---------------------------------------------------------------------------
-STEP="$TMPROOT/step.sh"
-TRUNCATED_AT=""
-{
-	in_run=0
-	lineno=0
-	while IFS= read -r line || [[ -n $line ]]; do
-		lineno=$((lineno + 1))
-		if [[ $in_run -eq 0 ]]; then
-			[[ $line == "      run: |" ]] && in_run=1
-			continue
-		fi
-		# A non-empty line indented less than the block terminates a YAML block
-		# scalar. The `run:` block is the last thing in this file, so seeing one
-		# means a body line lost its indentation — which does not merely confuse
-		# this harness, it truncates the script the RUNNER executes.
-		if [[ -n $line && $line != "        "* ]]; then
-			[[ -z $TRUNCATED_AT ]] && TRUNCATED_AT="$lineno: $line"
-			in_run=2
-			continue
-		fi
-		[[ $in_run -eq 2 ]] && continue
-		printf '%s\n' "${line#        }"
-	done <"$ACTION"
-} >"$STEP"
+# The step body is a FILE beside the action, not a `run: |` block: GitHub
+# evaluates a composite run body as a template expression and rejects one over
+# 21000 characters at parse time, which fails every consumer's job before its
+# first step. So this suite executes the real script -- the same bytes the
+# runner executes -- and asserts only that action.yml still calls it.
+STEP="$HERE/publish-workspace-lock.sh"
 
-[[ -s $STEP ]] || {
-	echo "publish-workspace-lock-step-test: extracted an empty run: body from $ACTION" >&2
+[[ -f $STEP ]] || {
+	echo "publish-workspace-lock-step-test: cannot find $STEP" >&2
 	exit 2
 }
-[[ -z $TRUNCATED_AT ]] || {
-	echo "publish-workspace-lock-step-test: the run: block in $ACTION is cut short by an under-indented line." >&2
-	echo "  first offending line -> $TRUNCATED_AT" >&2
+
+WIRING='run: bash "${GITHUB_ACTION_PATH}/publish-workspace-lock.sh"'
+case "$(<"$ACTION")" in
+*"$WIRING"*) : ;;
+*)
+	echo "publish-workspace-lock-step-test: $ACTION no longer invokes the step script." >&2
+	echo "  expected a line containing -> $WIRING" >&2
 	exit 2
-}
+	;;
+esac
+
+# A `run: |` body that came back would be untested by this suite AND would be
+# back under the template-length budget that moved it out here in the first
+# place.
+case "$(<"$ACTION")" in
+*$'\n      run: |'*)
+	echo "publish-workspace-lock-step-test: $ACTION has grown an inline run: block again;" >&2
+	echo "  the step body belongs in publish-workspace-lock.sh (see its header)." >&2
+	exit 2
+	;;
+esac
+
 bash -n "$STEP" || {
-	echo "publish-workspace-lock-step-test: the extracted run: body is not valid bash (see above)." >&2
+	echo "publish-workspace-lock-step-test: the step script is not valid bash (see above)." >&2
 	exit 2
 }
 
-# The `${{ }}` substitution table. The body deliberately carries none — every
-# expression lives in the step's `env:` block, which the runner evaluates and
-# this suite sets directly — but the guard stays, because the day one appears
-# inline is the day this suite would otherwise start testing a different
-# program.
+# The `${{ }}` guard. The script carries none -- nothing would expand one, and
+# every value arrives through the step's `env:` block, which the runner
+# evaluates and this suite sets directly.
 case "$(<"$STEP")" in
 *'${{'*)
-	echo "publish-workspace-lock-step-test: action.yml's run: body contains a \${{ }} expression this suite does not substitute:" >&2
+	echo "publish-workspace-lock-step-test: the step script contains a \${{ }} expression, which nothing expands:" >&2
 	while IFS= read -r l; do
 		case "$l" in *'${{'*) echo "  $l" >&2 ;; esac
 	done <"$STEP"

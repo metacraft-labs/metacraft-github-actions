@@ -120,7 +120,7 @@ jobs:
         run: bash publish-workspace-lock/publish-workspace-lock-step-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
+        run: shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/publish-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
 
       # The REFRESH half of the same lifecycle. `publish-workspace-lock` above
       # carries a record verbatim and structurally cannot move a sibling pin;
