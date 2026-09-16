@@ -637,6 +637,91 @@ contains "projects: the canonical project's record is published" "$OUT" "Publish
 contains "projects: the second project's record is published too" "$OUT" "Published locks/dev/codetracer/$MERGE_SHA.toml"
 contains "projects: ...as one commit naming both" "$OUT" "2 record(s) published"
 
+# ===========================================================================
+# 11. THE CARRY MUST NOT OUTRUN ITS EVIDENCE.
+#
+#     The `push` wiring carries `github.event.before`'s record onto
+#     `github.sha`, so the sibling set recorded for a mainline commit was
+#     observed at an ancestor and copied forward link by link. For a commit
+#     that changed nothing about the workspace that is the point — it is what
+#     keeps `clone-siblings` able to answer at all. For a commit that BUMPED A
+#     SIBLING the carried set is not merely stale, it CONTRADICTS the commit it
+#     is filed under; and because publication is additions-only and records are
+#     immutable, that commit can never afterwards record its real state.
+#
+#     The repo's own committed `repro.lock` is its declaration of the
+#     composition, so "did the composition change across this range" is
+#     answerable from the repo's history without observing a workspace. This
+#     section pins all three outcomes: a carry across an unchanged declaration
+#     proceeds, a carry across a changed one is refused with nothing published,
+#     and a backfill whose SHAs have no ancestry is not caught by the guard.
+# ===========================================================================
+git_q -C "$SELF_WORK" checkout dev
+printf 'schema = "reprobuild.workspace.lock.v1"\nrevision = "%s"\n' "$SIB_A" \
+	>"$SELF_WORK/repro.lock"
+git_q -C "$SELF_WORK" add repro.lock
+gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "declare the composition"
+LOCKED_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
+
+printf 'unrelated\n' >"$SELF_WORK/README"
+git_q -C "$SELF_WORK" add README
+gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "a commit that moves no sibling"
+QUIET_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
+
+printf 'schema = "reprobuild.workspace.lock.v1"\nrevision = "%s"\n' "$SIB_B" \
+	>"$SELF_WORK/repro.lock"
+git_q -C "$SELF_WORK" add repro.lock
+gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "bump a sibling"
+BUMP_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
+git_q -C "$SELF_WORK" push "$SELF_BARE" dev
+
+mk_manifests
+
+# The seed hop. `$HEAD_SHA` is the PULL REQUEST head and `$LOCKED_SHA` is on
+# the mainline, so neither is an ancestor of the other: this is the
+# workflow_dispatch backfill shape, where an operator states both SHAs, and the
+# guard must say it could not evaluate the span rather than inventing a verdict
+# about it.
+SOURCE_SHA="$HEAD_SHA" TARGET_SHA="$LOCKED_SHA" run_step
+check "carry: a backfill whose SHAs have no ancestry still publishes" "$RC" "0"
+contains "carry: ...and says the span was not evaluated rather than guessing" \
+	"$OUT" "Carry span not evaluated"
+unset SOURCE_SHA TARGET_SHA
+
+# A real forward carry across a commit that moved no sibling. This is the case
+# the chain exists for, and it must keep working.
+SOURCE_SHA="$LOCKED_SHA" TARGET_SHA="$QUIET_SHA" run_step
+check "carry: a commit that moved no sibling is carried" "$RC" "0"
+contains "carry: ...and the unchanged declaration is stated, not assumed" \
+	"$OUT" "Carry checked: repro.lock is unchanged"
+contains "carry: ...and the record is published under the new commit" \
+	"$OUT" "Published locks/codetracer/codetracer/$QUIET_SHA.toml"
+unset SOURCE_SHA TARGET_SHA
+
+# The forward carry across a commit that DID move a sibling. `$QUIET_SHA` is
+# locked by the hop above, so the source record exists and everything else
+# about this run is identical to the one that just succeeded — the only
+# difference is that the repo's own declaration changed in between.
+BEFORE_TIP="$(remote_tip)"
+SOURCE_SHA="$QUIET_SHA" TARGET_SHA="$BUMP_SHA" run_step
+if [[ $RC -ne 0 ]]; then ok "carry: a commit that bumped a sibling is refused"; else
+	bad "carry: a commit that bumped a sibling is refused" "step exited 0"
+fi
+contains "carry: ...naming the declaration that moved" "$OUT" "repro.lock differs between"
+contains "carry: ...and both commits it moved between" "$OUT" "$QUIET_SHA and $BUMP_SHA"
+contains "carry: ...and saying the set would contradict the commit" \
+	"$OUT" "contradicts the commit it names"
+contains "carry: ...and naming a remedy that OBSERVES rather than carries" \
+	"$OUT" "refresh-workspace-lock"
+check "carry: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
+refresh_checkout
+if [[ -e "$CHECKOUT/locks/codetracer/codetracer/$BUMP_SHA.toml" ]]; then
+	bad "carry: ...and no record filed under the bumped commit" "a record was published"
+else
+	ok "carry: ...and no record filed under the bumped commit"
+fi
+unset SOURCE_SHA TARGET_SHA
+
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then

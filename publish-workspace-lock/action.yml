@@ -31,6 +31,22 @@
 # first-parent ancestor is outside 30 commits, and (b) answer a merge commit
 # with pins that PREDATE the merge — precisely wrong for a PR whose whole
 # content is a sibling bump.
+#
+# AND THE CARRY IS BOUNDED BY WHAT THE RECORD CAN STILL BE TRUE OF.
+#
+# A re-file is sound as far as the record's claim still holds at the commit it
+# is filed under. The `push` wiring stretches that by one commit per push
+# (`github.event.before` supplies the set, `github.sha` receives it), so a
+# mainline commit's recorded composition was observed at an ancestor and
+# carried forward link by link. For a commit that moved no sibling that is the
+# whole point of the chain; for a commit that BUMPED one the carried set does
+# not merely lag, it CONTRADICTS the commit it names -- and publication is
+# additions-only, so that coordinate is then burned and the real composition
+# can never be recorded there. This action REFUSES that case instead of
+# publishing it, decided from the repo's own committed `repro.lock` -- its
+# declaration of the composition -- compared tree-to-tree across the carried
+# span. The remedy it names is the only honest one: OBSERVE the set from a
+# real workspace (`refresh-workspace-lock`), do not carry it.
 name: Publish the workspace lock for a merged mainline commit
 description: >
   Re-anchor the workspace lock record published for a pull request's HEAD
@@ -278,6 +294,57 @@ runs:
           die "${TARGET_SHA} is not an ancestor of ${SELF_SLUG}@${BASE_REF}. It is not a commit that landed on the mainline, so a lock record filed under it would pin nothing and could never be reached. (An open pull request's merge_commit_sha names a throwaway test merge; this is what that looks like.)"
         fi
         echo "Proven: ${TARGET_SHA} is an ancestor of ${SELF_SLUG}@${BASE_REF}."
+
+        # -----------------------------------------------------------------
+        # THE CARRY MUST NOT OUTRUN ITS EVIDENCE.
+        #
+        # This action re-files a record; it does not observe one. That is
+        # sound exactly as far as the record's claim still holds at the commit
+        # it is being filed under, and the `push` wiring stretches that claim
+        # by one commit on every push: `github.event.before` supplies the
+        # sibling set and `github.sha` receives it, so the composition
+        # recorded for a mainline commit was observed at some ancestor and
+        # carried forward, link by link, from whatever seeded the chain.
+        #
+        # For a commit that changed nothing about the workspace that is fine,
+        # and it is the reason the chain exists: without it `clone-siblings`
+        # answers "no workspace lock found for <repo>" and every cross-repo
+        # job dies before it builds anything.
+        #
+        # For a commit that BUMPED A SIBLING it is false, and the workflow
+        # comment that wires this action says so in as many words: "if a
+        # pushed commit BUMPED a sibling, the carried set predates that bump."
+        # A record published in that state does not merely lag — it
+        # CONTRADICTS the commit it names, and because publication is
+        # additions-only and records are immutable, the coordinate is then
+        # burned: the real composition for that commit can never be recorded.
+        # That is strictly worse than the missing record, which at least fails
+        # loudly and names a remedy.
+        #
+        # The bump is detectable without observing anything: the repo's own
+        # committed `repro.lock` IS its declaration of the composition, so if
+        # it differs between the source and the target the carried set is
+        # known-wrong for the target. A tree-to-tree comparison answers that
+        # from the blobless clone above (`--name-only --no-renames` reads tree
+        # entries, never file content), and it is evaluated only when the
+        # source is genuinely an ancestor of the target — a `workflow_dispatch`
+        # backfill may legitimately name two SHAs with no ancestry between
+        # them, and an operator stating both is an informed act, not a carry.
+        # -----------------------------------------------------------------
+        CARRY_WITNESS="repro.lock"
+        if git -C "${SELF_GIT}" cat-file -e "${SOURCE_SHA}^{commit}" 2>/dev/null &&
+           git -C "${SELF_GIT}" merge-base --is-ancestor \
+             "${SOURCE_SHA}" "${TARGET_SHA}" 2>/dev/null; then
+          CARRY_MOVED="$(git -C "${SELF_GIT}" diff-tree -r --name-only \
+            --no-commit-id --no-renames "${SOURCE_SHA}" "${TARGET_SHA}" \
+            -- "${CARRY_WITNESS}" 2>/dev/null || true)"
+          if [ -n "${CARRY_MOVED}" ]; then
+            die "${SELF_NAME}'s own ${CARRY_WITNESS} differs between ${SOURCE_SHA} and ${TARGET_SHA}, so the composition CHANGED across the range this carry spans. The record published for ${SOURCE_SHA} states the sibling set as it was BEFORE that change; filing it under ${TARGET_SHA} would publish a set that contradicts the commit it names, and a published record is immutable, so ${TARGET_SHA} could never afterwards record its real state. Nothing is published. The sibling set for this commit has to be OBSERVED, not carried: regenerate it from a real workspace (refresh-workspace-lock opens that as a pull request, so the composition is built before it is published), then re-run this workflow's workflow_dispatch backfill with a source-sha whose record actually describes ${TARGET_SHA}."
+          fi
+          echo "Carry checked: ${CARRY_WITNESS} is unchanged between ${SOURCE_SHA} and ${TARGET_SHA}; the source record's sibling set still describes the target."
+        else
+          echo "Carry span not evaluated: ${SOURCE_SHA} is not an ancestor of ${TARGET_SHA} in ${SELF_SLUG}@${BASE_REF} (or is not present on it). This is the workflow_dispatch backfill shape, where both SHAs are stated by an operator rather than derived from a branch's previous tip."
+        fi
 
         # -----------------------------------------------------------------
         # Publish into one manifest layer.
