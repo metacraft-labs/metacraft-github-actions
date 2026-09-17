@@ -356,10 +356,17 @@ runs:
       shell: pwsh
       run: |
         # Windows-side: replay reprobuild's own DIY contract. Source its env.ps1
-        # (which pulls in the scoop/winget toolchain managed by
-        # non-nix-build/windows/ensure-*.ps1) and run `just build`. The build
-        # drops `repro.exe` under build\bin\ which we add to GITHUB_PATH.
+        # (which pulls in the toolchain managed by windows/bootstrap-toolchain.ps1)
+        # and compile the apps via scripts/build_apps.sh. The build drops
+        # `repro.exe` under build\bin\ which we add to GITHUB_PATH.
         Set-Location "$env:GITHUB_WORKSPACE\reprobuild"
         . .\env.ps1
-        just build
+        if (Get-Command just -ErrorAction SilentlyContinue) {
+          just build
+        } else {
+          bash ./scripts/build_apps.sh
+        }
+        if ($LASTEXITCODE -ne 0) {
+          throw "reprobuild compilation failed with exit code $LASTEXITCODE"
+        }
         Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path .\build\bin).Path
