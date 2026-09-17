@@ -153,6 +153,16 @@ clone() {
 	bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
 		--repo "${repo}" --dest "${WS}/${name}" --rev "${rev}" \
 		--shallow "$@" || exit 1
+
+	local parent_ws
+	parent_ws="$(dirname "${WS}")"
+	if [ "${parent_ws}" != "${WS}" ] && [ -d "${parent_ws}" ] && [ ! -e "${parent_ws}/${name}" ]; then
+		if command -v cmd.exe >/dev/null 2>&1; then
+			cmd.exe /c "mklink /J \"$(cygpath -w "${parent_ws}/${name}")\" \"$(cygpath -w "${WS}/${name}")\"" >/dev/null 2>&1 || true
+		else
+			ln -s "${WS}/${name}" "${parent_ws}/${name}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -264,7 +274,8 @@ else
 		"${SIBLING_OWNER}/nim-shm-queue:dev" \
 		"${SIBLING_OWNER}/nim-shm-gset:dev" \
 		"${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
-		"${SIBLING_OWNER}/reprobuild-ct-test-runner:dev"
+		"${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
+		"${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
 
 	clone "${SIBLING_OWNER}/runquota" dev --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
@@ -273,6 +284,7 @@ else
 	clone "${SIBLING_OWNER}/nim-shm-gset" dev
 	clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
 	clone "${SIBLING_OWNER}/reprobuild-ct-test-runner" dev
+	clone "${SIBLING_OWNER}/reprobuild-llm-agent-packages" dev
 
 	# `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
 	# tree carries far more submodules than the Windows env.ps1 build reads, and
