@@ -258,15 +258,15 @@ else
 	# -----------------------------------------------------------------------
 	check_pins \
 		"${SIBLING_OWNER}/runquota:dev" \
-		"${SIBLING_OWNER}/nim-stackable-hooks:stable" \
-		"${SIBLING_OWNER}/io-mon:stable" \
-		"${SIBLING_OWNER}/codetracer:stable" \
+		"${SIBLING_OWNER}/nim-stackable-hooks:dev" \
+		"${SIBLING_OWNER}/io-mon:dev" \
+		"${SIBLING_OWNER}/codetracer:dev" \
 		"${SIBLING_OWNER}/nim-shm-queue:dev" \
 		"${SIBLING_OWNER}/nim-shm-gset:dev"
 
 	clone "${SIBLING_OWNER}/runquota" dev --submodules
-	clone "${SIBLING_OWNER}/nim-stackable-hooks" stable --submodules
-	clone "${SIBLING_OWNER}/io-mon" stable --submodules
+	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
+	clone "${SIBLING_OWNER}/io-mon" dev --submodules
 	clone "${SIBLING_OWNER}/nim-shm-queue" dev
 	clone "${SIBLING_OWNER}/nim-shm-gset" dev
 
@@ -281,7 +281,7 @@ else
 	# process's environment -- which is inherited at every submodule depth, and
 	# is why the private submodule resolves without anything being written into
 	# any `.git/config`.
-	clone "${SIBLING_OWNER}/codetracer" stable
+	clone "${SIBLING_OWNER}/codetracer" dev
 	if ! git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
 		libs/nim-serialization \
 		libs/nim-faststreams \
