@@ -65,7 +65,6 @@
 # itself; see `setup-dev-env: resolve own actions at @dev after the main->dev
 # rename`) and this list was not carried along. Verified against the remotes:
 #
-#     repo-workspaces      main: absent   mainline: dev
 #     runquota             main: absent   mainline: dev
 #     nim-stackable-hooks  main: absent   mainline: stable
 #     io-mon               main: absent   mainline: stable
@@ -252,17 +251,17 @@ if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
 	clone "${SIBLING_OWNER}/runquota" dev
 else
 	# -----------------------------------------------------------------------
-	# Windows: reprobuild's env.ps1 dot-sources ../repo-workspaces/env.ps1 for
-	# the toolchain bootstrap and reads sibling repos for source-only Nim deps.
+	# Windows: reprobuild's env.ps1 reads sibling repos for source-only Nim deps.
+	# The cold-start toolchain bootstrap (nim + gcc) is self-contained in
+	# reprobuild/windows/bootstrap-toolchain.ps1 and no longer requires
+	# the archived repo-workspaces framework.
 	# -----------------------------------------------------------------------
 	check_pins \
-		"${SIBLING_OWNER}/repo-workspaces:dev" \
 		"${SIBLING_OWNER}/runquota:dev" \
 		"${SIBLING_OWNER}/nim-stackable-hooks:stable" \
 		"${SIBLING_OWNER}/io-mon:stable" \
 		"${SIBLING_OWNER}/codetracer:stable"
 
-	clone "${SIBLING_OWNER}/repo-workspaces" dev --submodules
 	clone "${SIBLING_OWNER}/runquota" dev --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" stable --submodules
 	clone "${SIBLING_OWNER}/io-mon" stable --submodules

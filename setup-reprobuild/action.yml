@@ -340,7 +340,7 @@ runs:
         set -euo pipefail
         WS="${GITHUB_WORKSPACE}"
         # Move reprobuild from .reprobuild-src to a sibling location so env.ps1
-        # finds repo-workspaces et al. (cloned by reprobuild-provision) at ../<name>.
+        # finds codetracer et al. (cloned by reprobuild-provision) at ../<name>.
         if [ -d "${WS}/.reprobuild-src" ] && [ ! -d "${WS}/reprobuild" ]; then
           mv "${WS}/.reprobuild-src" "${WS}/reprobuild"
         fi
