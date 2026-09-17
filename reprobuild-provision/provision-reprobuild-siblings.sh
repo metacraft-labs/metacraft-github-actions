@@ -261,12 +261,14 @@ else
 		"${SIBLING_OWNER}/nim-stackable-hooks:stable" \
 		"${SIBLING_OWNER}/io-mon:stable" \
 		"${SIBLING_OWNER}/codetracer:stable" \
-		"${SIBLING_OWNER}/nim-shm-queue:dev"
+		"${SIBLING_OWNER}/nim-shm-queue:dev" \
+		"${SIBLING_OWNER}/nim-shm-gset:dev"
 
 	clone "${SIBLING_OWNER}/runquota" dev --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" stable --submodules
 	clone "${SIBLING_OWNER}/io-mon" stable --submodules
 	clone "${SIBLING_OWNER}/nim-shm-queue" dev
+	clone "${SIBLING_OWNER}/nim-shm-gset" dev
 
 	# `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
 	# tree carries far more submodules than the Windows env.ps1 build reads, and
