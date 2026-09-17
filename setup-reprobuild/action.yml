@@ -408,3 +408,17 @@ runs:
             }
           }
         }
+        # Ensure siblings cloned under GITHUB_WORKSPACE are also accessible from the parent directory
+        # (where consumer repro.nim files with ../<sibling> relative imports expect them).
+        $ws = $env:GITHUB_WORKSPACE
+        $parentWs = Split-Path -Parent $ws
+        if ($parentWs -and (Test-Path -LiteralPath $parentWs)) {
+          Get-ChildItem -Path $ws -Directory | ForEach-Object {
+            $siblingName = $_.Name
+            $target = $_.FullName
+            $junctionPath = Join-Path $parentWs $siblingName
+            if (-not (Test-Path -LiteralPath $junctionPath)) {
+              New-Item -ItemType Junction -Path $junctionPath -Target $target -ErrorAction SilentlyContinue | Out-Null
+            }
+          }
+        }

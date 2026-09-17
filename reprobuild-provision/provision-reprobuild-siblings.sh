@@ -157,8 +157,10 @@ clone() {
 	local parent_ws
 	parent_ws="$(dirname "${WS}")"
 	if [ "${parent_ws}" != "${WS}" ] && [ -d "${parent_ws}" ] && [ ! -e "${parent_ws}/${name}" ]; then
-		if command -v cmd.exe >/dev/null 2>&1; then
-			cmd.exe /c "mklink /J \"$(cygpath -w "${parent_ws}/${name}")\" \"$(cygpath -w "${WS}/${name}")\"" >/dev/null 2>&1 || true
+		if command -v powershell.exe >/dev/null 2>&1; then
+			powershell.exe -NoProfile -Command "New-Item -ItemType Junction -Path '$(cygpath -w "${parent_ws}/${name}")' -Target '$(cygpath -w "${WS}/${name}")' -Force" >/dev/null 2>&1 || true
+		elif command -v cmd.exe >/dev/null 2>&1; then
+			MSYS_NO_PATHCONV=1 cmd.exe /c "mklink /J \"$(cygpath -w "${parent_ws}/${name}")\" \"$(cygpath -w "${WS}/${name}")\"" < /dev/null >/dev/null 2>&1 || true
 		else
 			ln -s "${WS}/${name}" "${parent_ws}/${name}" 2>/dev/null || true
 		fi
