@@ -360,6 +360,8 @@ runs:
         # and compile the apps via scripts/build_apps.sh. The build drops
         # `repro.exe` under build\bin\ which we add to GITHUB_PATH.
         Set-Location "$env:GITHUB_WORKSPACE\reprobuild"
+        $initialEnv = @{}
+        Get-ChildItem env: | ForEach-Object { $initialEnv[$_.Name] = $_.Value }
         . .\env.ps1
         if (Get-Command just -ErrorAction SilentlyContinue) {
           just build
@@ -369,4 +371,40 @@ runs:
         if ($LASTEXITCODE -ne 0) {
           throw "reprobuild compilation failed with exit code $LASTEXITCODE"
         }
-        Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path .\build\bin).Path
+        # Surface newly added toolchain PATH entries (nim, gcc, clingo, openssl, bash, repro)
+        # to subsequent workflow steps.
+        $initialPaths = if ($initialEnv.ContainsKey("PATH")) { $initialEnv["PATH"] -split ';' } else { @() }
+        $currentPaths = $env:PATH -split ';'
+        $newPaths = @()
+        foreach ($p in $currentPaths) {
+          if (-not [string]::IsNullOrWhiteSpace($p) -and -not ($initialPaths -contains $p) -and -not ($newPaths -contains $p)) {
+            $newPaths += $p
+          }
+        }
+        foreach ($p in $newPaths) {
+          if (Test-Path -LiteralPath $p) {
+            Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path -LiteralPath $p).Path
+          }
+        }
+        # Also ensure reprobuild's build\bin is explicitly on PATH
+        $reproBin = (Resolve-Path .\build\bin).Path
+        if (-not ($newPaths -contains $reproBin)) {
+          Add-Content -Path $env:GITHUB_PATH -Value $reproBin
+        }
+        # Explicitly export compiler pins for repro's extract_runner and provider compiles
+        $nimCmd = Get-Command nim.exe -ErrorAction SilentlyContinue
+        if ($nimCmd) {
+          Add-Content -Path $env:GITHUB_ENV -Value "REPRO_NIM_COMPILER=$($nimCmd.Source)"
+        }
+        $gccCmd = Get-Command gcc.exe -ErrorAction SilentlyContinue
+        if ($gccCmd) {
+          Add-Content -Path $env:GITHUB_ENV -Value "REPRO_BOOTSTRAP_CC=$($gccCmd.Source)"
+        }
+        # Propagate environment variables exported by env.ps1 (LIBRARY_PATH, BEARSSL_SRC, etc.)
+        Get-ChildItem env: | ForEach-Object {
+          if (-not $initialEnv.ContainsKey($_.Name) -or $initialEnv[$_.Name] -ne $_.Value) {
+            if ($_.Name -notin @("PATH", "PWD", "OLDPWD", "REPRO_NIM_COMPILER", "REPRO_BOOTSTRAP_CC")) {
+              Add-Content -Path $env:GITHUB_ENV -Value "$($_.Name)=$($_.Value)"
+            }
+          }
+        }
