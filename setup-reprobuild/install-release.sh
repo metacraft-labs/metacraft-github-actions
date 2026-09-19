@@ -43,6 +43,30 @@
 # a failure inside a function would bypass the trap and leak its own status.
 set -Eeuo pipefail
 
+# STANDARD TOOLS MUST BE REACHABLE EVEN WHEN PATH HAS BEEN REPLACED.
+#
+# This script uses sed, awk, head, tr, find and mktemp. It runs as a step in a
+# job that has usually already run `setup-nix`, which puts a Nix profile at the
+# FRONT of PATH — and on the self-hosted runners that profile does not carry
+# coreutils/gnused. GitHub then resolves `shell: bash` to the Nix bash and runs
+# it `--noprofile --norc`, so nothing restores the system paths.
+#
+# The failure is a bare `sed: command not found` (exit 127) from inside the
+# release-tag parse, which this script's own error handling correctly refuses to
+# treat as "no prebuilt for this platform" — so every consumer's CI goes red at
+# `Setup reprobuild environment`, on every runner class, with a message that
+# points at the installer rather than at PATH. metacraft-labs/gosti was red this
+# way from 2026-09-16.
+#
+# APPEND rather than prepend: anything a caller deliberately put in front —
+# a pinned Nix toolchain, a newer coreutils — still wins. This only guarantees
+# that the POSIX basics resolve to something rather than to nothing.
+case ":${PATH}:" in
+  *:/usr/bin:*) ;;
+  *) PATH="${PATH}:/usr/bin:/bin:/usr/sbin:/sbin" ;;
+esac
+export PATH
+
 REPO="${REPRO_REPO:-metacraft-labs/reprobuild}"
 VERSION="${REPRO_VERSION:-latest}"
 INSTALL_DIR="${REPRO_INSTALL_DIR:?REPRO_INSTALL_DIR must be set}"
