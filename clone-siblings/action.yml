@@ -145,6 +145,22 @@ inputs:
       more than one org — reprobuild's manifest model already allows a
       `projectRemote` of `blocksense-network` — without the CI token having to
       be scoped to all of github.com.
+
+      AN ENTRY WHOSE NAME IS THE TRIGGERING REPOSITORY IS SKIPPED, not cloned,
+      and the skip is announced in the log. Every sibling lands at
+      `$GITHUB_WORKSPACE/../<name>`, and the runner's layout is
+      `.../_work/<repo>/<repo>`, so for `<name>` equal to the triggering repo
+      that destination IS `$GITHUB_WORKSPACE` — already populated by
+      `actions/checkout` with the commit under test. Cloning there deletes the
+      primary checkout and then fails (git exit 128; run 35442038380 in
+      codetracer-native-recorder). The entry is not treated as an error because
+      it is usually not a mistake: a `siblings:` list shared by a reusable
+      workflow is correct for every caller but the one it happens to name. The
+      match is on the repo NAME only, whatever the `owner/` — the collision is
+      on the directory — and an owner other than the trigger's, or a `=<ref>`
+      other than `$GITHUB_SHA`, is reported as a `::warning::`, because the
+      checkout that stands in for the clone is not what that entry asked for.
+      Everything else in the list is cloned exactly as it would have been.
     required: false
     default: ""
   sibling-owner:

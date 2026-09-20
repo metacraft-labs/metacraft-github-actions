@@ -282,6 +282,10 @@ RC=0
 run_step() { # <siblings-input> [<on-lock-override>]
 	rm -rf "$WS_PARENT"
 	mkdir -p "$WS_PARENT/codetracer" "$TMPROOT/runner-temp"
+	# The primary checkout, as `actions/checkout` leaves it: a populated
+	# `$GITHUB_WORKSPACE`. One file is enough to tell "still here" from
+	# "`rm -rf`'d by a sibling clone aimed at this very directory" (section 11).
+	printf 'the commit under test\n' >"$WS_PARENT/codetracer/PRIMARY-CHECKOUT"
 	rm -rf "$TMPROOT/runner-temp"
 	mkdir -p "$TMPROOT/runner-temp"
 	: >"$TMPROOT/github-env"
@@ -723,6 +727,181 @@ run_step "nim-acp=dev"
 check "no lock at all still succeeds" "$RC" "0"
 lacks "...and nothing is claimed about a generation time" "$OUT" "Workspace lock codetracer@"
 lacks "...and no date is printed" "$OUT" "generated 20"
+
+# ===========================================================================
+# 11. AN ENTRY THAT NAMES THE TRIGGERING REPOSITORY IS SKIPPED, NOT CLONED.
+#
+# Every sibling lands at `$GITHUB_WORKSPACE/../<name>`, and the runner's layout
+# is `.../_work/<repo>/<repo>`, so for `<name>` equal to the triggering repo the
+# destination IS `$GITHUB_WORKSPACE` -- already populated by `actions/checkout`.
+# `authenticated-clone.sh` starts with `rm -rf <dest>`.
+#
+# RED against the unfixed action, and against run 35442038380 in
+# codetracer-native-recorder (2026-09-19), whose `siblings:` list -- a reusable
+# workflow's literal "what the codetracer core build needs" block, correct for
+# five callers and self-naming for the sixth -- carried a bare
+# `codetracer-native-recorder`:
+#
+#     metacraft-labs/codetracer-native-recorder -> 9652957... (lock)
+#     ::error::clone failed for metacraft-labs/codetracer-native-recorder (git exit 128).
+#     fatal: could not create work tree dir '.../codetracer-native-recorder/../
+#     codetracer-native-recorder': File exists
+#
+# by which point the primary checkout had already been `rm -rf`'d. The entry is
+# NOT a typo -- a static list cannot say "everyone but me" -- and the repo it
+# asks for is already at exactly the path it would be put, at the commit under
+# test. So the contract is a SKIP: the self entry is dropped, loudly, and every
+# other entry is cloned exactly as it would have been without it.
+#
+# THE PROPERTY ASSERTED IS WHICH REPOS WERE CLONED AND WHICH SURVIVED, not the
+# absence of exit 128. "Exited 0" alone would also be satisfied by a skip that
+# drops everything, which is the over-broad mutant; the per-sibling revision
+# checks are what refuse it.
+#
+# The fixture lock pins the TRIGGER ITSELF, as every real workspace lock does
+# (the run above resolved `codetracer-native-recorder` from the lock at its own
+# `$GITHUB_SHA`). That is what makes the unfixed action reach the clone: with
+# a lock that does not name self it would stop earlier, at the membership
+# error, and the case would be red for the wrong reason.
+# ===========================================================================
+LOCK_WITH_SELF="$TMPROOT/lock-with-self.toml"
+{
+	printf 'schema = "reprobuild.workspace.lock.v1"\n\n[lock]\nrepo = "codetracer"\n\n'
+	printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n\n' "$SELF_SHA"
+	for n in "${IN_LOCK[@]}"; do
+		printf '[[repo]]\nname = "%s"\npath = "%s"\nrevision = "%s"\n\n' "$n" "$n" "$(sha_of "$n")"
+	done
+} >"$LOCK_WITH_SELF"
+mk_manifests "$LOCK_WITH_SELF"
+
+# `others_cloned <desc>` -- the four lock-pinned siblings are on disk at their
+# locked revisions. This is the half of the contract that refuses an over-broad
+# skip; it is asserted on every arm below.
+others_cloned() { # <desc>
+	local n
+	for n in "${IN_LOCK[@]}"; do
+		check "$1: $n is checked out at the locked revision" \
+			"$("$REAL_GIT" -C "$WS_PARENT/$n" rev-parse HEAD 2>/dev/null)" "$(sha_of "$n")"
+	done
+}
+# `primary_intact <desc>` -- `$GITHUB_WORKSPACE` was not `rm -rf`'d and no
+# clone was written over it.
+primary_intact() { # <desc>
+	check "$1: the primary checkout is still in place" \
+		"$([[ -f "$WS_PARENT/codetracer/PRIMARY-CHECKOUT" ]] && echo yes || echo no)" "yes"
+	check "$1: and no clone was written over it" \
+		"$([[ -e "$WS_PARENT/codetracer/.git" ]] && echo yes || echo no)" "no"
+}
+SELF_SKIP_LINE="skipping sibling entry"
+
+# 11a. The live shape: the trigger FIRST, bare, in a list of otherwise-pinned
+#      siblings. First matters twice over -- it is the probe sibling for
+#      commit selection, and it was the first thing the clone loop reached.
+run_step "codetracer
+$FOUR"
+check "a bare self entry first in the list: the step succeeds" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+contains "  ...the skip is announced, naming the entry" "$OUT" \
+	"${SELF_SKIP_LINE} 'codetracer'"
+contains "  ...and the reason: it is the triggering repository" "$OUT" \
+	"it names the triggering repository (metacraft-labs/codetracer)"
+contains "  ...and where that repository already is" "$OUT" \
+	"already checked out at \$GITHUB_WORKSPACE at $SELF_SHA"
+lacks "  ...it is not in the resolution table" "$OUT" "metacraft-labs/codetracer -> "
+lacks "  ...it is never handed to the clone helper" "$OUT" "clone failed for metacraft-labs/codetracer "
+lacks "  ...and it raises no warning: the list is not wrong, it is shared" "$OUT" "::warning::"
+contains "  ...the closing line counts what was cloned and what was skipped" "$OUT" \
+	"Cloned 4 sibling(s) adjacent to the host checkout; 1 entry/entries naming the triggering repository (codetracer) were skipped"
+contains "  ...and CT_SIBLING_PATHS is still exported" "$(<"$TMPROOT/github-env")" "CT_SIBLING_PATHS="
+lacks "  ...without the trigger in it" "$(<"$TMPROOT/github-env")" "codetracer="
+
+# 11b. Self in the MIDDLE, spelled with its own owner. The destination is
+#      derived from the name, so `owner/name` collides exactly as `name` does;
+#      an owner equal to $GITHUB_REPOSITORY's is nothing to warn about.
+run_step "nim-everywhere
+metacraft-labs/codetracer
+nim-acp
+nim-agent-harbor
+nim-agents"
+check "an owner-qualified self entry mid-list: the step succeeds" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+contains "  ...and is skipped by name" "$OUT" "${SELF_SKIP_LINE} 'metacraft-labs/codetracer'"
+lacks "  ...with no warning, since the owner is the trigger's own" "$OUT" "::warning::"
+
+# 11c. Self under a DIFFERENT owner. Still a collision on `../codetracer` --
+#      the primary checkout -- so still skipped; but the checkout standing in
+#      for it is not the owner's copy that was asked for, and that is said.
+run_step "other-org/codetracer
+$FOUR"
+check "a self entry under another owner: the step still succeeds" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+contains "  ...the entry is skipped" "$OUT" "${SELF_SKIP_LINE} 'other-org/codetracer'"
+contains "  ...with a warning that names the owner asked for and the one present" "$OUT" \
+	"::warning::clone-siblings: the skipped entry 'other-org/codetracer' asks for owner 'other-org', but the checkout standing in for it at \$GITHUB_WORKSPACE is metacraft-labs/codetracer"
+
+# 11d. Self with an explicit ref EQUAL to the commit under test. Redundant, not
+#      contradictory: skipped without a warning.
+run_step "codetracer=$SELF_SHA
+$FOUR"
+check "self pinned to \$GITHUB_SHA: the step succeeds" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+contains "  ...the entry is skipped" "$OUT" "${SELF_SKIP_LINE} 'codetracer=$SELF_SHA'"
+lacks "  ...and not warned about: it asks for the revision that is there" "$OUT" "::warning::"
+
+# 11e. Self with an explicit ref that is NOT the checkout. The primary checkout
+#      is not replaced, so the caller is not getting the revision they named,
+#      and a skip that said nothing about that would be a silent override of
+#      the caller -- the mirror image of the silent override this action
+#      already refuses in section 9. `!=` changes nothing here: there is no
+#      lock pin being overridden, there is a checkout being ignored.
+run_step "codetracer!=dev
+$FOUR"
+check "self with a differing explicit ref: the step still succeeds" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+contains "  ...the entry is skipped" "$OUT" "${SELF_SKIP_LINE} 'codetracer!=dev'"
+contains "  ...with a warning naming the ref asked for and the revision present" "$OUT" \
+	"::warning::clone-siblings: the skipped entry 'codetracer!=dev' asks for revision 'dev', but the triggering repository is checked out at $SELF_SHA"
+lacks "  ...and it is not reported as a lock override: nothing was resolved from the lock for it" "$OUT" \
+	"override a revision the workspace lock"
+
+# 11f. The self entry is dropped BEFORE the lock is consulted. With a lock that
+#      does not pin the trigger, an entry that reached PASS 1 would be filed as
+#      a workspace-membership gap and fail the step -- so this arm is what pins
+#      "skipped at parse time" rather than "skipped somewhere".
+mk_manifests "$LOCK_OK"
+run_step "codetracer
+$FOUR"
+check "self is skipped even when the lock does not pin the trigger" "$RC" "0"
+others_cloned "  ..."
+primary_intact "  ..."
+lacks "  ...so it is never reported as unpinned" "$OUT" "pins no revision for these sibling(s)"
+
+# 11g. A list that is NOTHING BUT the trigger. Nothing to clone, said as such,
+#      exit 0 -- and the manifests repo is never fetched for a list that has
+#      no sibling left to resolve.
+run_step "codetracer"
+check "a list consisting only of the trigger exits 0" "$RC" "0"
+primary_intact "  ..."
+contains "  ...saying that every entry named the triggering repository" "$OUT" \
+	"No cross-repo siblings to clone: every entry (1) named the triggering repository metacraft-labs/codetracer"
+lacks "  ...and never clones the manifests repo" "$OUT" "Cloning manifests repo"
+
+# 11h. A GENUINE sibling whose name merely CONTAINS the trigger's is not self.
+#      The comparison is whole-name equality, not a substring or prefix match:
+#      `codetracer-launcher` beside `codetracer` is the fleet's own layout.
+mk_repo codetracer-launcher >/dev/null
+run_step "codetracer-launcher=dev
+$FOUR"
+check "a sibling whose name has the trigger's as a prefix is cloned" "$RC" "0"
+others_cloned "  ..."
+check "  ...codetracer-launcher is on disk" \
+	"$([[ -d "$WS_PARENT/codetracer-launcher/.git" ]] && echo yes || echo no)" "yes"
+lacks "  ...and was not mistaken for the trigger" "$OUT" "${SELF_SKIP_LINE} 'codetracer-launcher"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

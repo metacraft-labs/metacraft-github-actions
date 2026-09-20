@@ -141,6 +141,7 @@ REFS=()
 OWNERS=()
 ACKED=()
 NEED_LOCK=0
+SELF_SKIPPED=0
 for entry in "${SIBLINGS[@]}"; do
   rf=""
   ack=0
@@ -183,12 +184,70 @@ for entry in "${SIBLINGS[@]}"; do
     echo "::error::sibling entry '${entry}' has an empty repository name; the form is [owner/]name[!]=[ref]."
     exit 1
   fi
+  # ---------------------------------------------------------------------------
+  # AN ENTRY THAT NAMES THE TRIGGERING REPOSITORY IS NOT A SIBLING. It is skipped
+  # here, by name, before it can reach the lock or the clone loop.
+  #
+  # Every sibling is cloned to `$GITHUB_WORKSPACE/../<name>`, and the runner
+  # lays the primary checkout out as `.../_work/<repo>/<repo>` — so for
+  # `<name>` equal to the triggering repo that destination IS
+  # `$GITHUB_WORKSPACE`, which `actions/checkout` has already populated with the
+  # commit under test. `authenticated-clone.sh` begins with `rm -rf <dest>`, so
+  # "cloning" such an entry first deletes the primary checkout out from under
+  # the running job and then fails to create a work tree over its own cwd (git
+  # exit 128, `could not create work tree dir ... File exists`). That is not a
+  # hypothetical: run 35442038380 in codetracer-native-recorder died exactly
+  # there.
+  #
+  # WHY SKIP RATHER THAN FAIL. The entry is not a typo. The same `siblings:`
+  # list can be correct for one caller and self-naming for another: a reusable
+  # workflow that clones "the workspace the codetracer core build needs" names
+  # `codetracer-native-recorder` because the core build requires it beside the
+  # checkout — and that list is right for the five callers that are not the
+  # native recorder, and names the trigger for the one that is. A static list
+  # cannot express "everyone but me", and the repo the entry asks for is already
+  # present at exactly the path the entry would put it, at the commit under
+  # test. The requirement is satisfied; the clone is the only thing wrong.
+  #
+  # KEYED BY NAME, NOT BY OWNER. The collision is on the DESTINATION directory,
+  # which is derived from the name alone; an `other-owner/<self>` entry would
+  # land on the primary checkout just the same. An owner that differs from
+  # `$GITHUB_REPOSITORY`'s is reported, because the checkout that stands in for
+  # the clone is from the triggering owner, not the requested one.
+  #
+  # AN EXPLICIT `=<ref>` ON SELF CANNOT BE HONOURED. The checkout is at
+  # `$GITHUB_SHA` and nothing here will replace it. A ref that names that same
+  # commit is redundant and skipped quietly; any other ref is skipped with a
+  # `::warning::` naming both revisions, because the caller asked for a
+  # revision this step is not going to give them.
+  #
+  # The skip happens BEFORE the entry is appended, so the trigger is never
+  # asked of the lock (a `pull_request` lock is keyed by the PR BASE and would
+  # answer with a revision that is not the checkout's), never counted toward
+  # `NEED_LOCK`, never used as the probe sibling, and never in the resolution
+  # table. What IS said is said here, at the point of decision, so a reader of
+  # the job log sees a decision and not an omission.
+  if [ "${nm}" = "${SELF}" ]; then
+    SELF_SKIPPED=$((SELF_SKIPPED + 1))
+    echo "clone-siblings: skipping sibling entry '${entry}': it names the triggering repository (${GITHUB_REPOSITORY}), which is already checked out at \$GITHUB_WORKSPACE at ${GITHUB_SHA}. A sibling is cloned to \$GITHUB_WORKSPACE/../<name>, and for '${nm}' that is \$GITHUB_WORKSPACE itself; cloning there would destroy the primary checkout. The triggering repository is never a sibling of itself, so this entry is dropped and the remaining entries proceed."
+    if [ -n "${ow}" ] && [ "${ow}" != "${GITHUB_REPOSITORY%%/*}" ]; then
+      echo "::warning::clone-siblings: the skipped entry '${entry}' asks for owner '${ow}', but the checkout standing in for it at \$GITHUB_WORKSPACE is ${GITHUB_REPOSITORY}. If a different owner's copy of '${nm}' was genuinely meant, it cannot be placed at ../${nm}: that path is the primary checkout."
+    fi
+    if [ -n "${rf}" ] && [ "${rf}" != "${GITHUB_SHA}" ]; then
+      echo "::warning::clone-siblings: the skipped entry '${entry}' asks for revision '${rf}', but the triggering repository is checked out at ${GITHUB_SHA} and this step will not replace the primary checkout. That revision is NOT what the job runs against. Drop the '=${rf}' from this entry, or check out the revision you want as the trigger."
+    fi
+    continue
+  fi
   NAMES+=("${nm}")
   REFS+=("${rf}")
   OWNERS+=("${ow}")
   ACKED+=("${ack}")
   [ -z "${rf}" ] && NEED_LOCK=1
 done
+if [ "${#NAMES[@]}" -eq 0 ]; then
+  echo "No cross-repo siblings to clone: every entry (${SELF_SKIPPED}) named the triggering repository ${GITHUB_REPOSITORY}, which is already checked out at \$GITHUB_WORKSPACE."
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # An explicit `name=ref` override is a REVISION, and it was the one revision in
@@ -720,4 +779,8 @@ for i in "${!NAMES[@]}"; do
 done
 # Expose the clone locations for later steps (e.g. flake overrides).
 echo "CT_SIBLING_PATHS=${SIBLING_PATHS# }" >>"${GITHUB_ENV}"
-echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout."
+if [ "${SELF_SKIPPED}" -gt 0 ]; then
+  echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout; ${SELF_SKIPPED} entry/entries naming the triggering repository (${SELF}) were skipped, see above."
+else
+  echo "Cloned ${#NAMES[@]} sibling(s) adjacent to the host checkout."
+fi
