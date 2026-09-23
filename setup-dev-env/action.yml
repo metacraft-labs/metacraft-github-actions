@@ -728,6 +728,17 @@ runs:
         } >> "$GITHUB_ENV"
         echo "reprobuild binary-cache publish ENABLED -> https://repro-cache.metacraft-labs.com"
 
+    # `repro` provisions a declared tool that is not on PATH from a tarball,
+    # using the host `tar` — which runs gzip / xz / bzip2 as child processes.
+    # The self-hosted runners' Nix-profile PATH carries none of them, so a job
+    # passed setup and then failed inside `repro build` with
+    # `tar (child): xz: Cannot exec`. Provide them here, or fail naming them.
+    # Windows is excluded: its tar is bsdtar, which decompresses in-process.
+    - name: Ensure the archive tools repro shells out to (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/ensure-host-decompressors.sh"
+
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       shell: bash
