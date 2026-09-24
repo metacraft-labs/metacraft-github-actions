@@ -37,6 +37,55 @@ SELF_SLUG="${INPUT_REPO:-${DEFAULT_REPO}}"
 # -----------------------------------------------------------------
 die() { echo "::error::$*"; exit 1; }
 
+# is_lock_record <file> -- exit 0 iff the file is a workspace LOCK, i.e. NOT a
+# routed participation record. Any repo-workspaces `.xml` is a lock. A `.toml`
+# is a participation record -- and so NOT a lock -- exactly when it announces no
+# top-level `schema`, every table in it is `[[repo]]`, and the only repo name it
+# pins is ${SELF_NAME} itself: the semantic test resolve-sibling-rev.sh's
+# `is_participation_record` and anchor-workspace-lock.sh (exit 3) apply, ported
+# rather than approximated, so the three cannot disagree about which records
+# answer a sibling query. A commit whose only record is a participation record
+# is still UNLOCKED. Anything else -- including a schema-less document naming
+# other repos, which the resolver treats as a lock and refuses loudly -- is a
+# lock here too.
+is_lock_record() {
+  case "$1" in
+    *.xml) return 0 ;;
+  esac
+  local l key val tables=0 repo_tables=0 names=0 foreign=0
+  while IFS= read -r l || [ -n "${l}" ]; do
+    l="${l%$'\r'}"
+    while [[ ${l} == [[:space:]]* ]]; do l="${l#?}"; done
+    while [[ ${l} == *[[:space:]] ]]; do l="${l%?}"; done
+    [ -n "${l}" ] || continue
+    [ "${l:0:1}" != "#" ] || continue
+    if [ "${l:0:1}" = "[" ]; then
+      tables=$((tables + 1))
+      [ "${l}" != "[[repo]]" ] || repo_tables=$((repo_tables + 1))
+      continue
+    fi
+    key="${l%%=*}"
+    [ "${key}" != "${l}" ] || continue
+    val="${l#*=}"
+    while [[ ${key} == *[[:space:]] ]]; do key="${key%?}"; done
+    while [[ ${val} == [[:space:]]* ]]; do val="${val#?}"; done
+    case "${val}" in
+      \"*\") val="${val#\"}"; val="${val%\"}" ;;
+      \'*\') val="${val#\'}"; val="${val%\'}" ;;
+    esac
+    [ "${tables}" -ne 0 ] || [ "${key}" != "schema" ] || return 0
+    if [ "${key}" = "name" ]; then
+      names=$((names + 1))
+      [ "${val}" = "${SELF_NAME}" ] || foreign=1
+    fi
+  done <"$1"
+  if [ "${repo_tables}" -gt 0 ] && [ "${tables}" -eq "${repo_tables}" ] &&
+     [ "${names}" -gt 0 ] && [ "${foreign}" -eq 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 check_sha() { # <label> <value>
   case "$2" in
     *[!0-9a-f]*|"") die "${1} must be a 40-character lowercase hex commit SHA; got '${2}'." ;;
@@ -244,6 +293,41 @@ publish_layer() { # <label> <owner/name> <branch> <dir>
     fi
     FOUND_ANY=1
 
+    # A COMMIT THAT IS ALREADY RECORDED IS NOT THIS ACTION'S TO RECORD.
+    #
+    # This action is the publisher of last resort, for commits NOBODY ELSE
+    # can publish (see action.yml). A push from a workspace whose pre-push
+    # gate publishes has already recorded the target BEFORE this job runs --
+    # the gate publishes, then pushes -- and that record is an OBSERVATION.
+    # Adding a carried record beside it at a DIFFERENT path (another project,
+    # or the other format) does not confirm the observation; it competes
+    # with it, and the resolver can pick the carried one: resolve-sibling-rev
+    # globs every `.xml` before any `.toml` and settles on the first project
+    # it meets, so a carried legacy `locks/dev/<repo>/<sha>.xml` SHADOWS an
+    # observed `locks/codetracer/<repo>/<sha>.toml` for the same commit.
+    #
+    # Measured, not hypothesised: codetracer-python-recorder@377e03bb and
+    # codetracer-ruby-recorder@8bacef81 carry only a legacy `locks/dev/`
+    # record, re-filed link by link from a 2026-09-09 composition, and a
+    # `locks/codetracer/` record published beside either one is not read.
+    #
+    # So a destination that does not exist yet is NOT ADDED when the target
+    # is already recorded in this layer. Destinations that DO exist are still
+    # compared below, unchanged: identical bytes are an idempotent re-run,
+    # different bytes remain the hard immutability failure -- a carried set
+    # that disagrees with what was observed at that commit is exactly the
+    # disagreement that must be loud.
+    local -a observed=()
+    for f in \
+        "${dir}"/locks/*/"${SELF_NAME}"/"${TARGET_SHA}".toml \
+        "${dir}"/locks/*/"${SELF_NAME}"/"${TARGET_SHA}".xml \
+        "${dir}"/locks/*/"${SELF_NAME}-${TARGET_SHA}".toml \
+        "${dir}"/locks/*/"${SELF_NAME}-${TARGET_SHA}".xml; do
+      [ -f "${f}" ] || continue
+      is_lock_record "${f}" || continue
+      observed+=("${f#${dir}/}")
+    done
+
     # Re-anchor every record found, into a staging file first. Nothing
     # touches the checkout until every transform has succeeded, so a
     # record this tool refuses cannot leave a half-published commit.
@@ -307,13 +391,17 @@ publish_layer() { # <label> <owner/name> <branch> <dir>
         fi
         die "A DIFFERENT lock record is already published at ${dest#${dir}/}. Published records are immutable and this one is not rewritten. Two sources disagree about the sibling set of ${SELF_NAME}@${TARGET_SHA}; resolve that before re-running."
       fi
+      if [ "${#observed[@]}" -gt 0 ]; then
+        echo "Not adding ${dest#${dir}/}: ${SELF_NAME}@${TARGET_SHA} is already recorded in the ${label} layer (${observed[*]}), and a carried record beside it would compete with that record rather than confirm it."
+        continue
+      fi
       pending_src+=("${body}")
       pending_dest+=("${dest}")
       anchored_any=1
     done
 
     if [ "${anchored_any}" -eq 0 ]; then
-      echo "${label} layer: nothing to publish; every destination record already exists."
+      echo "${label} layer: nothing to publish; every destination record already exists, or the commit is already recorded."
       return 0
     fi
 

@@ -722,6 +722,117 @@ else
 fi
 unset SOURCE_SHA TARGET_SHA
 
+# ===========================================================================
+# 12. AN OBSERVED COMMIT IS NOT CARRIED ONTO.
+#
+#     A push from a workspace whose pre-push gate publishes records the target
+#     BEFORE this job runs. A carried record ADDED beside that observation at a
+#     different path does not confirm it -- it competes with it, and the
+#     resolver picks by glob order (every `.xml` before any `.toml`, first
+#     project wins), so a carried legacy `locks/dev/.../<sha>.xml` SHADOWS the
+#     observed `locks/codetracer/.../<sha>.toml`. That is how
+#     codetracer-python-recorder@377e03bb and codetracer-ruby-recorder@8bacef81
+#     came to resolve a 2026-09-09 composition no workspace had observed since.
+#
+#     Pinned here: (a) the shadow itself, through the real resolver, so the
+#     premise is measured rather than asserted; (b) the carry adds nothing to an
+#     observed commit and the observation is what resolves; (c) a target whose
+#     only record is a PARTICIPATION record is still unlocked and IS carried;
+#     (d) a same-path disagreement is still the hard immutability failure of
+#     contract 3 -- the guard skips additions, it does not swallow conflicts.
+# ===========================================================================
+SIB_OBS="4444444444444444444444444444444444444444"
+xml_body() { # <self-revision>
+	printf '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
+	printf '  <remote name="metacraft-labs" fetch="https://github.com/metacraft-labs"/>\n'
+	printf '  <project name="nim-agents" path="nim-agents" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$SIB_A"
+	printf '  <project name="codetracer" path="codetracer" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$1"
+	printf '</manifest>\n'
+}
+observed_body() { # the pre-push gate's record for the MERGE commit
+	lock_body "$MERGE_SHA" | sed "s/$SIB_A/$SIB_OBS/"
+}
+# Source: legacy XML only (the python/ruby shape). Target: an observed TOML.
+plant_legacy_source_and_observed_target() {
+	rm -f "$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
+	mkdir -p "$MAN_WORK/locks/dev/codetracer"
+	xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
+	observed_body >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"
+}
+
+# The resolver's preferred project defaults to the repo's own NAME. Here the
+# repo is `codetracer`, which is also a project, so the default would pick the
+# observation for the wrong reason. The repos this bit are recorders, whose
+# names are no project; `--prefer-project` set to such a name reproduces
+# exactly what `clone-siblings` (which passes none) does for them.
+resolve_as_recorder() { # <sibling> <sha>
+	RESOLVE_RC=0
+	RESOLVE_OUT="$(bash "$RESOLVER" --repo codetracer --sibling "$1" \
+		--manifest-dir "$CHECKOUT" --sha "$2" --no-walk \
+		--prefer-project codetracer-python-recorder 2>&1)" || RESOLVE_RC=$?
+}
+
+# (a) the premise: with BOTH present for one commit, the resolver answers from
+#     the legacy XML, not from the observation.
+mk_manifests plant_legacy_source_and_observed_target
+refresh_checkout
+mkdir -p "$CHECKOUT/locks/dev/codetracer"
+xml_body "$MERGE_SHA" >"$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml"
+resolve_as_recorder nim-agents "$MERGE_SHA"
+check "observed: premise -- a legacy .xml beside an observed .toml shadows it in the resolver" \
+	"$RESOLVE_OUT" "$SIB_A"
+
+# (b) the carry adds nothing, and the observation is what resolves.
+mk_manifests plant_legacy_source_and_observed_target
+BEFORE_TIP="$(remote_tip)"
+run_step
+check "observed: a carry onto an already-recorded commit succeeds" "$RC" "0"
+contains "observed: ...and says why it adds nothing" "$OUT" \
+	"Not adding locks/dev/codetracer/$MERGE_SHA.xml: codetracer@$MERGE_SHA is already recorded"
+check "observed: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
+refresh_checkout
+check "observed: ...and no legacy record filed beside the observation" \
+	"$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
+resolve_as_recorder nim-agents "$MERGE_SHA"
+check "observed: ...so the commit resolves to what was OBSERVED at it" "$RESOLVE_OUT" "$SIB_OBS"
+
+# (c) a participation record is not a lock: the commit is still unlocked, and
+#     the carry must still reach it.
+plant_participation_target() {
+	mkdir -p "$MAN_WORK/locks/team/codetracer"
+	printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n' "$MERGE_SHA" \
+		>"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
+}
+mk_manifests plant_participation_target
+run_step
+check "observed: a target recorded only by a participation record is still carried" "$RC" "0"
+contains "observed: ...and the lock is published" "$OUT" \
+	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+
+# (c2) the participation test is the resolver's SEMANTIC one, not "has no
+#      schema": a schema-less document that names ANOTHER repo is a lock that
+#      failed to declare itself (the resolver refuses it loudly, exit 5), so the
+#      commit counts as recorded and nothing is carried beside it.
+plant_undeclared_lock_target() {
+	mkdir -p "$MAN_WORK/locks/team/codetracer"
+	printf '[[repo]]\nname = "codetracer"\nrevision = "%s"\n\n  [[repo]]\n  name = "nim-agents"\n  revision = "%s"\n' \
+		"$MERGE_SHA" "$SIB_OBS" >"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
+}
+mk_manifests plant_undeclared_lock_target
+BEFORE_TIP="$(remote_tip)"
+run_step
+check "observed: a schema-less record naming another repo counts as recorded" "$RC" "0"
+check "observed: ...so nothing is carried beside it" "$(remote_tip)" "$BEFORE_TIP"
+
+# (d) a same-path disagreement is still refused, exactly as in contract 3.
+plant_observed_same_path() { observed_body >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"; }
+mk_manifests plant_observed_same_path
+BEFORE_TIP="$(remote_tip)"
+run_step
+check "observed: a carried set that DISAGREES at the same path is still a hard failure" "$RC" "1"
+contains "observed: ...named as immutability" "$OUT" "Published records are immutable and this one is not rewritten"
+check "observed: ...and nothing is pushed" "$(remote_tip)" "$BEFORE_TIP"
+
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then
