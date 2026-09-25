@@ -133,8 +133,17 @@ runs:
           accept-flake-config = true
           allow-import-from-derivation = true
           fallback = true
-          connect-timeout = 3
-          download-attempts = 1
+          # Match metacraft-labs/devops-modules .github/setup-nix. libcurl's
+          # connect-timeout also counts time a request spends QUEUED for a
+          # free connection (http-connections), so a 3s timeout with one
+          # attempt failed narinfo lookups queued behind busy NAR downloads
+          # with "timed out ... 0 bytes received" on busy ephemeral runners.
+          # That was not a network fault, and fallback then disabled
+          # cache.nixos.org for the rest of the job.
+          connect-timeout = 20
+          download-attempts = 5
+          stalled-download-timeout = 30
+          http-connections = 16
           narinfo-cache-negative-ttl = 0
           substituters = https://cache.nixos.org $EXTRA_SUBSTITUTERS
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $EXTRA_TRUSTED_PUBLIC_KEYS
