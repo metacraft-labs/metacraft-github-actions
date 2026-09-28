@@ -1,0 +1,232 @@
+name: Release tools
+
+on:
+  workflow_call:
+    inputs:
+      tooling-ref:
+        description: Exact metacraft-github-actions commit used by the caller
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tool-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      version: ${{ steps.plan.outputs.version }}
+      expected: ${{ steps.plan.outputs.expected }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Generate CI token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ inputs.tooling-ref }}
+          path: .release-tools
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+      - id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require('./.release-tools/release-tools/release.cjs').githubPlan({github, context, core});
+
+  build:
+    needs: plan
+    name: Build and verify (${{ matrix.id }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      RELEASE_TARGET: ${{ matrix.id }}
+      RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Generate CI token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ inputs.tooling-ref }}
+          path: .release-tools
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+      - name: Set tool paths
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('RELEASE_NODE', process.execPath);
+            core.exportVariable('RELEASE_TOOLS', require('path').resolve('.release-tools/release-tools'));
+      - name: Set up Nix
+        if: runner.os != 'Windows'
+        uses: ./.release-tools/setup-nix
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Set up Windows compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./.release-tools/release-tools/setup-windows.ps1
+      - name: Build, package and test on POSIX
+        if: runner.os != 'Windows'
+        shell: bash
+        run: nix develop --command bash scripts/release/build.sh "$RELEASE_TARGET"
+      - name: Build, package and test on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/release/build.ps1 -Target $env:RELEASE_TARGET
+      - name: Verify Linux installation and portability
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash "$RELEASE_TOOLS/verify-linux.sh"
+      - name: Check exact target asset set
+        shell: bash
+        run: '"$RELEASE_NODE" "$RELEASE_TOOLS/release.cjs" seal dist "$RELEASE_TARGET"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.id }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-logs-${{ matrix.id }}
+          path: test-logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+  assemble:
+    needs: [plan, build]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Generate CI token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ inputs.tooling-ref }}
+          path: .release-tools
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify all assets after transfer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = require('./.release-tools/release-tools/release.cjs');
+            release.assemble('dist', release.plan().expected);
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [plan, assemble]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Generate CI token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ inputs.tooling-ref }}
+          path: .release-tools
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-release
+          path: dist
+      - name: Verify binary signing policy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const p = require('./.release-tools/release-tools/release.cjs').plan();
+            for (const target of p.matrix.filter(t => !t.id.startsWith('linux-'))) {
+              const evidence = JSON.parse(fs.readFileSync(`dist/${p.product}-${p.version}-${target.id}.json`));
+              if (!evidence.binarySigningVerified) {
+                throw new Error(`${target.id}: OS signing is unverified; publication needs configured signing or an approved exception recorded in the release policy`);
+              }
+            }
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign and verify the checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+          cosign verify-blob --bundle dist/SHA256SUMS.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/SHA256SUMS
+      - name: Verify draft bytes and publish
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require('./.release-tools/release-tools/release.cjs').publish({github, context, core});
+      - name: Request publication into the shared package repositories
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.token.outputs.token }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'metacraft-labs', repo: 'metacraft-desktop-packages', event_type: 'publish-release',
+              client_payload: {repository: `${context.repo.owner}/${context.repo.repo}`, tag: context.ref.slice(10)},
+            });
+            core.notice('Verify the matching shared package publisher run and both live indices before promoting stable.');

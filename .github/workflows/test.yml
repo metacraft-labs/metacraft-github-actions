@@ -28,6 +28,18 @@ permissions:
   contents: read
 
 jobs:
+  release-gates:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            require('child_process').execFileSync(process.execPath,
+              ['--test', 'release-tools/release.test.cjs'], {stdio: 'inherit'});
+
   resolve-sibling-rev:
     runs-on: ubuntu-latest
     steps:
