@@ -27,6 +27,21 @@ if [[ "$monitored_exit" != 0 ]]; then exit "$monitored_exit"; fi
 nim c -r --hints:off tests/linux/test_io_mon_linux_inline_asm_exit_group.nim > "$logs/inline-exit-group.log" 2>&1
 cat "$logs/inline-exit-group.log"
 
-# Real libc-backed capture is required on both architectures.
-timeout -k 10 300 nim c -r --hints:off tests/linux/test_io_mon_linux_stdio_ipc.nim > "$logs/stdio-ipc.log" 2>&1
+# Keep the real failing captures and inputs for attribution. Narrow this
+# diagnostic to three cases; the ordinary product CI still runs the full suite.
+mkdir -p "$logs/fixtures"
+export TMPDIR="$logs/fixtures"
+nim c --hints:off --out:build/test-bin/stdio-ipc tests/linux/test_io_mon_linux_stdio_ipc.nim > "$logs/stdio-build.log" 2>&1
+set +e
+timeout -k 10 120 build/test-bin/stdio-ipc \
+  'stdio fopen/fread captures a file dependency and remains complete' \
+  'relative writes follow a process chdir' \
+  'raw libc syscall openat/read captures dependency' > "$logs/stdio-ipc.log" 2>&1
+stdio_exit=$?
+set -e
+printf 'stdio_exit=%s\n' "$stdio_exit" >> "$logs/result.txt"
+while IFS= read -r -d '' depfile; do
+  build/bin/io-mon inspect "$depfile" --format json > "$depfile.inspect.json"
+done < <(find "$logs/fixtures" -name '*.iomon' -print0)
 cat "$logs/stdio-ipc.log"
+exit "$stdio_exit"
