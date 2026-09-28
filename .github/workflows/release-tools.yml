@@ -54,6 +54,9 @@ jobs:
     name: Build and verify (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: release-source
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: release-source
           persist-credentials: false
       - name: Generate CI token
         id: token
@@ -93,7 +97,17 @@ jobs:
       - name: Set up Windows compiler
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./.release-tools/release-tools/setup-windows.ps1
+        run: ../.release-tools/release-tools/setup-windows.ps1
+      - name: Authenticate pinned Windows source dependencies
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SCOPED_GIT_AUTH_REWRITES: '1'
+        run: |
+          source "$RELEASE_TOOLS/../git-auth/scoped-git-auth.sh"
+          scoped_git_auth_build
+          scoped_git_auth_emit >> "$GITHUB_ENV"
       - name: Build, package and test on POSIX
         if: runner.os != 'Windows'
         shell: bash
@@ -112,7 +126,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.id }}
-          path: dist/*
+          path: release-source/dist/*
           if-no-files-found: error
           retention-days: 14
       - name: Build diagnostics
@@ -120,7 +134,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-logs-${{ matrix.id }}
-          path: test-logs/
+          path: release-source/test-logs/
           if-no-files-found: warn
           retention-days: 14
 

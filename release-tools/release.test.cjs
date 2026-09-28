@@ -13,6 +13,15 @@ function fixture(t) {
   return dir;
 }
 const expected = ['linux.tar.gz', 'windows.zip'];
+test('a shim providing GLIBC_2.34 does not require GLIBC_2.34', () => {
+  const {glibcRequirements} = require('./payload.cjs');
+  assert.deepEqual(glibcRequirements(`
+    12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND memcpy@GLIBC_2.14 (3)
+    34: 0000000000001230 42 FUNC GLOBAL DEFAULT 12 dlsym@@GLIBC_2.34
+    35: 0000000000000000 0 FUNC GLOBAL DEFAULT UND pthread_create@GLIBC_2.17 (5)
+  `), [[2, 14], [2, 17]]);
+  assert.deepEqual(glibcRequirements('12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND stat@GLIBC_2.33 (8)'), [[2, 33]]);
+});
 test('every shared runner job has an explicit timeout', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/release-tools.yml'), 'utf8');
   const jobs = workflow.split(/^  [a-z][a-z-]*:\s*$/m).slice(1).filter(s => /^    runs-on:/m.test(s));

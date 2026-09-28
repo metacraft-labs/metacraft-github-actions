@@ -8,6 +8,12 @@ function run(exe, args, opts = {}) {
   return cp.execFileSync(exe, args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts}).trim();
 }
 const fail = message => { throw new Error(message); };
+function glibcRequirements(symbols) {
+  // A preload shim can PROVIDE a new GLIBC symbol version without requiring
+  // that version from libc. Only undefined dynamic symbols constrain users.
+  return [...symbols.split('\n').filter(line => /\bUND\b/.test(line)).join('\n')
+    .matchAll(/GLIBC_(\d+)\.(\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+}
 function files(dir) {
   return fs.readdirSync(dir, {withFileTypes: true}).flatMap(e => {
     const p = path.join(dir, e.name);
@@ -44,8 +50,9 @@ function relocateLinux(tree, target) {
     const file = todo.shift();
     if (seen.has(file)) continue;
     seen.add(file);
-    const versions = [...run('readelf', ['--version-info', file]).matchAll(/GLIBC_(\d+)\.(\d+)/g)];
-    if (versions.some(m => +m[1] > 2 || (+m[1] === 2 && +m[2] > 28))) fail(`glibc > 2.28 required by ${file}`);
+    fs.chmodSync(file, fs.statSync(file).mode | 0o200);
+    const versions = glibcRequirements(run('readelf', ['--dyn-syms', '--wide', file]));
+    if (versions.some(([major, minor]) => major > 2 || (major === 2 && minor > 28))) fail(`glibc > 2.28 required by ${file}: ${versions.map(v => v.join('.')).join(', ')}`);
     const deps = run('ldd', [file]);
     if (/not found/.test(deps)) fail(`unresolved runtime dependency in ${file}: ${deps}`);
     for (const m of deps.matchAll(/^\s*(\S+) => (\/\S+) /gm)) {
@@ -224,5 +231,5 @@ function packagePayload(tree, target) {
   fs.writeFileSync(path.join(dist, name + '.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(`Verified ${name} at ${evidence.sourceCommit}`);
 }
-module.exports = {architecture, packagePayload};
+module.exports = {architecture, packagePayload, glibcRequirements};
 if (require.main === module) packagePayload(path.resolve(process.argv[2]), process.argv[3]);

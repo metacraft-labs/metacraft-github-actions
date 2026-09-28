@@ -10,16 +10,16 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/archives" "$work/checks" "$work/packages"
 tar -xzf "dist/$name.tar.gz" -C "$work/archives"
 node_arch=x64
-node_hash=f4cb75bb036f0d0eddf6b79d9596df1aaab9ddccd6a20bf489be5abe9467e84e
+node_hash=fb870226119d47378fa9c92c4535389c72dae14fcc7b47e6fdcc82c43de5a547
 if [ "$RELEASE_TARGET" = linux-aarch64 ]; then
   node_arch=arm64
-  node_hash=eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910
+  node_hash=1725602e9fb150eb8b8220a899085190e1c04d1a5f3862b01c3dc1dfce0157f9
 fi
 # The runner's Node can be patched to a Nix loader. Use a pinned upstream
 # test driver that can actually execute in the clean distribution images.
-curl --fail --location --retry 3 "https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-$node_arch.tar.xz" -o "$work/node.tar.xz"
-printf '%s  %s\n' "$node_hash" "$work/node.tar.xz" | sha256sum -c -
-tar -xJf "$work/node.tar.xz" -C "$work" --strip-components=2 "node-v22.16.0-linux-$node_arch/bin/node"
+curl --fail --location --retry 3 "https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-$node_arch.tar.gz" -o "$work/node.tar.gz"
+printf '%s  %s\n' "$node_hash" "$work/node.tar.gz" | sha256sum -c -
+tar -xzf "$work/node.tar.gz" -C "$work" --strip-components=2 "node-v22.16.0-linux-$node_arch/bin/node"
 cp scripts/release/smoke.cjs "$work/checks/smoke.cjs"
 cp dist/*.deb dist/*.rpm "$work/packages/"
 if [ "$product" = io-mon ]; then cp build/release-probe "$work/checks/probe"; fi

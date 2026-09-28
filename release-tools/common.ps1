@@ -19,9 +19,13 @@ function Get-ReleaseDependency([string]$InputName, [string]$Variable, [string]$S
   $destination = Join-Path (Get-Location) "build/release-deps/$InputName"
   if (Test-Path $destination) { Remove-Item -Recurse -Force $destination }
   $url = if ($node.type -eq 'github') { "https://github.com/$($node.owner)/$($node.repo).git" } else { $node.url }
-  & git clone --quiet --no-checkout $url $destination
+  & git init --quiet $destination
+  if ($LASTEXITCODE -ne 0) { throw "Cannot initialize $InputName" }
+  & git -C $destination remote add origin $url
+  if ($LASTEXITCODE -ne 0) { throw "Cannot configure $InputName origin" }
+  & git -C $destination fetch --quiet --depth=1 origin $node.rev
   if ($LASTEXITCODE -ne 0) { throw "Cannot fetch $InputName" }
-  & git -C $destination checkout --quiet --detach $node.rev
+  & git -C $destination checkout --quiet --detach FETCH_HEAD
   if ($LASTEXITCODE -ne 0) { throw "Cannot check out $InputName@$($node.rev)" }
   if ($node.PSObject.Properties['submodules'] -and $node.submodules) {
     & git -C $destination submodule update --init --recursive
