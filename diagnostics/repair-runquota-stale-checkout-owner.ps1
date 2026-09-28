@@ -3,6 +3,64 @@
 param([switch]$ValidateOnly)
 $ErrorActionPreference = 'Stop'
 & "$PSScriptRoot/inspect-windows-checkout-lock.ps1" -ValidateOnly
+# Open the measured process directly. Get-Process can omit a process still
+# visible to Restart Manager and Win32_Process; its enumeration is not proof
+# that the kernel process object has exited.
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class ExactCheckoutOwner {
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool GetProcessTimes(IntPtr h, out long created, out long exited,
+    out long kernel, out long user);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool QueryFullProcessImageName(IntPtr h, uint flags,
+    StringBuilder path, ref uint size);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool TerminateProcess(IntPtr h, uint code);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern uint WaitForSingleObject(IntPtr h, uint milliseconds);
+  [DllImport("kernel32.dll")]
+  static extern bool CloseHandle(IntPtr h);
+  static void Require(bool ok) {
+    if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error());
+  }
+  public static void Stop(int pid, long expectedStart, string expectedImage) {
+    // Query + synchronize + terminate, with a single retained kernel handle.
+    IntPtr h = OpenProcess(0x00101001, false, pid);
+    Require(h != IntPtr.Zero);
+    try {
+      long created, exited, kernel, user;
+      Require(GetProcessTimes(h, out created, out exited, out kernel, out user));
+      var image = new StringBuilder(32768);
+      uint size = (uint)image.Capacity, code;
+      Require(QueryFullProcessImageName(h, 0, image, ref size));
+      Require(GetExitCodeProcess(h, out code));
+      Console.WriteLine("Kernel process: PID={0} created={1} image={2} exitCode={3}",
+        pid, created, image, code);
+      if (created != expectedStart ||
+          !String.Equals(image.ToString(), expectedImage, StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("The kernel process identity changed");
+      uint state = WaitForSingleObject(h, 0);
+      if (state == 0) {
+        Console.WriteLine("The measured process has already exited");
+        return;
+      }
+      if (state != 258) throw new Win32Exception(Marshal.GetLastWin32Error());
+      Console.WriteLine("Stopping the verified orphaned PowerShell owner from 2026-09-18");
+      Require(TerminateProcess(h, 1));
+      if (WaitForSingleObject(h, 10000) != 0)
+        throw new InvalidOperationException("The stale process did not exit within 10 seconds");
+    } finally { CloseHandle(h); }
+  }
+}
+'@
 if ($ValidateOnly) { return }
 if (-not $IsWindows -or $env:RUNNER_NAME -ne 'win-ci-bare-001') {
   throw 'This repair is scoped to win-ci-bare-001'
@@ -50,19 +108,9 @@ if ($owner.ReturnValue -ne 0 -or $currentOwner.ReturnValue -ne 0 -or -not $owner
     $owner.Sid -ne $currentOwner.Sid) {
   throw 'The process is not owned by this runner account'
 }
-# Retain the kernel process handle and compare its creation time immediately
-# before termination. A recycled PID must never select a different process.
-$process = Get-Process -Id $expectedProcessId -ErrorAction Stop
-try {
-  $null = $process.SafeHandle
-  if ($process.StartTime.ToUniversalTime().ToFileTimeUtc() -ne $expectedStart -or
-      $process.HasExited) {
-    throw 'The process identity changed before termination'
-  }
-  Write-Host 'Stopping the verified orphaned PowerShell file owner from 2026-09-18'
-  $process.Kill()
-  if (-not $process.WaitForExit(10000)) { throw 'The stale process did not exit' }
-} finally { $process.Dispose() }
+# Recheck the exact creation time and image through the retained kernel handle.
+# Parent and owner checks above remain mandatory.
+[ExactCheckoutOwner]::Stop($expectedProcessId, $expectedStart, 'C:\pwsh\pwsh.exe')
 $remaining = @([CheckoutLockInspector]::Inspect($file))
 if ($remaining.Count -ne 0) { throw 'The DLL still has a live file user' }
 $probe = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read,
