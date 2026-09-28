@@ -23,6 +23,7 @@ on:
         options:
           - complete
           - io-mon-propagation
+          - io-mon-linux-predicate
           - runquota-macos-authority
           - reprobuild-windows-exit
           - reprobuild-linux-hash-runtime
@@ -69,7 +70,7 @@ jobs:
           /usr/bin/uptime
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -199,6 +200,44 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  linux-predicate:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-linux-predicate'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: tooling
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: d7f0453fa9160fcd6d5b1ead64165117a39cc7e9
+          path: io-mon
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ steps.ci-token.outputs.token }}
+      - name: Compare direct and monitored predicate execution
+        working-directory: io-mon
+        run: nix develop --command bash ../tooling/diagnostics/linux-predicate.sh
+      - name: Preserve bounded process diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-predicate-diagnostics
+          path: io-mon/test-logs/linux-predicate/
+          retention-days: 14
 
   linux-hash-runtime:
     if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-linux-hash-runtime'
