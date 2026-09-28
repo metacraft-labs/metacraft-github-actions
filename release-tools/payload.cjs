@@ -49,8 +49,9 @@ function relocateLinux(tree, target) {
     const deps = run('ldd', [file]);
     if (/not found/.test(deps)) fail(`unresolved runtime dependency in ${file}: ${deps}`);
     for (const m of deps.matchAll(/^\s*(\S+) => (\/\S+) /gm)) {
-      if (system.test(m[1])) continue;
-      const dest = path.join(libdir, m[1]);
+      const leaf = path.basename(m[1]);
+      if (system.test(leaf)) continue;
+      const dest = path.join(libdir, leaf);
       if (!fs.existsSync(dest)) {
         fs.copyFileSync(m[2], dest);
         todo.push(dest);
@@ -79,8 +80,21 @@ function verifyDarwin(tree, target) {
     }
     // Ad-hoc signing makes modified local payloads executable. This is never
     // recorded as Developer ID signing or notarization in the release evidence.
-    run('codesign', ['--force', '--sign', '-', file]);
-    run('codesign', ['--verify', '--strict', file]);
+    run('/usr/bin/codesign', ['--force', '--sign', '-', file]);
+    run('/usr/bin/codesign', ['--verify', '--strict', file]);
+  }
+}
+function verifyWindows(tree, target) {
+  const system = /^(api-ms-win-|ext-ms-win-|kernel32\.dll$|advapi32\.dll$|ntdll\.dll$|msvcrt\.dll$|ucrtbase\.dll$|user32\.dll$|shell32\.dll$|ws2_32\.dll$|bcrypt\.dll$|crypt32\.dll$|ole32\.dll$|oleaut32\.dll$|iphlpapi\.dll$|psapi\.dll$|userenv\.dll$|secur32\.dll$|version\.dll$|shlwapi\.dll$|winmm\.dll$|dbghelp\.dll$|rpcrt4\.dll$)/i;
+  const payload = files(tree);
+  for (const file of payload.filter(f => /\.(exe|dll)$/i.test(f))) {
+    if (architecture(file, target) !== 'pe') fail(`invalid Windows image ${file}`);
+    const imports = run('llvm-readobj', ['--coff-imports', file]);
+    for (const match of imports.matchAll(/^\s*Name: (\S+)$/gm)) {
+      if (system.test(match[1])) continue;
+      if (!fs.existsSync(path.join(path.dirname(file), match[1])) &&
+          !fs.existsSync(path.join(tree, 'bin', match[1]))) fail(`missing adjacent Windows library ${match[1]} for ${file}`);
+    }
   }
 }
 function nativePackages(tree, target, spec, p, dist) {
@@ -130,11 +144,33 @@ function nativePackages(tree, target, spec, p, dist) {
       fs.copyFileSync(built[0], path.join(dist, rpm));
       if (run('rpm', ['-qp', '--qf', '%{ARCH}', path.join(dist, rpm)]) !== rpmArch) fail('rpm architecture mismatch');
     }
+    const arch = p.matrix.find(t => t.id === target).assets.find(a => a.endsWith('.pkg.tar.gz'));
+    if (arch) {
+      if (!spec.archMetadata) fail('Arch package requires product distribution metadata');
+      const size = files(root).reduce((n, f) => n + fs.statSync(f).size, 0);
+      const info = fs.readFileSync(spec.archMetadata, 'utf8').replace('@INSTALLED_SIZE@', String(size));
+      if (!info.includes(`arch = ${rpmArch}\n`) || !info.includes(`pkgver = ${p.version}-1\n`)) fail('Arch metadata differs');
+      fs.writeFileSync(path.join(root, '.PKGINFO'), info);
+      const mtree = cp.execFileSync('bsdtar', ['-c', '--format=mtree',
+        '--options=!all,type,uid,gid,mode,time,size,sha256,link', '-f', '-', '-C', root, '.']);
+      fs.writeFileSync(path.join(root, '.MTREE'), require('node:zlib').gzipSync(mtree));
+      run('bsdtar', ['-czf', path.join(dist, arch), '-C', root, '.PKGINFO', '.MTREE', 'usr']);
+      const members = run('bsdtar', ['-tf', path.join(dist, arch)]);
+      for (const member of ['.PKGINFO', '.MTREE', 'usr/bin/runquota', 'usr/bin/runquotad']) {
+        if (!members.split('\n').includes(member)) fail(`Arch package lacks ${member}`);
+      }
+    }
   } finally { fs.rmSync(temp, {recursive: true, force: true}); }
 }
 function packagePayload(tree, target) {
   const spec = JSON.parse(fs.readFileSync('.github/release.json'));
   const p = plan();
+  if (spec.distributionMetadata && !target.startsWith('darwin')) {
+    const metadata = JSON.parse(fs.readFileSync(spec.distributionMetadata));
+    if (metadata.name !== spec.packageName || metadata.version !== p.version) fail('distribution and release metadata differ');
+    spec.summary = metadata.summary;
+    spec.license = metadata.license;
+  }
   const t = p.matrix.find(t => t.id === target);
   if (!t) fail(`unknown target ${target}`);
   const windows = target.startsWith('windows');
@@ -147,6 +183,7 @@ function packagePayload(tree, target) {
   }
   if (target.startsWith('linux')) relocateLinux(tree, target);
   if (target.startsWith('darwin')) verifyDarwin(tree, target);
+  if (windows) verifyWindows(tree, target);
   const dist = path.resolve('dist');
   fs.mkdirSync(dist, {recursive: true});
   const name = `${p.product}-${p.version}-${target}`;
@@ -168,12 +205,21 @@ function packagePayload(tree, target) {
     const smoke = path.resolve('scripts/release/smoke.cjs');
     const env = {PATH: windows ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}` : '/usr/bin:/bin:/usr/sbin:/sbin', HOME: work, TMPDIR: work, TEMP: work,
       SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR};
-    run(process.execPath, [smoke, path.join(work, name), target, process.env.RELEASE_SMOKE_PROBE || ''], {cwd: work, env});
-    if (target.startsWith('linux')) nativePackages(path.join(work, name), target, spec, p, dist);
+    if (target.startsWith('linux')) {
+      // NixOS builders need not carry the distribution's ELF loader path.
+      // The following required container job executes these exact bytes.
+      nativePackages(path.join(work, name), target, spec, p, dist);
+    } else run(process.execPath, [smoke, path.join(work, name), target, process.env.RELEASE_SMOKE_PROBE || ''], {cwd: work, env});
   } finally { fs.rmSync(work, {recursive: true, force: true}); }
+  if (fs.existsSync('scripts/release/packages.cjs')) {
+    require(path.resolve('scripts/release/packages.cjs'))({tree, target, dist, plan: p, run, digest});
+  }
   const evidence = {product: p.product, version: p.version, target,
     sourceCommit: run('git', ['rev-parse', 'HEAD']),
-    binarySigningVerified: false, smoke: 'passed',
+    dependencies: Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync('flake.lock')).nodes)
+      .filter(([, n]) => n.locked?.rev).map(([name, n]) => [name, n.locked.rev])),
+    runtimeSources: spec.runtimeSources || {},
+    binarySigningVerified: false, smoke: target.startsWith('linux') ? 'pending-container' : 'passed',
     artifacts: Object.fromEntries(fs.readdirSync(dist).filter(n => !n.endsWith('.json')).map(n => [n, digest(path.join(dist, n))]))};
   fs.writeFileSync(path.join(dist, name + '.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(`Verified ${name} at ${evidence.sourceCommit}`);

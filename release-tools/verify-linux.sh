@@ -9,7 +9,17 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/archives" "$work/checks" "$work/packages"
 tar -xzf "dist/$name.tar.gz" -C "$work/archives"
-cp "$RELEASE_NODE" "$work/node"
+node_arch=x64
+node_hash=f4cb75bb036f0d0eddf6b79d9596df1aaab9ddccd6a20bf489be5abe9467e84e
+if [ "$RELEASE_TARGET" = linux-aarch64 ]; then
+  node_arch=arm64
+  node_hash=eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910
+fi
+# The runner's Node can be patched to a Nix loader. Use a pinned upstream
+# test driver that can actually execute in the clean distribution images.
+curl --fail --location --retry 3 "https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-$node_arch.tar.xz" -o "$work/node.tar.xz"
+printf '%s  %s\n' "$node_hash" "$work/node.tar.xz" | sha256sum -c -
+tar -xJf "$work/node.tar.xz" -C "$work" --strip-components=2 "node-v22.16.0-linux-$node_arch/bin/node"
 cp scripts/release/smoke.cjs "$work/checks/smoke.cjs"
 cp dist/*.deb dist/*.rpm "$work/packages/"
 if [ "$product" = io-mon ]; then cp build/release-probe "$work/checks/probe"; fi
@@ -34,3 +44,11 @@ for image in "${images[@]}"; do
       /payload/node /payload/checks/smoke.cjs "/usr/lib/$PRODUCT" "$TARGET" /payload/checks/probe
     '
 done
+"$RELEASE_NODE" - "$name" <<'NODE'
+const fs = require('node:fs');
+const file = `dist/${process.argv[2]}.json`;
+const evidence = JSON.parse(fs.readFileSync(file));
+evidence.smoke = 'passed';
+evidence.portabilityImages = fs.readFileSync('test-logs/portability-images.txt', 'utf8').trim().split('\n');
+fs.writeFileSync(file, JSON.stringify(evidence, null, 2) + '\n');
+NODE

@@ -23,7 +23,13 @@ case "$release_os" in
     release_cc="$(pwd)/build/release-toolchain/cc"
     cat > "$release_cc" <<EOF
 #!/usr/bin/env bash
-exec "$(command -v zig)" cc -target ${release_arch}-linux-gnu.2.28 "\$@"
+args=()
+for arg in "\$@"; do
+  # Zig accepts the documented -wrap spelling; GNU ld accepts both forms.
+  if [[ "\$arg" == -Wl,* ]]; then arg="\${arg//--wrap=/-wrap,}"; fi
+  args+=("\$arg")
+done
+exec "$(command -v zig)" cc -target ${release_arch}-linux-gnu.2.28 "\${args[@]}"
 EOF
     chmod +x "$release_cc"
     release_nim_flags+=(--cc:clang "--clang.exe:$release_cc" "--clang.linkerexe:$release_cc")

@@ -15,6 +15,10 @@ function plan(root = process.cwd()) {
   const version = spec.versionFile.endsWith('.txt') ? source.trim() :
     source.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
   assert(/^\d+\.\d+\.\d+$/.test(version), 'expected a stable three-part version');
+  for (const check of spec.versionChecks || []) {
+    const value = fs.readFileSync(path.join(root, check.file), 'utf8').match(new RegExp(check.pattern, 'm'))?.[1];
+    assert(value === version, `version disagreement in ${check.file}`);
+  }
   assert(Array.isArray(spec.targets) && spec.targets.length > 0, 'empty target matrix');
   const expand = s => s.replaceAll('{product}', spec.product).replaceAll('{version}', version);
   const matrix = spec.targets.map(t => {
