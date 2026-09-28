@@ -182,6 +182,12 @@ inputs:
       working directory.
     required: false
     default: "./env.ps1"
+  repro-from-source:
+    description: >
+      Build repro from repro-build-pin even when a CLI is already installed
+      (reprobuild flavor or repro-lock sibling strategy only).
+    required: false
+    default: "false"
   repro-build-pin:
     description: >
       Git ref (branch, tag, or SHA) of `metacraft-labs/reprobuild`
@@ -656,6 +662,7 @@ runs:
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
+        from-source: ${{ inputs.repro-from-source }}
 
     # ------------------------------------------------------------------
     # sibling-strategy: repro-lock — the consumer half

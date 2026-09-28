@@ -5,6 +5,7 @@ description: >
   for the running platform.
 
   Resolution order:
+    0. Explicit from-source=true -> build the requested source revision.
     1. A `repro` already on PATH  -> reuse it, do nothing.
     2. The prebuilt release archive for this OS/arch -> download, verify its
         SHA-256 against the release's SHA256SUMS, unpack, add bin/ to PATH.
@@ -78,7 +79,7 @@ inputs:
     default: "latest"
   from-source:
     description: >
-      Skip the prebuilt release entirely and build the CLI from source. For
+      Build the CLI from source, overriding a CLI already on PATH. For
       testing an unreleased reprobuild change, or a platform whose release
       archive is known-bad. Pair with `repro-build-pin` to choose the ref.
     required: false
@@ -130,6 +131,7 @@ runs:
     # on hosts that already ship `repro`.
     - name: Detect pre-installed repro CLI
       id: probe
+      if: ${{ inputs.from-source != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
