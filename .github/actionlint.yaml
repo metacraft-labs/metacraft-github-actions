@@ -2,3 +2,4 @@ self-hosted-runner:
   labels:
     # Intentional scale-set lane, distinct from the ordinary capability pools.
     - eph-linux-x64-release
+    - dev-env-ready
