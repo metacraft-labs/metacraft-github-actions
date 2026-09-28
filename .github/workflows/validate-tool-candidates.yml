@@ -24,6 +24,7 @@ on:
           - complete
           - io-mon-propagation
           - io-mon-linux-predicate
+          - io-mon-linux-repro
           - runquota-macos-authority
           - reprobuild-windows-exit
           - reprobuild-linux-hash-runtime
@@ -70,7 +71,7 @@ jobs:
           /usr/bin/uptime
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -198,6 +199,54 @@ jobs:
         with:
           name: candidate-linux-${{ matrix.product }}-${{ env.CANDIDATE_REVISION }}
           path: test-logs/
+          retention-days: 14
+          if-no-files-found: warn
+
+  linux-repro:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-linux-repro'
+    # Supplemental graph diagnostic while the product's ordinary x64 CI queues.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 4b2bb3910283bac4d109012411e42ce67f9c969c
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Setup the product's Reprobuild environment
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 90dc43218b00f2a1a7de94c174fb849f21b3a377
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Build with the product's ordinary PATH provisioning
+        run: dev-exec repro build --write-report=build/diagnostic-build.json
+      - name: Refresh credentials before the complete test graph
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Execute the complete monitored graph
+        run: dev-exec repro test --write-report=build/diagnostic-test.json
+      - name: Preserve graph reports and every action's output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-linux-repro-4b2bb39
+          path: |
+            build/diagnostic-*.json
+            .repro/build/*/build-failure-report.json
+            .repro/build/*/build-engine-cache/actions/
+          include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
 
