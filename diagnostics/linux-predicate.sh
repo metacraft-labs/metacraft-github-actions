@@ -26,3 +26,7 @@ test "$direct_exit" = 0
 if [[ "$monitored_exit" != 0 ]]; then exit "$monitored_exit"; fi
 nim c -r --hints:off tests/linux/test_io_mon_linux_inline_asm_exit_group.nim > "$logs/inline-exit-group.log" 2>&1
 cat "$logs/inline-exit-group.log"
+
+# Real libc-backed capture is required on both architectures.
+timeout -k 10 300 nim c -r --hints:off tests/linux/test_io_mon_linux_stdio_ipc.nim > "$logs/stdio-ipc.log" 2>&1
+cat "$logs/stdio-ipc.log"

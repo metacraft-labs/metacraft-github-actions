@@ -226,7 +226,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 0f3a18661108c0044a07964b81ab153f1af0c99c
+          ref: 4f467a04a2f00820b61de41ea97a81aef6f56530
           path: io-mon
           token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
