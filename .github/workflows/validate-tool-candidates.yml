@@ -234,12 +234,14 @@ jobs:
           JOB_TOKEN_OWNERS: metacraft-labs
           MANIFESTS_REPO: metacraft-labs/metacraft-manifests
           PRIVATE_MANIFESTS_REPO: ''
-          PR_BASE_SHA: ''
+          PR_BASE_SHA: 279a17be71daca6ae4178feb4e6ef1e866a82d2a
           EVENT_BEFORE: ''
         run: |
           test "$(git rev-parse HEAD)" = 4b2bb3910283bac4d109012411e42ce67f9c969c
           # This dispatch belongs to shared actions; the clone helper needs
-          # the identity of the product actually checked out above.
+          # the identity of the product actually checked out above. Match
+          # ordinary PR CI's published dev-base lock (verified in manifests).
+          GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/io-mon \
           GITHUB_SHA=4b2bb3910283bac4d109012411e42ce67f9c969c \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
