@@ -27,12 +27,14 @@ function plan(root = process.cwd()) {
     assert(Array.isArray(t.assets) && t.assets.length > 0, `no assets for ${t.id}`);
     const assets = t.assets.map(expand);
     assert(assets.every(a => /^[A-Za-z0-9_.+-]+$/.test(a)), 'unsafe asset name');
+    assert(t.id.startsWith('windows-') || !assets.some(a => a.endsWith('.msi')), 'MSI requires a Windows target');
     return {...t, assets};
   });
   const expected = matrix.flatMap(t => t.assets).sort();
   assert(new Set(matrix.map(t => t.id)).size === matrix.length, 'duplicate target');
   assert(new Set(expected).size === expected.length, 'duplicate asset');
-  return {product: spec.product, version, matrix, expected};
+  const hasMsi = expected.some(a => a.endsWith('.msi'));
+  return {product: spec.product, version, matrix, expected, hasMsi};
 }
 
 function verifyDirectory(dir, expected, sidecars = true) {
@@ -85,6 +87,7 @@ async function githubPlan({github, context, core}) {
   core.setOutput('matrix', JSON.stringify(p.matrix));
   core.setOutput('version', p.version);
   core.setOutput('expected', JSON.stringify(p.expected));
+  core.setOutput('has-msi', String(p.hasMsi));
   core.exportVariable('RELEASE_NODE', process.execPath);
 }
 

@@ -69,3 +69,18 @@ test('the target matrix has unique, safe asset names and an authoritative versio
   spec.targets.pop(); spec.targets[0].assets = ['../escape']; write();
   assert.throws(() => plan(root), /unsafe/);
 });
+test('MSI verification is derived from assets and cannot be disabled in metadata', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const spec = {product: 'example', versionFile: 'version.txt', hasMsi: false, targets: [
+    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], assets: ['example.msi', 'example.zip']},
+  ]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.equal(plan(root).hasMsi, true);
+  spec.targets[0].id = 'linux-x86_64'; write();
+  assert.throws(() => plan(root), /MSI requires a Windows target/);
+  spec.targets[0].assets = ['example.tar.gz']; write();
+  assert.equal(plan(root).hasMsi, false);
+});
