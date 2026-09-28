@@ -5,6 +5,16 @@ name: Validate tool candidates on Linux
 # infrastructure/gosti-io-mon-runquota-releases.md.
 on:
   workflow_dispatch:
+    inputs:
+      product:
+        description: Product whose complete suite should run
+        type: choice
+        default: all
+        options:
+          - all
+          - gosti
+          - io-mon
+          - runquota
 
 permissions:
   contents: read
@@ -17,22 +27,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - product: gosti
-            revision: 560de369164947741792ac2499a6303128c3986e
-          - product: io-mon
-            revision: 8d8370246beee29e8969f5008dc30041f8e2af48
-          - product: runquota
-            revision: d6d65adda65b41c627cec8abe250eda8d26b75f6
+        product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
+    env:
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'cba489f85e839272ef0a9e4e3dfcb013edd26496' || 'd6d65adda65b41c627cec8abe250eda8d26b75f6' }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/${{ matrix.product }}
-          ref: ${{ matrix.revision }}
+          ref: ${{ env.CANDIDATE_REVISION }}
           persist-credentials: false
       - name: Record source and host
         env:
-          EXPECTED_REVISION: ${{ matrix.revision }}
+          EXPECTED_REVISION: ${{ env.CANDIDATE_REVISION }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
           git status --short
@@ -53,7 +59,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: candidate-linux-${{ matrix.product }}-${{ matrix.revision }}
+          name: candidate-linux-${{ matrix.product }}-${{ env.CANDIDATE_REVISION }}
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
