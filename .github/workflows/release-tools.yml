@@ -142,6 +142,9 @@ jobs:
     needs: [plan, build]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -171,6 +174,12 @@ jobs:
           script: |
             const release = require('./.release-tools/release-tools/release.cjs');
             release.assemble('dist', release.plan().expected);
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign and verify the checksum manifest
+        shell: bash
+        env:
+          RELEASE_TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: bash .release-tools/release-tools/sign-manifest.sh sign
       - uses: actions/upload-artifact@v4
         with:
           name: verified-release
@@ -221,14 +230,11 @@ jobs:
               }
             }
       - uses: sigstore/cosign-installer@v3
-      - name: Sign and verify the checksum manifest
+      - name: Verify the transferred checksum signature
         shell: bash
-        run: |
-          set -euo pipefail
-          cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
-          cosign verify-blob --bundle dist/SHA256SUMS.sigstore.json \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/SHA256SUMS
+        env:
+          RELEASE_TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: bash .release-tools/release-tools/sign-manifest.sh verify
       - name: Verify draft bytes and publish
         uses: actions/github-script@v7
         with:
