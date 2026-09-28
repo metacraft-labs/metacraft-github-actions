@@ -15,14 +15,22 @@ on:
           - gosti
           - io-mon
           - runquota
+      checks:
+        description: Complete suite or focused failure diagnostic
+        type: choice
+        default: complete
+        options:
+          - complete
+          - io-mon-propagation
+          - runquota-macos-authority
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: ${{ matrix.product }} complete Linux suite
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
+    runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -39,7 +47,13 @@ jobs:
       - name: Record source and host
         env:
           EXPECTED_REVISION: ${{ env.CANDIDATE_REVISION }}
+          PRODUCT: ${{ matrix.product }}
+          CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
+          case "$CHECKS:$PRODUCT" in
+            complete:*|io-mon-propagation:io-mon|runquota-macos-authority:runquota) ;;
+            *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
+          esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
           git status --short
           git log -1 --format='%H %s'
@@ -50,11 +64,58 @@ jobs:
         with:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run the complete product test suite
+        if: inputs.checks == 'complete' || inputs.checks == ''
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p test-logs
           nix develop --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+      - name: Diagnose Linux descendant loss
+        if: inputs.checks == 'io-mon-propagation'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          python3 - <<'PY'
+          from pathlib import Path
+          test = Path('tests/linux/test_io_mon_propagation.nim')
+          source = test.read_text()
+          original = '    let dep = readMonitorDepFile(depfile)\n'
+          assert source.count(original) == 1
+          source = source.replace(original, original + '''    for record in dep.records:
+                if record.kind == mrEventLoss:
+                  checkpoint("event-loss: " & $record)
+          ''')
+          test.write_text(source)
+          PY
+          git diff -- tests/linux/test_io_mon_propagation.nim | tee test-logs/diagnostic.patch
+          nix develop --command nim c -r --path:tests/helpers tests/linux/test_io_mon_propagation.nim 2>&1 | tee test-logs/propagation.log
+      - name: Diagnose the macOS static-helper authority
+        if: inputs.checks == 'runquota-macos-authority'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          printf 'Outer BASH_ENV=%s\n' "${BASH_ENV:-}" | tee test-logs/authority.log
+          nix develop --command /usr/bin/printenv PATH | tee -a test-logs/authority.log
+          cat > "$RUNNER_TEMP/runquota-authority.sh" <<'BASH'
+            set -euo pipefail
+            printf "Shell PATH=%s\nBASH_ENV=%s\n" "$PATH" "${BASH_ENV:-}"
+            gate=$(command -v runquota-static-helper-gate || true)
+            printf "Initial gate=%s\n" "$gate"
+            if [[ -n "$gate" ]]; then
+              ls -l "$gate"
+              "$gate" --print-authority
+            fi
+            bash -x scripts/static_helper_gate.sh
+            rc=0
+            just test || rc=$?
+            printf "Final PATH=%s\n" "$PATH"
+            command -v runquota-static-helper-gate || true
+            if [[ -n "$gate" ]]; then ls -l "$gate" || true; fi
+            exit "$rc"
+          BASH
+          nix develop --command bash "$RUNNER_TEMP/runquota-authority.sh" 2>&1 | tee -a test-logs/authority.log
       - name: Preserve evidence
         if: always()
         uses: actions/upload-artifact@v4
