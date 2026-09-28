@@ -324,6 +324,11 @@ runs:
             test -x "${helper}"
             "${helper}" --help >/dev/null
             echo "REPROBUILD_NIX_DAEMON_BIN=${helper}" >> "${GITHUB_ENV}"
+            # Later authentication refreshes run outside this shell too.
+            # Preserve the rooted interpreter rather than assuming PATH has Python.
+            bootstrap_python="$(command -v python3)"
+            test -x "${bootstrap_python}"
+            echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
             # `repro` dlopens solver/cache libraries by leaf name. The dev
             # shell provides the clingo/zstd runtime paths while building the
             # CLI; persist them so later workflow steps can launch that CLI

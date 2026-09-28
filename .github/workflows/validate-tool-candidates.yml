@@ -25,6 +25,7 @@ on:
           - io-mon-propagation
           - runquota-macos-authority
           - reprobuild-windows-exit
+          - reprobuild-linux-hash-runtime
           - runquota-windows-checkout
           - runquota-windows-checkout-repair
 
@@ -163,6 +164,45 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  linux-hash-runtime:
+    if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-linux-hash-runtime'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: 90dc43218b00f2a1a7de94c174fb849f21b3a377
+          persist-credentials: false
+      - name: Record the measured source
+        run: git log -1 --format='%H %s'
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ steps.ci-token.outputs.token }}
+      - name: Exercise real shared-library loading with a failing control
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          nix develop --profile "$RUNNER_TEMP/hash-runtime-shell" --command \
+            nim c -r --hints:off tests/integration/t_source_hash_runtime_paths.nim \
+            2>&1 | tee test-logs/hash-runtime.log
+      - name: Upload loader evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-hash-runtime
+          path: test-logs/hash-runtime.log
+          retention-days: 14
 
   windows-exit:
     if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-windows-exit'
