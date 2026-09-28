@@ -79,7 +79,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'd6465ca05f1d37f9c21db911668b3f116787a378' || 'b2c65a148f64f0e3e5c24e40a9e8e8bb8e5f3c7f' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '7d0d135bf075e43f0ed5eaf56563b5c73c8dd450' || '103b9ff0f9e930afd54c5e89678f2db7bfdcbbd9' }}
     steps:
       - uses: actions/checkout@v4
         with:
