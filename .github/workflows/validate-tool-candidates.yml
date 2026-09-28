@@ -213,6 +213,9 @@ jobs:
           Get-FileHash -Algorithm SHA256 $binary | Format-List
           $evidence = Join-Path $env:RUNNER_TEMP 'repro-exit-evidence'
           New-Item -ItemType Directory -Force $evidence | Out-Null
+          "source=$actual" | Set-Content (Join-Path $evidence 'bundle-identity.txt')
+          Get-FileHash -Algorithm SHA256 $binary | Format-List | Out-String |
+            Add-Content (Join-Path $evidence 'bundle-identity.txt')
           . (Join-Path $repo 'env.ps1')
           $bash = (Get-Command bash.exe -ErrorAction Stop).Source
           $source = [IO.File]::ReadAllText((Join-Path $repo 'scripts/release/smoke_release_dev_exec.sh')).Replace("`r`n", "`n")
@@ -229,6 +232,10 @@ jobs:
             printf 'packaged-command-exited=%s\n' "$inner_rc" >&3
             exit "$inner_rc") \
           '@
+          # The runner writes its PowerShell step with Windows line endings;
+          # normalize the here-strings as well as the source they match.
+          $old = $old.Replace("`r`n", "`n")
+          $new = $new.Replace("`r`n", "`n")
           if (-not $source.Contains($old)) { throw 'Smoke script instrumentation no longer matches' }
           $source = $source.Replace($old, $new)
           $source = $source.Replace('set -euo pipefail', 'set -euo pipefail' + "`n" + 'exec 3>"$REPRO_EXIT_EVIDENCE/command-exit.log"')
@@ -257,6 +264,8 @@ jobs:
             Stop-Process -Id $process.Id -Force
             throw 'The source-bundle smoke did not exit within five minutes; inspect command-exit.log and process snapshots'
           }
+          $process.WaitForExit()
+          $process.Refresh()
           if ($process.ExitCode -ne 0) { throw "Smoke exited $($process.ExitCode)" }
       - name: Preserve Windows exit evidence
         if: always()
