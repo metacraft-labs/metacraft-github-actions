@@ -37,7 +37,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'cba489f85e839272ef0a9e4e3dfcb013edd26496' || 'd6d65adda65b41c627cec8abe250eda8d26b75f6' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && '3d65deb194624c17ddf6b837691db3ed7fefed6a' || 'd6d65adda65b41c627cec8abe250eda8d26b75f6' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,6 +93,34 @@ jobs:
           PY
           git diff -- tests/linux/test_io_mon_propagation.nim | tee test-logs/diagnostic.patch
           nix develop --command nim c -r --path:tests/helpers tests/linux/test_io_mon_propagation.nim 2>&1 | tee test-logs/propagation.log
+          shim=src/io_mon/shim/linux_preload.nim
+          backup="$RUNNER_TEMP/linux-preload-before-control.nim"
+          cp "$shim" "$backup"
+          trap 'cp "$backup" "$shim"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/io_mon/shim/linux_preload.nim')
+          source = path.read_text()
+          start = source.index('proc baseRecord(')
+          end = source.index('\nproc stampRunId', start)
+          original = source[start:end]
+          mutated = original
+          for live, cached in [('uint64(c_getpid())', 'currentPid()'),
+                               ('uint64(c_getppid())', 'currentPpid()'),
+                               ('uint64(c_gettid())', 'currentThreadId()')]:
+              assert mutated.count(live) == 1
+              mutated = mutated.replace(live, cached)
+          path.write_text(source[:start] + mutated + source[end:])
+          PY
+          git diff -- "$shim" > test-logs/negative-control.patch
+          status=0
+          nix develop --command nim c -r --path:tests/helpers tests/linux/test_io_mon_propagation.nim > test-logs/negative-control.log 2>&1 || status=$?
+          cat test-logs/negative-control.log
+          if [[ "$status" == 0 ]] || ! grep -Fq '[FAILED] vfork_exec_uses_child_identity_without_changing_parent_cache' test-logs/negative-control.log; then
+            echo 'The inherited-identity negative control did not fail the vfork regression'
+            exit 1
+          fi
+          echo 'Verified: live exec identities pass; inherited identities fail the vfork regression'
       - name: Diagnose the macOS static-helper authority
         if: inputs.checks == 'runquota-macos-authority'
         shell: bash
