@@ -66,11 +66,12 @@ if any(row[0] == listener for row in current.values()):
     raise SystemExit("A worker started during diagnosis; refusing the adjustment")
 for pid in targets:
     print(command(["/usr/sbin/taskpolicy", "-B", "-p", str(pid)]), end="")
-print(command(["/usr/bin/renice", "-n", "0", "-p", *map(str, targets)]), end="")
+# BSD -n is an increment; the bare priority is the absolute nice value.
+print(command(["/usr/bin/renice", "0", "-p", *map(str, targets)]), end="")
 after = snapshot()
 for pid in targets:
     row = after.get(pid)
+    print("after", pid, row, flush=True)
     if row is None or row[:2] != rows[pid][:2] or row[3:] != rows[pid][3:] or row[2] != 0:
         raise SystemExit("Post-adjustment identity or nice verification failed")
-    print("after", pid, row, flush=True)
 print("Existing idle service preserved; foreground worker-handoff probe is required")
