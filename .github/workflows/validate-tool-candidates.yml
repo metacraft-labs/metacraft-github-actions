@@ -89,6 +89,9 @@ jobs:
                 if record.kind in {mrEventLoss, mrProcessStart, mrProcessSpawn, mrProcessExec}:
                   checkpoint("process-evidence: " & $record)
           ''')
+          original = '      if record.kind in {mrProcessExec, mrEventLoss}:\n'
+          assert source.count(original) == 1
+          source = source.replace(original, '      if record.kind in {mrProcessExec, mrEventLoss, mrFileWrite} or record.path == parentMarker:\n')
           test.write_text(source)
           PY
           git diff -- tests/linux/test_io_mon_propagation.nim | tee test-logs/diagnostic.patch
