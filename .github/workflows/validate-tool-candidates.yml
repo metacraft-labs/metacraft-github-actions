@@ -220,15 +220,42 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
-      - name: Setup the product's Reprobuild environment
-        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+      - uses: actions/checkout@v4
         with:
-          env-flavor: reprobuild
-          repro-from-source: true
+          repository: metacraft-labs/metacraft-github-actions
+          ref: 2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Resolve siblings against the checked-out product's lock
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SIBLINGS_INPUT: ''
+          SIBLING_OWNER: metacraft-labs
+          JOB_TOKEN_OWNERS: metacraft-labs
+          MANIFESTS_REPO: metacraft-labs/metacraft-manifests
+          PRIVATE_MANIFESTS_REPO: ''
+          PR_BASE_SHA: ''
+          EVENT_BEFORE: ''
+        run: |
+          test "$(git rev-parse HEAD)" = 4b2bb3910283bac4d109012411e42ce67f9c969c
+          # This dispatch belongs to shared actions; the clone helper needs
+          # the identity of the product actually checked out above.
+          GITHUB_REPOSITORY=metacraft-labs/io-mon \
+          GITHUB_SHA=4b2bb3910283bac4d109012411e42ce67f9c969c \
+          GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
+          GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
+            bash .diagnostic-tools/clone-siblings/clone-siblings.sh
+      - uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Build the product's selected Reprobuild
+        uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@32f11f839677dc3052b7c47c19896fb74173c322
+        with:
+          from-source: true
           repro-build-pin: 90dc43218b00f2a1a7de94c174fb849f21b3a377
           gh-token: ${{ steps.token.outputs.token }}
       - name: Build with the product's ordinary PATH provisioning
-        run: dev-exec repro build --write-report=build/diagnostic-build.json
+        run: repro build --daemon=off --tool-provisioning=path --write-report=build/diagnostic-build.json
       - name: Refresh credentials before the complete test graph
         uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
         with:
@@ -236,7 +263,7 @@ jobs:
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
       - name: Execute the complete monitored graph
-        run: dev-exec repro test --write-report=build/diagnostic-test.json
+        run: repro test --daemon=off --tool-provisioning=path --write-report=build/diagnostic-test.json
       - name: Preserve graph reports and every action's output
         if: always()
         uses: actions/upload-artifact@v4
