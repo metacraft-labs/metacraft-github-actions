@@ -83,8 +83,8 @@ jobs:
           original = '    let dep = readMonitorDepFile(depfile)\n'
           assert source.count(original) == 1
           source = source.replace(original, original + '''    for record in dep.records:
-                if record.kind == mrEventLoss:
-                  checkpoint("event-loss: " & $record)
+                if record.kind in {mrEventLoss, mrProcessStart, mrProcessSpawn, mrProcessExec}:
+                  checkpoint("process-evidence: " & $record)
           ''')
           test.write_text(source)
           PY
