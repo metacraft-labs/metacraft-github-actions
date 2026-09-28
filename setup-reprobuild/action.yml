@@ -306,6 +306,7 @@ runs:
         # exercises — overriding the private flake inputs to the local clones
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
         nix develop \
+          --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
           --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
           --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
           --command bash -c '
@@ -316,6 +317,13 @@ runs:
             : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
             echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${GITHUB_ENV}"
             echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${GITHUB_ENV}"
+            # Tool resolution also starts this helper outside the build shell.
+            # Select the staged script with its pinned Python interpreter.
+            # The profile above keeps that interpreter rooted for this job.
+            helper="${PWD}/build/bin/reprobuild-nix-daemon"
+            test -x "${helper}"
+            "${helper}" --help >/dev/null
+            echo "REPROBUILD_NIX_DAEMON_BIN=${helper}" >> "${GITHUB_ENV}"
             # `repro` dlopens solver/cache libraries by leaf name. The dev
             # shell provides the clingo/zstd runtime paths while building the
             # CLI; persist them so later workflow steps can launch that CLI
@@ -373,6 +381,9 @@ runs:
         if ($LASTEXITCODE -ne 0) {
           throw "reprobuild compilation failed with exit code $LASTEXITCODE"
         }
+        # Monitored actions use a tool-specific PATH. Repro's monitor driver
+        # must load its DLLs from its own directory in those subprocesses.
+        & ./windows/stage-release-dlls.ps1
         # Surface newly added toolchain PATH entries (nim, gcc, clingo, openssl, bash, repro)
         # to subsequent workflow steps.
         $initialPaths = if ($initialEnv.ContainsKey("PATH")) { $initialEnv["PATH"] -split ';' } else { @() }
