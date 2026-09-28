@@ -378,8 +378,10 @@ reprobuild-${version}-${PLATFORM}-${ARCH}/ (found: $(find "${extract_dir}" -mind
   local bad_link
   bad_link="$(find "${pkg_dir}" -type l -print 2>/dev/null | while IFS= read -r l; do
       target="$(readlink "${l}")"
+      # Bash 3.2 needs the optional opening parenthesis here to parse a case
+      # pattern containing ')' inside this nested command substitution.
       case "${target}" in
-        /*|*..*) printf '%s -> %s\n' "${l}" "${target}" ;;
+        (/*|*..*) printf '%s -> %s\n' "${l}" "${target}" ;;
       esac
     done | head -n 5 || true)"
   if [ -n "${bad_link}" ]; then
