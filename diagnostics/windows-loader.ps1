@@ -36,9 +36,12 @@ $diagnostic = @'
         let diagGetError = GetProcAddress(diagKernel, "GetLastError")
         childErrorRead = callOnParkedThread(park, pi.hThread, childIsWow64,
           diagGetError, nil, parkTimeoutMs, childError)
-      stderr.writeLine("loader diagnostic: park=" & $park.status &
-        " borrowed=" & $borrowedLoad & " module=" & $llModule &
-        " childErrorRead=" & $childErrorRead & " childError=" & $childError)
+      try:
+        stderr.writeLine("loader diagnostic: park=" & $park.status &
+          " borrowed=" & $borrowedLoad & " module=" & $llModule &
+          " childErrorRead=" & $childErrorRead & " childError=" & $childError)
+      except IOError:
+        discard
 '@
 $source = $source.Replace($anchor, $diagnostic.Replace("`r`n", "`n") + "`n")
 [IO.File]::WriteAllText($injector, $source)
