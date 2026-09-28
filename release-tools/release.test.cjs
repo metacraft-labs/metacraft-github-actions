@@ -13,6 +13,15 @@ function fixture(t) {
   return dir;
 }
 const expected = ['linux.tar.gz', 'windows.zip'];
+test('every shared runner job has an explicit timeout', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/release-tools.yml'), 'utf8');
+  const jobs = workflow.split(/^  [a-z][a-z-]*:\s*$/m).slice(1).filter(s => /^    runs-on:/m.test(s));
+  assert(jobs.length >= 4);
+  for (const job of jobs) {
+    const timeout = job.match(/^    timeout-minutes: (\d+)$/m);
+    assert(timeout && +timeout[1] > 0 && +timeout[1] <= 120, 'unbounded release job');
+  }
+});
 test('assembly checks transferred bytes and produces a sorted manifest', t => {
   const dir = fixture(t);
   seal(dir, expected);
