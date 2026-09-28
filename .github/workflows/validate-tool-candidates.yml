@@ -51,7 +51,7 @@ jobs:
       - name: Restore foreground scheduling on the verified idle listener
         if: inputs.checks == 'm3-worker-foreground'
         shell: bash
-        run: sudo -n /usr/bin/python3 diagnostics/m3-worker-foreground.py "$RUNNER_NAME"
+        run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-worker-foreground.py "$RUNNER_NAME"
 
   m3-worker-handoff:
     if: inputs.checks == 'm3-worker-foreground'
