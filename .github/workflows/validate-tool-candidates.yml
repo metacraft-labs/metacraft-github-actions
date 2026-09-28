@@ -30,13 +30,14 @@ on:
           - runquota-windows-checkout-repair
           - m3-runner-state
           - io-mon-windows-loader
+          - m3-worker-foreground
 
 permissions:
   contents: read
 
 jobs:
   m3-runner-state:
-    if: inputs.checks == 'm3-runner-state'
+    if: startsWith(inputs.checks, 'm3-')
     name: Read-only persistent macOS worker diagnostics
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 5
@@ -47,9 +48,27 @@ jobs:
       - name: Inspect worker state without changing services
         shell: bash
         run: /usr/bin/python3 diagnostics/m3-runner-state.py
+      - name: Restore foreground scheduling on the verified idle listener
+        if: inputs.checks == 'm3-worker-foreground'
+        shell: bash
+        run: sudo -n /usr/bin/python3 diagnostics/m3-worker-foreground.py "$RUNNER_NAME"
+
+  m3-worker-handoff:
+    if: inputs.checks == 'm3-worker-foreground'
+    needs: m3-runner-state
+    # The benchmark label identifies the service affected by the collision.
+    runs-on: [self-hosted, macos, arm64, benchmark]
+    timeout-minutes: 5
+    steps:
+      - name: Prove the affected listener launches a worker
+        shell: bash
+        run: |
+          test "$RUNNER_NAME" = m3-mcl-001
+          echo "Worker handshake succeeded on $RUNNER_NAME"
+          /usr/bin/uptime
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && inputs.checks != 'm3-runner-state' && inputs.checks != 'io-mon-windows-loader'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-windows-loader'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
