@@ -329,6 +329,14 @@ runs:
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
             echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
+            # The source shell already provides its pinned RunQuota package.
+            # Later repro commands run outside that shell and still need the
+            # daemon for lease admission, including when building RunQuota itself.
+            # Keep the rooted executable discoverable across workflow steps.
+            runquotad="$(command -v runquotad)"
+            test -x "${runquotad}"
+            "${runquotad}" --version
+            echo "RUNQUOTAD_BIN=${runquotad}" >> "${GITHUB_ENV}"
             # `repro` dlopens solver/cache libraries by leaf name. The dev
             # shell provides the clingo/zstd runtime paths while building the
             # CLI; persist them so later workflow steps can launch that CLI
