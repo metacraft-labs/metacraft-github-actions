@@ -65,7 +65,7 @@ if any(current.get(pid) != rows[pid] for pid in targets):
 if any(row[0] == listener for row in current.values()):
     raise SystemExit("A worker started during diagnosis; refusing the adjustment")
 for pid in targets:
-    print(command(["/usr/bin/taskpolicy", "-B", "-p", str(pid)]), end="")
+    print(command(["/usr/sbin/taskpolicy", "-B", "-p", str(pid)]), end="")
 print(command(["/usr/bin/renice", "-n", "0", "-p", *map(str, targets)]), end="")
 after = snapshot()
 for pid in targets:
