@@ -29,7 +29,9 @@ permissions:
 
 jobs:
   release-gates:
-    runs-on: [self-hosted, linux, x64]
+    # Like the other policy guards below, this uses only Node and real local
+    # files. Keep it independent of the fleet whose release routing it checks.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
