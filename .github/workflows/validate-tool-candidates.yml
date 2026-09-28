@@ -29,6 +29,7 @@ on:
           - runquota-windows-checkout
           - runquota-windows-checkout-repair
           - m3-runner-state
+          - io-mon-windows-loader
 
 permissions:
   contents: read
@@ -48,7 +49,7 @@ jobs:
         run: /usr/bin/python3 diagnostics/m3-runner-state.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && inputs.checks != 'm3-runner-state'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && inputs.checks != 'm3-runner-state' && inputs.checks != 'io-mon-windows-loader'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -217,6 +218,62 @@ jobs:
           name: source-hash-runtime
           path: test-logs/hash-runtime.log
           retention-days: 14
+
+  windows-loader:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-loader'
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: tooling
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: de755e5e88748f8fd73ae233f0236d87aaacee15
+          path: io-mon
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 72f578249e9d8bbca8e3705c8a41ed5085c05bf9
+          path: nim-stackable-hooks
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-queue
+          ref: 02f442ac12ce2587d9c053c527041097af38609f
+          path: nim-shm-queue
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-gset
+          ref: cf0adf2f39647f5b203b2ab694414a3c50e93951
+          path: nim-shm-gset
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+      - name: Reproduce the loader failure with child-side diagnostics
+        shell: pwsh
+        working-directory: io-mon
+        run: ../tooling/diagnostics/windows-loader.ps1
+      - name: Preserve every probe result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-loader-probes
+          path: io-mon/test-logs/loader/
+          retention-days: 7
 
   windows-exit:
     if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-windows-exit'
