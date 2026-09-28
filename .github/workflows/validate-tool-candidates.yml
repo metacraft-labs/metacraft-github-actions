@@ -28,13 +28,27 @@ on:
           - reprobuild-linux-hash-runtime
           - runquota-windows-checkout
           - runquota-windows-checkout-repair
+          - m3-runner-state
 
 permissions:
   contents: read
 
 jobs:
+  m3-runner-state:
+    if: inputs.checks == 'm3-runner-state'
+    name: Read-only persistent macOS worker diagnostics
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect worker state without changing services
+        shell: bash
+        run: /usr/bin/python3 diagnostics/m3-runner-state.py
+
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && inputs.checks != 'm3-runner-state'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
