@@ -121,3 +121,17 @@ test('legacy routing is limited to the documented Linux ARM64 scale set', t => {
   fs.writeFileSync(path.join(root, 'version.txt'), '0.1.1\n');
   assert.throws(() => plan(root), /version-scoped migration/);
 });
+test('the dedicated release lane accepts only Linux x64 and its exact scale-set name', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const target = {id: 'linux-x86_64', runner: 'eph-linux-x64-release', assets: ['example.tar.gz']};
+  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.equal(plan(root).matrix[0].runner, 'eph-linux-x64-release');
+  target.id = 'linux-aarch64'; write();
+  assert.throws(() => plan(root), /self-hosted runner required/);
+  target.id = 'linux-x86_64'; target.runner = 'eph-linux-x64-release-typo'; write();
+  assert.throws(() => plan(root), /self-hosted runner required/);
+});

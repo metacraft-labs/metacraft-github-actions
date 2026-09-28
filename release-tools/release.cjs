@@ -29,6 +29,7 @@ function plan(root = process.cwd()) {
   const matrix = spec.targets.map(t => {
     assert(/^(linux|darwin|windows)-(x86_64|aarch64)$/.test(t.id), `invalid target ${t.id}`);
     const capabilityRunner = Array.isArray(t.runner) && t.runner.includes('self-hosted');
+    const releaseLane = t.id === 'linux-x86_64' && t.runner === 'eph-linux-x64-release';
     // The Linux ARM64 Tart pool is not yet serving jobs. Its documented
     // scale-set route is still live; keep the exception narrow and explicit.
     const legacyArmRunner = t.id === 'linux-aarch64' && t.runner === 'eph-linux-arm64' &&
@@ -38,7 +39,7 @@ function plan(root = process.cwd()) {
       migration?.version === version && typeof migration.owner === 'string' &&
       migration.owner.trim().length > 0 && typeof migration.followup === 'string' &&
       migration.followup.startsWith('https://github.com/metacraft-labs/metacraft-specs/');
-    assert(capabilityRunner || legacyArmRunner || hostedArmRunner,
+    assert(capabilityRunner || releaseLane || legacyArmRunner || hostedArmRunner,
       'self-hosted runner required; legacy ARM routing needs a reason and hosted ARM needs a version-scoped migration');
     assert(Array.isArray(t.assets) && t.assets.length > 0, `no assets for ${t.id}`);
     const assets = t.assets.map(expand);
