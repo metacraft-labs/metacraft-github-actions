@@ -30,8 +30,8 @@ def command(argv):
 print(command(["/usr/bin/uptime"]))
 print(command(["/bin/df", "-h", "/private/var/lib/github-runners"]))
 print(command(["/usr/bin/vm_stat"]).splitlines()[:12])
-for line in command(["/bin/ps", "-axo", "pid,ppid,user,stat,etime,comm"]).splitlines():
-    if re.search(r"Runner\.(Listener|Worker)|github-runner", line):
+for line in command(["/bin/ps", "-axo", "pid,ppid,user,nice,pri,stat,etime,comm"]).splitlines():
+    if re.search(r"/Runner\.(Listener|Worker)$", line):
         print("runner_process " + line[:400])
 
 service = command(["/bin/launchctl", "print",
@@ -68,7 +68,7 @@ def sanitize(message):
 
 
 for pattern in ("Runner_*.log", "Worker_*.log"):
-    files = sorted(root.glob(pattern), key=lambda path: path.stat().st_mtime)[-4:]
+    files = sorted(root.glob(pattern), key=lambda path: path.stat().st_mtime)[-1:]
     print("matching_recent_files=" + str(len(files)))
     for path in files:
         stat = path.stat()
@@ -81,14 +81,16 @@ for pattern in ("Runner_*.log", "Worker_*.log"):
                 source.readline()
             lines = source.read().decode("utf-8", errors="replace").splitlines()
         counts = collections.Counter()
-        selected = collections.deque(maxlen=60)
+        selected = collections.deque(maxlen=140)
         for line in lines:
             match = prefix.match(line)
             if not match:
                 continue
             timestamp, severity, component, message = match.groups()
             counts[(severity, component)] += 1
-            if severity in {"ERR", "WARN"} or interesting.search(message):
+            if (severity in {"ERR", "WARN"} or interesting.search(message) or
+                    (pattern.startswith("Runner") and component in
+                     {"JobDispatcher", "ProcessInvokerWrapper", "ProcessChannel"})):
                 selected.append(f"{timestamp} {severity} {component} {sanitize(message)}")
         print("severity_components", dict(counts))
         for line in selected:
