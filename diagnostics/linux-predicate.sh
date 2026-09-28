@@ -20,3 +20,9 @@ cat "$logs/direct.log" "$logs/monitored.log"
 # Diagnostic succeeds only if the ordinary test worked. A monitored timeout is
 # retained as evidence, never mistaken for a passing product test.
 test "$direct_exit" = 0
+
+# Exercise production interposition after extracting its shared mapping policy.
+# This is the existing real syscall fixture, including its architecture guard.
+if [[ "$monitored_exit" != 0 ]]; then exit "$monitored_exit"; fi
+nim c -r --hints:off tests/linux/test_io_mon_linux_inline_asm_exit_group.nim > "$logs/inline-exit-group.log" 2>&1
+cat "$logs/inline-exit-group.log"

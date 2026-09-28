@@ -203,7 +203,13 @@ jobs:
 
   linux-predicate:
     if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-linux-predicate'
-    runs-on: ubuntu-24.04-arm
+    # Supplemental native release diagnostics; owner zah. Follow-up:
+    # metacraft-specs/issues/2026-09-28-release-linux-arm64-runner-migration.md
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -220,7 +226,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: d7f0453fa9160fcd6d5b1ead64165117a39cc7e9
+          ref: 0f3a18661108c0044a07964b81ab153f1af0c99c
           path: io-mon
           token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
@@ -235,7 +241,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: linux-predicate-diagnostics
+          name: linux-predicate-diagnostics-${{ matrix.runner }}
           path: io-mon/test-logs/linux-predicate/
           retention-days: 14
 
