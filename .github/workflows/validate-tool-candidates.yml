@@ -15,21 +15,33 @@ on:
           - gosti
           - io-mon
           - runquota
+          - reprobuild
+      checks:
+        description: Complete suite or focused failure diagnostic
+        type: choice
+        default: complete
+        options:
+          - complete
+          - io-mon-propagation
+          - runquota-macos-authority
+          - reprobuild-windows-exit
+          - runquota-windows-checkout
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: ${{ matrix.product }} complete Linux suite
-    runs-on: ubuntu-24.04
+    if: inputs.product != 'reprobuild' && inputs.checks != 'runquota-windows-checkout'
+    name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
+    runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'cba489f85e839272ef0a9e4e3dfcb013edd26496' || 'd6d65adda65b41c627cec8abe250eda8d26b75f6' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'd6465ca05f1d37f9c21db911668b3f116787a378' || 'b2c65a148f64f0e3e5c24e40a9e8e8bb8e5f3c7f' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,22 +51,109 @@ jobs:
       - name: Record source and host
         env:
           EXPECTED_REVISION: ${{ env.CANDIDATE_REVISION }}
+          PRODUCT: ${{ matrix.product }}
+          CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
+          case "$CHECKS:$PRODUCT" in
+            complete:*|io-mon-propagation:io-mon|runquota-macos-authority:runquota) ;;
+            *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
+          esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
           git status --short
           git log -1 --format='%H %s'
           uname -a
-          getconf _NPROCESSORS_ONLN
+          case "$(uname -s)" in
+            Darwin) /usr/sbin/sysctl -n hw.logicalcpu ;;
+            *) getconf _NPROCESSORS_ONLN ;;
+          esac
       - name: Setup Nix
         uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run the complete product test suite
+        if: inputs.checks == 'complete' || inputs.checks == ''
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p test-logs
-          nix develop --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+          nix develop --profile "$RUNNER_TEMP/tool-test-shell" --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+      - name: Diagnose Linux descendant loss
+        if: inputs.checks == 'io-mon-propagation'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          python3 - <<'PY'
+          from pathlib import Path
+          test = Path('tests/linux/test_io_mon_propagation.nim')
+          source = test.read_text()
+          original = '    let dep = readMonitorDepFile(depfile)\n'
+          assert source.count(original) == 1
+          source = source.replace(original, original + '''    for record in dep.records:
+                if record.kind in {mrEventLoss, mrProcessStart, mrProcessSpawn, mrProcessExec}:
+                  checkpoint("process-evidence: " & $record)
+          ''')
+          original = '      if record.kind in {mrProcessExec, mrEventLoss}:\n'
+          assert source.count(original) == 1
+          source = source.replace(original, '      if record.kind in {mrProcessExec, mrEventLoss, mrFileWrite} or record.path == parentMarker:\n')
+          test.write_text(source)
+          PY
+          git diff -- tests/linux/test_io_mon_propagation.nim | tee test-logs/diagnostic.patch
+          nix develop --command nim c -r --path:tests/helpers tests/linux/test_io_mon_propagation.nim 2>&1 | tee test-logs/propagation.log
+          shim=src/io_mon/shim/linux_preload.nim
+          backup="$RUNNER_TEMP/linux-preload-before-control.nim"
+          cp "$shim" "$backup"
+          trap 'cp "$backup" "$shim"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/io_mon/shim/linux_preload.nim')
+          source = path.read_text()
+          start = source.index('proc baseRecord(')
+          end = source.index('\nproc stampRunId', start)
+          original = source[start:end]
+          mutated = original
+          for live, cached in [('uint64(c_getpid())', 'currentPid()'),
+                               ('uint64(c_getppid())', 'currentPpid()'),
+                               ('uint64(c_gettid())', 'currentThreadId()')]:
+              assert mutated.count(live) == 1
+              mutated = mutated.replace(live, cached)
+          path.write_text(source[:start] + mutated + source[end:])
+          PY
+          git diff -- "$shim" > test-logs/negative-control.patch
+          status=0
+          nix develop --command nim c -r --path:tests/helpers tests/linux/test_io_mon_propagation.nim > test-logs/negative-control.log 2>&1 || status=$?
+          cat test-logs/negative-control.log
+          if [[ "$status" == 0 ]] || ! grep -Fq '[FAILED] vfork_exec_uses_child_identity_without_changing_parent_cache' test-logs/negative-control.log; then
+            echo 'The inherited-identity negative control did not fail the vfork regression'
+            exit 1
+          fi
+          echo 'Verified: live exec identities pass; inherited identities fail the vfork regression'
+      - name: Diagnose the macOS static-helper authority
+        if: inputs.checks == 'runquota-macos-authority'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          printf 'Outer BASH_ENV=%s\n' "${BASH_ENV:-}" | tee test-logs/authority.log
+          nix develop --profile "$RUNNER_TEMP/runquota-authority-shell" --command /usr/bin/printenv PATH | tee -a test-logs/authority.log
+          cat > "$RUNNER_TEMP/runquota-authority.sh" <<'BASH'
+            set -euo pipefail
+            printf "Shell PATH=%s\nBASH_ENV=%s\n" "$PATH" "${BASH_ENV:-}"
+            gate=$(command -v runquota-static-helper-gate || true)
+            printf "Initial gate=%s\n" "$gate"
+            if [[ -n "$gate" ]]; then
+              ls -l "$gate"
+              "$gate" --print-authority
+            fi
+            bash -x scripts/static_helper_gate.sh
+            rc=0
+            just test || rc=$?
+            printf "Final PATH=%s\n" "$PATH"
+            command -v runquota-static-helper-gate || true
+            if [[ -n "$gate" ]]; then ls -l "$gate" || true; fi
+            exit "$rc"
+          BASH
+          nix develop --profile "$RUNNER_TEMP/runquota-authority-shell" --command bash "$RUNNER_TEMP/runquota-authority.sh" 2>&1 | tee -a test-logs/authority.log
       - name: Preserve evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -63,3 +162,140 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  windows-exit:
+    if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-windows-exit'
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Build the pinned Windows source with its runtime
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@74c02a377baa8d55947c496df8a2da85ad11f4a8
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 0d69de556ce7b8e8585fdcc6e6aaee91de84b1da
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Stage a diagnostic installed bundle from the fresh build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/reprobuild"
+          test "$(git rev-parse HEAD)" = 0d69de556ce7b8e8585fdcc6e6aaee91de84b1da
+          package="$RUNNER_TEMP/repro-source-exit-bundle"
+          mkdir -p "$package/bin" "$package/lib"
+          cp -R build/bin/. "$package/bin/"
+          cp -R build/lib/. "$package/lib/"
+          bash scripts/release/stage_release_sources.sh "$package"
+          bash scripts/release/check_release_source_closure.sh "$package"
+      - name: Diagnose command exit from the fresh installed bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = Join-Path $env:GITHUB_WORKSPACE 'reprobuild'
+          $expected = '0d69de556ce7b8e8585fdcc6e6aaee91de84b1da'
+          $actual = (& git -C $repo rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "Source checkout changed: expected $expected, got $actual"
+          }
+          $package = Join-Path $env:RUNNER_TEMP 'repro-source-exit-bundle'
+          $binary = Join-Path $package 'bin/reprobuild.exe'
+          if (-not (Test-Path -LiteralPath $binary)) { throw "Missing diagnostic bundle: $binary" }
+          Write-Host "Diagnostic bundle built from: $actual"
+          Get-FileHash -Algorithm SHA256 $binary | Format-List
+          $evidence = Join-Path $env:RUNNER_TEMP 'repro-exit-evidence'
+          New-Item -ItemType Directory -Force $evidence | Out-Null
+          "source=$actual" | Set-Content (Join-Path $evidence 'bundle-identity.txt')
+          Get-FileHash -Algorithm SHA256 $binary | Format-List | Out-String |
+            Add-Content (Join-Path $evidence 'bundle-identity.txt')
+          . (Join-Path $repo 'env.ps1')
+          $bash = (Get-Command bash.exe -ErrorAction Stop).Source
+          $source = [IO.File]::ReadAllText((Join-Path $repo 'scripts/release/smoke_release_dev_exec.sh')).Replace("`r`n", "`n")
+          # FD 3 records command exit outside tee's pipe. A completed command
+          # with tee still alive distinguishes a retained writer from a hung CLI.
+          $old = @'
+          (cd "$project" && "$repro_bin" exec -- bash -c \
+            'echo "$1"; echo "seeded-source-root=${REPROBUILD_SOURCE_ROOT:-}"' _ "$marker") \
+          '@
+          $new = @'
+          (cd "$project" && "$repro_bin" exec -- bash -c \
+            'echo "$1"; echo "seeded-source-root=${REPROBUILD_SOURCE_ROOT:-}"' _ "$marker"
+            inner_rc=$?
+            printf 'packaged-command-exited=%s\n' "$inner_rc" >&3
+            exit "$inner_rc") \
+          '@
+          # The runner writes its PowerShell step with Windows line endings;
+          # normalize the here-strings as well as the source they match.
+          $old = $old.Replace("`r`n", "`n")
+          $new = $new.Replace("`r`n", "`n")
+          if (-not $source.Contains($old)) { throw 'Smoke script instrumentation no longer matches' }
+          $source = $source.Replace($old, $new)
+          $source = $source.Replace('set -euo pipefail', 'set -euo pipefail' + "`n" + 'exec 3>"$REPRO_EXIT_EVIDENCE/command-exit.log"')
+          $script = Join-Path $evidence 'smoke-exit.sh'
+          [IO.File]::WriteAllText($script, $source)
+          $env:REPRO_EXIT_EVIDENCE = $evidence.Replace('\', '/')
+          $out = Join-Path $evidence 'stdout.log'
+          $err = Join-Path $evidence 'stderr.log'
+          $process = Start-Process -FilePath $bash -ArgumentList @('--noprofile', '--norc', $script, $package) -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          $baseline = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate)
+          $baseline | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $evidence 'initial-processes.json')
+          for ($sample = 0; $sample -lt 10 -and -not $process.HasExited; $sample++) {
+            Start-Sleep -Seconds 30
+            $process.Refresh()
+            Write-Host "sample=$sample smoke-exited=$($process.HasExited)"
+            if (Test-Path "$evidence/command-exit.log") { Get-Content "$evidence/command-exit.log" }
+            Get-Content $out -Tail 8
+            Get-Content $err -Tail 8
+            Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(repro.*|runquota.*|bash|tee)\.exe$' } |
+              Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate |
+              ConvertTo-Json -Depth 3 | Set-Content (Join-Path $evidence "processes-$sample.json")
+          }
+          if (-not $process.HasExited) {
+            # Stop only the diagnostic shell. Shared daemons are evidence and
+            # may have other clients; this diagnostic does not restart them.
+            Stop-Process -Id $process.Id -Force
+            throw 'The source-bundle smoke did not exit within five minutes; inspect command-exit.log and process snapshots'
+          }
+          $process.WaitForExit()
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) { throw "Smoke exited $($process.ExitCode)" }
+      - name: Preserve Windows exit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-windows-exit-evidence
+          path: ${{ runner.temp }}/repro-exit-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+
+  windows-checkout:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-checkout'
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Identify users of the retained RunQuota bootstrap DLL
+        shell: pwsh
+        run: |
+          $workRoot = Split-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) -Parent
+          $file = Join-Path $workRoot 'runquota/runquota/reprobuild/build/lib/librepro_monitor_shim.dll'
+          & ./diagnostics/inspect-windows-checkout-lock.ps1 -FilePath $file 2>&1 |
+            Tee-Object "$env:RUNNER_TEMP/runquota-checkout-lock.log"
+      - name: Preserve retained-file evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-checkout-lock
+          path: ${{ runner.temp }}/runquota-checkout-lock.log
+          retention-days: 14
