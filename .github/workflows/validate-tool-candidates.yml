@@ -5,9 +5,6 @@ name: Validate tool candidates on Linux
 # infrastructure/gosti-io-mon-runquota-releases.md.
 on:
   workflow_dispatch:
-  push:
-    branches: [agents]
-    paths: [.github/workflows/validate-tool-candidates.yml]
 
 permissions:
   contents: read
