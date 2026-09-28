@@ -30,6 +30,7 @@ on:
           - runquota-windows-checkout-repair
           - m3-runner-state
           - io-mon-windows-loader
+          - runquota-windows-active-builds
           - m3-worker-foreground
 
 permissions:
@@ -68,7 +69,7 @@ jobs:
           /usr/bin/uptime
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-windows-loader'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -237,6 +238,18 @@ jobs:
           name: source-hash-runtime
           path: test-logs/hash-runtime.log
           retention-days: 14
+
+  windows-active-builds:
+    if: inputs.checks == 'runquota-windows-active-builds'
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect active source-bootstrap processes
+        shell: pwsh
+        run: diagnostics/windows-active-builds.ps1
 
   windows-loader:
     if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-loader'
