@@ -32,7 +32,7 @@ for image in "${images[@]}"; do
     "$image" sh -eu -c '
       if command -v apt-get >/dev/null; then
         apt-get update -qq
-        apt-get install -y --no-install-recommends libstdc++6 ca-certificates
+        apt-get install -y --no-install-recommends libstdc++6
         dpkg -i /payload/packages/*.deb
       else
         dnf install -y libstdc++ /payload/packages/*.rpm
