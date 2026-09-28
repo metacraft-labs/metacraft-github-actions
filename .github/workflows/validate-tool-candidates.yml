@@ -174,7 +174,7 @@ jobs:
         id: ci-token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
       - name: Build the pinned Windows source with its runtime
