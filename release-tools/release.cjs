@@ -33,7 +33,13 @@ function plan(root = process.cwd()) {
     // scale-set route is still live; keep the exception narrow and explicit.
     const legacyArmRunner = t.id === 'linux-aarch64' && t.runner === 'eph-linux-arm64' &&
       typeof t.runnerReason === 'string' && t.runnerReason.trim().length > 0;
-    assert(capabilityRunner || legacyArmRunner, 'self-hosted runner required; legacy ARM routing needs a reason');
+    const migration = t.runnerMigration;
+    const hostedArmRunner = t.id === 'linux-aarch64' && t.runner === 'ubuntu-24.04-arm' &&
+      migration?.version === version && typeof migration.owner === 'string' &&
+      migration.owner.trim().length > 0 && typeof migration.followup === 'string' &&
+      migration.followup.startsWith('https://github.com/metacraft-labs/metacraft-specs/');
+    assert(capabilityRunner || legacyArmRunner || hostedArmRunner,
+      'self-hosted runner required; legacy ARM routing needs a reason and hosted ARM needs a version-scoped migration');
     assert(Array.isArray(t.assets) && t.assets.length > 0, `no assets for ${t.id}`);
     const assets = t.assets.map(expand);
     assert(assets.every(a => /^[A-Za-z0-9_.+-]+$/.test(a)), 'unsafe asset name');

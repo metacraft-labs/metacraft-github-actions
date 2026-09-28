@@ -112,4 +112,12 @@ test('legacy routing is limited to the documented Linux ARM64 scale set', t => {
   assert.equal(plan(root).matrix[0].runner, 'eph-linux-arm64');
   target.runner = 'ubuntu-latest'; write();
   assert.throws(() => plan(root), /self-hosted runner required/);
+  target.runner = 'ubuntu-24.04-arm'; write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.runnerMigration = {version: '0.1.0', owner: 'zah',
+    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-28-release-linux-arm64-runner-migration.md'};
+  write();
+  assert.equal(plan(root).matrix[0].runner, 'ubuntu-24.04-arm');
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.1\n');
+  assert.throws(() => plan(root), /version-scoped migration/);
 });
