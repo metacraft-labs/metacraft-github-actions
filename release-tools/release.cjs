@@ -15,6 +15,11 @@ function plan(root = process.cwd()) {
   const version = spec.versionFile.endsWith('.txt') ? source.trim() :
     source.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
   assert(/^\d+\.\d+\.\d+$/.test(version), 'expected a stable three-part version');
+  const unsignedRelease = spec.unsignedReleaseVersion !== undefined;
+  if (unsignedRelease) {
+    assert(spec.unsignedReleaseVersion === version,
+      'unsigned release exception does not cover this version');
+  }
   for (const check of spec.versionChecks || []) {
     const value = fs.readFileSync(path.join(root, check.file), 'utf8').match(new RegExp(check.pattern, 'm'))?.[1];
     assert(value === version, `version disagreement in ${check.file}`);
@@ -23,7 +28,12 @@ function plan(root = process.cwd()) {
   const expand = s => s.replaceAll('{product}', spec.product).replaceAll('{version}', version);
   const matrix = spec.targets.map(t => {
     assert(/^(linux|darwin|windows)-(x86_64|aarch64)$/.test(t.id), `invalid target ${t.id}`);
-    assert(Array.isArray(t.runner) && t.runner.includes('self-hosted'), 'self-hosted runner required');
+    const capabilityRunner = Array.isArray(t.runner) && t.runner.includes('self-hosted');
+    // The Linux ARM64 Tart pool is not yet serving jobs. Its documented
+    // scale-set route is still live; keep the exception narrow and explicit.
+    const legacyArmRunner = t.id === 'linux-aarch64' && t.runner === 'eph-linux-arm64' &&
+      typeof t.runnerReason === 'string' && t.runnerReason.trim().length > 0;
+    assert(capabilityRunner || legacyArmRunner, 'self-hosted runner required; legacy ARM routing needs a reason');
     assert(Array.isArray(t.assets) && t.assets.length > 0, `no assets for ${t.id}`);
     const assets = t.assets.map(expand);
     assert(assets.every(a => /^[A-Za-z0-9_.+-]+$/.test(a)), 'unsafe asset name');
@@ -34,7 +44,7 @@ function plan(root = process.cwd()) {
   assert(new Set(matrix.map(t => t.id)).size === matrix.length, 'duplicate target');
   assert(new Set(expected).size === expected.length, 'duplicate asset');
   const hasMsi = expected.some(a => a.endsWith('.msi'));
-  return {product: spec.product, version, matrix, expected, hasMsi};
+  return {product: spec.product, version, matrix, expected, hasMsi, unsignedRelease};
 }
 
 function verifyDirectory(dir, expected, sidecars = true) {
@@ -88,6 +98,7 @@ async function githubPlan({github, context, core}) {
   core.setOutput('version', p.version);
   core.setOutput('expected', JSON.stringify(p.expected));
   core.setOutput('has-msi', String(p.hasMsi));
+  core.setOutput('unsigned-release', String(p.unsignedRelease));
   core.exportVariable('RELEASE_NODE', process.execPath);
 }
 
@@ -97,9 +108,11 @@ async function publish({github, context, core}) {
   const tag = `v${p.version}`;
   assert(context.ref === `refs/tags/${tag}`, 'tag mismatch');
   const dir = 'dist';
-  const expected = [...p.expected, 'SHA256SUMS', 'SHA256SUMS.sigstore.json'].sort();
+  const expected = [...p.expected, 'SHA256SUMS',
+    ...(p.unsignedRelease ? [] : ['SHA256SUMS.sigstore.json'])].sort();
   verifyDirectory(dir, expected, false);
-  // The attestation verifier runs before this call. Verify the bytes again here.
+  // Signed releases pass attestation verification first. Both policies must
+  // verify all transferred bytes and the manifest before publication.
   const sums = p.expected.map(n => `${digest(path.join(dir, n))}  ${n}\n`).join('');
   assert(fs.readFileSync(path.join(dir, 'SHA256SUMS'), 'utf8') === sums, 'manifest differs from assets');
   const releases = await github.paginate(github.rest.repos.listReleases, {...context.repo, per_page: 100});
@@ -108,6 +121,8 @@ async function publish({github, context, core}) {
     release = (await github.rest.repos.createRelease({
       ...context.repo, tag_name: tag, target_commitish: context.sha,
       name: `${p.product} ${tag}`, draft: true, generate_release_notes: true,
+      body: `Targets: ${p.matrix.map(t => t.id).join(', ')}.\n\n` +
+        (p.unsignedRelease ? 'This initial release is unsigned under the approved first-release exception. SHA256SUMS records all artifact hashes.\n' : ''),
     })).data;
   }
   const existing = await github.paginate(github.rest.repos.listReleaseAssets, {

@@ -84,3 +84,32 @@ test('MSI verification is derived from assets and cannot be disabled in metadata
   spec.targets[0].assets = ['example.tar.gz']; write();
   assert.equal(plan(root).hasMsi, false);
 });
+test('unsigned publication requires an exception for the exact source version', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const spec = {product: 'example', versionFile: 'version.txt', targets: [
+    {id: 'linux-x86_64', runner: ['self-hosted', 'linux', 'x64'], assets: ['example.tar.gz']},
+  ]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.equal(plan(root).unsignedRelease, false);
+  spec.unsignedReleaseVersion = '0.1.0'; write();
+  assert.equal(plan(root).unsignedRelease, true);
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.1\n');
+  assert.throws(() => plan(root), /exception does not cover this version/);
+});
+test('legacy routing is limited to the documented Linux ARM64 scale set', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const target = {id: 'linux-aarch64', runner: 'eph-linux-arm64', assets: ['example.tar.gz']};
+  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.throws(() => plan(root), /routing needs a reason/);
+  target.runnerReason = 'Tart pool is deferred; use the live scale set'; write();
+  assert.equal(plan(root).matrix[0].runner, 'eph-linux-arm64');
+  target.runner = 'ubuntu-latest'; write();
+  assert.throws(() => plan(root), /self-hosted runner required/);
+});

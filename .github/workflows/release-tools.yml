@@ -25,6 +25,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       expected: ${{ steps.plan.outputs.expected }}
       has-msi: ${{ steps.plan.outputs.has-msi }}
+      unsigned-release: ${{ steps.plan.outputs.unsigned-release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -232,7 +233,9 @@ jobs:
             const release = require('./.release-tools/release-tools/release.cjs');
             release.assemble('dist', release.plan().expected);
       - uses: sigstore/cosign-installer@v3
+        if: needs.plan.outputs.unsigned-release != 'true'
       - name: Sign and verify the checksum manifest
+        if: needs.plan.outputs.unsigned-release != 'true'
         shell: bash
         env:
           RELEASE_TOOLING_REF: ${{ inputs.tooling-ref }}
@@ -275,6 +278,7 @@ jobs:
           name: verified-release
           path: dist
       - name: Verify binary signing policy
+        if: needs.plan.outputs.unsigned-release != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -287,7 +291,9 @@ jobs:
               }
             }
       - uses: sigstore/cosign-installer@v3
+        if: needs.plan.outputs.unsigned-release != 'true'
       - name: Verify the transferred checksum signature
+        if: needs.plan.outputs.unsigned-release != 'true'
         shell: bash
         env:
           RELEASE_TOOLING_REF: ${{ inputs.tooling-ref }}
