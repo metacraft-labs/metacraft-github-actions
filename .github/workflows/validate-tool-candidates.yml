@@ -1,0 +1,62 @@
+name: Validate tool candidates on Linux
+
+# Supplemental 0.1.0 validation, owner zah. The normal product and release
+# gates remain mandatory. Exact candidates are recorded in metacraft-specs:
+# infrastructure/gosti-io-mon-runquota-releases.md.
+on:
+  workflow_dispatch:
+  push:
+    branches: [agents]
+    paths: [.github/workflows/validate-tool-candidates.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.product }} complete Linux suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: gosti
+            revision: 560de369164947741792ac2499a6303128c3986e
+          - product: io-mon
+            revision: 8d8370246beee29e8969f5008dc30041f8e2af48
+          - product: runquota
+            revision: d6d65adda65b41c627cec8abe250eda8d26b75f6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/${{ matrix.product }}
+          ref: ${{ matrix.revision }}
+          persist-credentials: false
+      - name: Record source and host
+        env:
+          EXPECTED_REVISION: ${{ matrix.revision }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+          git status --short
+          git log -1 --format='%H %s'
+          uname -a
+          getconf _NPROCESSORS_ONLN
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run the complete product test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          nix develop --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-linux-${{ matrix.product }}-${{ matrix.revision }}
+          path: test-logs/
+          retention-days: 14
+          if-no-files-found: warn
