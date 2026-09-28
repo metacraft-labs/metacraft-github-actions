@@ -1,0 +1,28 @@
+name: Refresh build authentication
+description: Mint fresh job credentials after long environment setup and before a build phase.
+inputs:
+  app-id:
+    description: CI token provider application ID
+    required: true
+  private-key:
+    description: CI token provider private key
+    required: true
+  owner:
+    description: Organization whose repositories the build accesses
+    default: metacraft-labs
+runs:
+  using: composite
+  steps:
+    - name: Mint a fresh installation token
+      id: token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+    - name: Refresh job-scoped Git and Nix authentication
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        TOKEN_OWNERS: ${{ inputs.owner }}
+      run: bash "${GITHUB_ACTION_PATH}/refresh.sh"

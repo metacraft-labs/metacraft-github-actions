@@ -28,6 +28,18 @@ permissions:
   contents: read
 
 jobs:
+  refresh-build-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Real Git and Nix credential-refresh contract
+        run: python3 refresh-build-auth/test.py
+
   release-gates:
     # Like the other policy guards below, this uses only Node and real local
     # files. Keep it independent of the fleet whose release routing it checks.
