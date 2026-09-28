@@ -26,13 +26,14 @@ on:
           - runquota-macos-authority
           - reprobuild-windows-exit
           - runquota-windows-checkout
+          - runquota-windows-checkout-repair
 
 permissions:
   contents: read
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'runquota-windows-checkout'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -278,7 +279,7 @@ jobs:
           if-no-files-found: warn
 
   windows-checkout:
-    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-checkout'
+    if: inputs.product == 'runquota' && startsWith(inputs.checks, 'runquota-windows-checkout')
     runs-on: [self-hosted, windows, x64, dev-env-ready]
     timeout-minutes: 10
     steps:
@@ -298,4 +299,17 @@ jobs:
         with:
           name: runquota-checkout-lock
           path: ${{ runner.temp }}/runquota-checkout-lock.log
+          retention-days: 14
+      - name: Release the verified stale RunQuota checkout owner
+        if: inputs.checks == 'runquota-windows-checkout-repair'
+        shell: pwsh
+        run: |
+          & ./diagnostics/repair-runquota-stale-checkout-owner.ps1 2>&1 |
+            Tee-Object "$env:RUNNER_TEMP/runquota-checkout-repair.log"
+      - name: Preserve repair evidence
+        if: always() && inputs.checks == 'runquota-windows-checkout-repair'
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-checkout-repair
+          path: ${{ runner.temp }}/runquota-checkout-repair.log
           retention-days: 14
