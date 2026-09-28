@@ -58,7 +58,10 @@ jobs:
           git status --short
           git log -1 --format='%H %s'
           uname -a
-          getconf _NPROCESSORS_ONLN
+          case "$(uname -s)" in
+            Darwin) /usr/sbin/sysctl -n hw.logicalcpu ;;
+            *) getconf _NPROCESSORS_ONLN ;;
+          esac
       - name: Setup Nix
         uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
