@@ -31,6 +31,16 @@ cat "$logs/inline-exit-group.log"
 # diagnostic to three cases; the ordinary product CI still runs the full suite.
 mkdir -p "$logs/fixtures"
 export TMPDIR="$logs/fixtures"
+export IO_MON_DIAGNOSTIC_SAVE="$logs/saved-fixtures"
+python3 - <<'PYPROBE'
+from pathlib import Path
+p = Path('tests/linux/test_io_mon_linux_stdio_ipc.nim')
+s = p.read_text()
+assert s.count('  removeDir(work)') == 1
+p.write_text(s.replace('  removeDir(work)',
+  '  copyDir(work, getEnv("IO_MON_DIAGNOSTIC_SAVE"))\n  removeDir(work)'))
+PYPROBE
+git diff -- tests/linux/test_io_mon_linux_stdio_ipc.nim > "$logs/preserve-fixtures.patch"
 nim c --hints:off --out:build/test-bin/stdio-ipc tests/linux/test_io_mon_linux_stdio_ipc.nim > "$logs/stdio-build.log" 2>&1
 set +e
 timeout -k 10 120 build/test-bin/stdio-ipc \
@@ -42,6 +52,6 @@ set -e
 printf 'stdio_exit=%s\n' "$stdio_exit" >> "$logs/result.txt"
 while IFS= read -r -d '' depfile; do
   build/bin/io-mon inspect "$depfile" --format json > "$depfile.inspect.json"
-done < <(find "$logs/fixtures" -name '*.iomon' -print0)
+done < <(find "$logs/saved-fixtures" -name '*.iomon' -print0)
 cat "$logs/stdio-ipc.log"
 exit "$stdio_exit"
