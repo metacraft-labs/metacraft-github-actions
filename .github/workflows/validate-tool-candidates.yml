@@ -25,13 +25,14 @@ on:
           - io-mon-propagation
           - runquota-macos-authority
           - reprobuild-windows-exit
+          - runquota-windows-checkout
 
 permissions:
   contents: read
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild'
+    if: inputs.product != 'reprobuild' && inputs.checks != 'runquota-windows-checkout'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -275,3 +276,26 @@ jobs:
           path: ${{ runner.temp }}/repro-exit-evidence/
           retention-days: 14
           if-no-files-found: warn
+
+  windows-checkout:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-checkout'
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Identify users of the retained RunQuota bootstrap DLL
+        shell: pwsh
+        run: |
+          $workRoot = Split-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) -Parent
+          $file = Join-Path $workRoot 'runquota/runquota/reprobuild/build/lib/librepro_monitor_shim.dll'
+          & ./diagnostics/inspect-windows-checkout-lock.ps1 -FilePath $file 2>&1 |
+            Tee-Object "$env:RUNNER_TEMP/runquota-checkout-lock.log"
+      - name: Preserve retained-file evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-checkout-lock
+          path: ${{ runner.temp }}/runquota-checkout-lock.log
+          retention-days: 14
