@@ -7,6 +7,11 @@ on:
         description: Exact metacraft-github-actions commit used by the caller
         required: true
         type: string
+      nix-shell:
+        description: Product flake development shell for release builds
+        required: false
+        default: default
+        type: string
 
 permissions:
   contents: read
@@ -113,7 +118,9 @@ jobs:
       - name: Build, package and test on POSIX
         if: runner.os != 'Windows'
         shell: bash
-        run: nix develop --command bash scripts/release/build.sh "$RELEASE_TARGET"
+        env:
+          RELEASE_NIX_SHELL: ${{ inputs.nix-shell }}
+        run: nix develop ".#$RELEASE_NIX_SHELL" --command bash scripts/release/build.sh "$RELEASE_TARGET"
       - name: Build, package and test on Windows
         if: runner.os == 'Windows'
         shell: pwsh
