@@ -40,7 +40,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'd6465ca05f1d37f9c21db911668b3f116787a378' || 'c5175f777f0799b88da7ebeb1d5990690b07b98d' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '560de369164947741792ac2499a6303128c3986e' || matrix.product == 'io-mon' && 'd6465ca05f1d37f9c21db911668b3f116787a378' || 'b2c65a148f64f0e3e5c24e40a9e8e8bb8e5f3c7f' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -165,22 +165,51 @@ jobs:
   windows-exit:
     if: inputs.product == 'reprobuild' && inputs.checks == 'reprobuild-windows-exit'
     runs-on: [self-hosted, windows, x64, dev-env-ready]
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
-      - name: Diagnose the retained Windows archive after its successful command
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Build the pinned Windows source with its runtime
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@74c02a377baa8d55947c496df8a2da85ad11f4a8
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 0d69de556ce7b8e8585fdcc6e6aaee91de84b1da
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Stage a diagnostic installed bundle from the fresh build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/reprobuild"
+          test "$(git rev-parse HEAD)" = 0d69de556ce7b8e8585fdcc6e6aaee91de84b1da
+          package="$RUNNER_TEMP/repro-source-exit-bundle"
+          mkdir -p "$package/bin" "$package/lib"
+          cp -R build/bin/. "$package/bin/"
+          cp -R build/lib/. "$package/lib/"
+          bash scripts/release/stage_release_sources.sh "$package"
+          bash scripts/release/check_release_source_closure.sh "$package"
+      - name: Diagnose command exit from the fresh installed bundle
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $repo = Join-Path (Split-Path $env:RUNNER_WORKSPACE -Parent) 'reprobuild/reprobuild'
-          $expected = 'e8804eb367f979c810cc440b901a9506f23b9ae5'
+          $repo = Join-Path $env:GITHUB_WORKSPACE 'reprobuild'
+          $expected = '0d69de556ce7b8e8585fdcc6e6aaee91de84b1da'
           $actual = (& git -C $repo rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
-            throw "Retained checkout changed: expected $expected, got $actual"
+            throw "Source checkout changed: expected $expected, got $actual"
           }
-          $package = Join-Path $repo 'reprobuild-0.2.2-windows-x86_64'
+          $package = Join-Path $env:RUNNER_TEMP 'repro-source-exit-bundle'
           $binary = Join-Path $package 'bin/reprobuild.exe'
-          if (-not (Test-Path -LiteralPath $binary)) { throw "Missing retained archive: $binary" }
-          Write-Host "Retained source: $actual"
+          if (-not (Test-Path -LiteralPath $binary)) { throw "Missing diagnostic bundle: $binary" }
+          Write-Host "Diagnostic bundle built from: $actual"
           Get-FileHash -Algorithm SHA256 $binary | Format-List
           $evidence = Join-Path $env:RUNNER_TEMP 'repro-exit-evidence'
           New-Item -ItemType Directory -Force $evidence | Out-Null
@@ -226,7 +255,7 @@ jobs:
             # Stop only the diagnostic shell. Shared daemons are evidence and
             # may have other clients; this diagnostic does not restart them.
             Stop-Process -Id $process.Id -Force
-            throw 'The retained-archive smoke did not exit within five minutes; inspect command-exit.log and process snapshots'
+            throw 'The source-bundle smoke did not exit within five minutes; inspect command-exit.log and process snapshots'
           }
           if ($process.ExitCode -ne 0) { throw "Smoke exited $($process.ExitCode)" }
       - name: Preserve Windows exit evidence
