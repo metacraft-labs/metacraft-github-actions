@@ -5,7 +5,9 @@ set -euo pipefail
 docker info >/dev/null
 product="$($RELEASE_NODE -p 'require("./.github/release.json").product')"
 name="$product-$RELEASE_VERSION-$RELEASE_TARGET"
-work="$(mktemp -d)"
+# Persistent NixOS runners can have a private /tmp namespace that the Docker
+# daemon does not share. Bind a workspace directory visible to both processes.
+work="$(mktemp -d "$PWD/build/release-portability.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/archives" "$work/checks" "$work/packages"
 tar -xzf "dist/$name.tar.gz" -C "$work/archives"
@@ -30,6 +32,8 @@ for image in "${images[@]}"; do
   docker run --rm --network bridge -v "$work:/payload:ro" \
     -e PRODUCT="$product" -e ARCHIVE_NAME="$name" -e TARGET="$RELEASE_TARGET" \
     "$image" sh -eu -c '
+      test -s /payload/node
+      test -d /payload/archives
       if command -v apt-get >/dev/null; then
         apt-get update -qq
         apt-get install -y --no-install-recommends libstdc++6
