@@ -22,7 +22,7 @@ $results = @()
 try {
     [IO.File]::WriteAllText($recipe, $changed)
     git diff -- repro.nim | Set-Content "$evidence/diagnostic-subset.patch"
-    for ($round = 1; $round -le 3; $round++) {
+    for ($round = 1; $round -le 1; $round++) {
         $report = "$evidence/graph-$round.json"
         & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph-$round.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$report"
         $code = $LASTEXITCODE
@@ -51,13 +51,17 @@ try {
         if (-not (Test-Path $binary)) { throw "Missing real fixture $binary" }
         $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash
         $bashPath = $binary.Replace('\','/')
-        foreach ($mode in @('native','timeout','shell','shell-timeout')) {
+        foreach ($mode in @('native','timeout','shell','shell-timeout','monitor-native','monitor-timeout','monitor-shell','monitor-shell-timeout')) {
             $log = "$evidence/$name-$mode.log"
             switch ($mode) {
                 native { & $binary *> $log }
                 timeout { & $timeout --kill-after=10 600 $binary *> $log }
                 shell { & $shell -c "'$bashPath' </dev/null" *> $log }
                 shell-timeout { & $shell -c "timeout --kill-after=10 600 '$bashPath' </dev/null" *> $log }
+                monitor-native { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $binary }
+                monitor-timeout { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $timeout --kill-after=10 600 $binary }
+                monitor-shell { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $shell -c "'$bashPath' </dev/null" }
+                monitor-shell-timeout { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $shell -c "timeout --kill-after=10 600 '$bashPath' </dev/null" }
             }
             $code = $LASTEXITCODE
             if ((Get-FileHash -Algorithm SHA256 $binary).Hash -ne $hash) { throw 'Fixture bytes changed during control' }
