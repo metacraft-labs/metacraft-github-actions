@@ -34,13 +34,14 @@ on:
           - io-mon-windows-loader
           - runquota-windows-active-builds
           - m3-worker-foreground
+          - m3-runquota-checkout-repair
 
 permissions:
   contents: read
 
 jobs:
   m3-runner-state:
-    if: startsWith(inputs.checks, 'm3-')
+    if: inputs.checks == 'm3-runner-state' || inputs.checks == 'm3-worker-foreground'
     name: Read-only persistent macOS worker diagnostics
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 5
@@ -69,6 +70,19 @@ jobs:
           test "$RUNNER_NAME" = m3-mcl-001
           echo "Worker handshake succeeded on $RUNNER_NAME"
           /usr/bin/uptime
+
+  m3-runquota-checkout-repair:
+    if: inputs.checks == 'm3-runquota-checkout-repair'
+    name: Restore removable modes on the retained RunQuota compiler fixture
+    runs-on: [self-hosted, macos, arm64, nix-darwin]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Repair the exact scratch tree from failed job 109314731119
+        shell: bash
+        run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
     if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
