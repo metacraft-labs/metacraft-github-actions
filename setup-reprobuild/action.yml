@@ -329,6 +329,18 @@ runs:
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
             echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
+            # Monitored launches on macOS cannot use SIP-protected /bin shells.
+            # Keep its rooted Bash available in subsequent steps.
+            bootstrap_bash="$(command -v bash)"
+            test -x "${bootstrap_bash}"
+            if [ "$(uname -s)" = Darwin ]; then
+              case "${bootstrap_bash}" in
+                /nix/store/*/bin/bash) ;;
+                *) echo "Source bootstrap requires Nix Bash on macOS" >&2; exit 1 ;;
+              esac
+            fi
+            echo "${bootstrap_bash%/*}" >> "${GITHUB_PATH}"
+            echo "REPRO_FOREIGN_ENV_BASH=${bootstrap_bash}" >> "${GITHUB_ENV}"
             # The source shell already provides its pinned RunQuota package.
             # Later repro commands run outside that shell and still need the
             # daemon for lease admission, including when building RunQuota itself.
