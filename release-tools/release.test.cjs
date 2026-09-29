@@ -135,3 +135,27 @@ test('the dedicated release lane accepts only Linux x64 and its exact scale-set 
   target.id = 'linux-x86_64'; target.runner = 'eph-linux-x64-release-typo'; write();
   assert.throws(() => plan(root), /self-hosted runner required/);
 });
+
+test('Windows ARM64 hosted migration is version-scoped and drives MSI verification', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const target = {id: 'windows-aarch64', runner: 'windows-11-arm', assets: ['example.msi']};
+  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.runnerMigration = {version: '0.1.0', owner: 'zah',
+    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-29-windows-arm64-release-runner-migration.md'};
+  write();
+  assert.equal(plan(root).msiRunner, 'windows-11-arm');
+  assert.equal(plan(root).hasMsi, true);
+  target.id = 'windows-x86_64'; write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.id = 'windows-aarch64';
+  target.runnerMigration.version = '0.0.9'; write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  delete target.runnerMigration;
+  target.runner = ['self-hosted', 'windows', 'arm64']; write();
+  assert.deepEqual(plan(root).msiRunner, target.runner);
+});

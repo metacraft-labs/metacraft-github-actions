@@ -35,7 +35,8 @@ function plan(root = process.cwd()) {
     const legacyArmRunner = t.id === 'linux-aarch64' && t.runner === 'eph-linux-arm64' &&
       typeof t.runnerReason === 'string' && t.runnerReason.trim().length > 0;
     const migration = t.runnerMigration;
-    const hostedArmRunner = t.id === 'linux-aarch64' && t.runner === 'ubuntu-24.04-arm' &&
+    const hostedArmRunner = ((t.id === 'linux-aarch64' && t.runner === 'ubuntu-24.04-arm') ||
+      (t.id === 'windows-aarch64' && t.runner === 'windows-11-arm')) &&
       migration?.version === version && typeof migration.owner === 'string' &&
       migration.owner.trim().length > 0 && typeof migration.followup === 'string' &&
       migration.followup.startsWith('https://github.com/metacraft-labs/metacraft-specs/');
@@ -51,7 +52,9 @@ function plan(root = process.cwd()) {
   assert(new Set(matrix.map(t => t.id)).size === matrix.length, 'duplicate target');
   assert(new Set(expected).size === expected.length, 'duplicate asset');
   const hasMsi = expected.some(a => a.endsWith('.msi'));
-  return {product: spec.product, version, matrix, expected, hasMsi, unsignedRelease};
+  const msiRunner = matrix.find(t => t.id === "windows-aarch64")?.runner ||
+    ["self-hosted", "windows", "arm64"];
+  return {product: spec.product, version, matrix, expected, hasMsi, unsignedRelease, msiRunner};
 }
 
 function verifyDirectory(dir, expected, sidecars = true) {
@@ -105,6 +108,7 @@ async function githubPlan({github, context, core}) {
   core.setOutput('version', p.version);
   core.setOutput('expected', JSON.stringify(p.expected));
   core.setOutput('has-msi', String(p.hasMsi));
+  core.setOutput('msi-runner', JSON.stringify(p.msiRunner));
   core.setOutput('unsigned-release', String(p.unsignedRelease));
   core.exportVariable('RELEASE_NODE', process.execPath);
 }
