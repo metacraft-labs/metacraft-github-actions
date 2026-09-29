@@ -30,6 +30,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       expected: ${{ steps.plan.outputs.expected }}
       has-msi: ${{ steps.plan.outputs.has-msi }}
+      msi-runner: ${{ steps.plan.outputs.msi-runner }}
       unsigned-release: ${{ steps.plan.outputs.unsigned-release }}
     steps:
       - uses: actions/checkout@v4
@@ -150,10 +151,9 @@ jobs:
   verify-msi:
     needs: [plan, build]
     if: needs.plan.outputs.has-msi == 'true'
-    # The ephemeral ARM64 guest has working Windows Installer access. The
-    # shared x64 service runners cannot execute ICE custom actions. Native
-    # executable checks remain in each architecture's build job above.
-    runs-on: [self-hosted, windows, arm64]
+    # Verify both installers on the declared native ARM64 target. The planner
+    # enforces any version-scoped hosted migration; all MSI gates stay intact.
+    runs-on: ${{ fromJSON(needs.plan.outputs.msi-runner) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
