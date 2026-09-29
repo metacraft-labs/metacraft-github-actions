@@ -86,7 +86,7 @@ echo "all real workers joined"
         $bashPath = $binary.Replace('\','/')
         foreach ($mode in @('native','monitor-native','monitor-shell-timeout')) {
             $log = "$evidence/$name-$mode.log"
-            $argv = switch ($mode) {
+            [string[]]$argv = switch ($mode) {
                 native { @($binary) }
                 monitor-native { @((Get-Command repro).Source, 'internal','io','monitor','--depfile',"$evidence/$name-$mode.iomon",'--events','jsonl','--event-stream',"$evidence/$name-$mode.events.jsonl",'--',$binary) }
                 monitor-shell-timeout { @((Get-Command repro).Source,'internal','io','monitor','--depfile',"$evidence/$name-$mode.iomon",'--events','jsonl','--event-stream',"$evidence/$name-$mode.events.jsonl",'--',$shell,'-c',"timeout --kill-after=10 600 '$bashPath' </dev/null") }
