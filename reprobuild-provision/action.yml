@@ -55,6 +55,10 @@ inputs:
     description: Git ref of the RunQuota source used to build Reprobuild and its bootstrap daemon.
     required: false
     default: "dev"
+  io-mon-ref:
+    description: io-mon source ref for the Windows Reprobuild monitor bootstrap.
+    required: false
+    default: "dev"
   sibling-owner:
     description: >
       The GitHub owner these siblings are cloned from, and the owner the CI
@@ -79,5 +83,6 @@ runs:
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLING_OWNER: ${{ inputs.sibling-owner }}
         RUNQUOTA_REF: ${{ inputs.runquota-ref }}
+        IO_MON_REF: ${{ inputs.io-mon-ref }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
       run: bash "${GITHUB_ACTION_PATH}/provision-reprobuild-siblings.sh"
