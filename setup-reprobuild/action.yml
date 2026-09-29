@@ -329,6 +329,16 @@ runs:
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
             echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
+            # Provider compilation runs before the consumer can realize tools.
+            # Preserve the source shell compiler and its SDK/runtime closure;
+            # ambient /usr/bin/cc is not the toolchain that built this CLI.
+            bootstrap_cc="$(command -v "${CC:-cc}")"
+            test -x "${bootstrap_cc}"
+            case "${bootstrap_cc}" in
+              /nix/store/*/bin/*) ;;
+              *) echo "Source bootstrap requires a Nix C compiler" >&2; exit 1 ;;
+            esac
+            echo "REPRO_BOOTSTRAP_CC=${bootstrap_cc}" >> "${GITHUB_ENV}"
             # Monitored launches on macOS cannot use SIP-protected /bin shells.
             # Keep its rooted Bash available in subsequent steps.
             bootstrap_bash="$(command -v bash)"
