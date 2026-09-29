@@ -5,6 +5,12 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $evidence = Join-Path $PWD 'build/windows-exit-status'
 New-Item -ItemType Directory -Force $evidence | Out-Null
+$monitorRoot = Split-Path $env:IO_MON_SRC
+$bootstrapEvidence = @{ioMonSource=(& git -C $monitorRoot rev-parse HEAD).Trim(); repro=(Get-Command repro).Source}
+if ($env:STACKABLE_HOOKS_SRC) {
+    $bootstrapEvidence.hooksSource = (& git -C (Split-Path $env:STACKABLE_HOOKS_SRC) rev-parse HEAD).Trim()
+}
+$bootstrapEvidence | ConvertTo-Json | Set-Content "$evidence/bootstrap.json"
 $recipe = Join-Path $PWD 'repro.nim'
 $original = [IO.File]::ReadAllText($recipe)
 $filter = @'
