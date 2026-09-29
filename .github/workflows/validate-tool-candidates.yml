@@ -104,7 +104,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && '9b7d67a552732146b408f679b15d7f05c6ef81b7' || '529f40c997f068af496c79d046676bd0971de532' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && 'b6f196ae4c3df795ad295a5f13e6123e31a4704f' || '529f40c997f068af496c79d046676bd0971de532' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -277,7 +277,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 718598e04b7434fcfabf3981c51b3df9603fcb0d
+          ref: ac18bcf202fcd4d9a5e616591f60b48cc40a58e7
           persist-credentials: false
       - uses: actions/checkout@v4
         with:

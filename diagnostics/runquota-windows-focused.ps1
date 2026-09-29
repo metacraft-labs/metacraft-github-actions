@@ -30,7 +30,8 @@ switch("clang.linkerexe", getEnv("RELEASE_CC"))
     $tests = @(
         'tests/integration/t_m5_process_exec_bench_contract.nim',
         'tests/integration/t_completion_report_does_not_wait_on_the_store.nim',
-        'tests/integration/t_connection_failure_does_not_stop_the_daemon.nim'
+        'tests/integration/t_connection_failure_does_not_stop_the_daemon.nim',
+        'tests/unit/t_observation_store_host_profile.nim'
     )
     $results = @()
     foreach ($test in $tests) {
@@ -55,6 +56,9 @@ switch("clang.linkerexe", getEnv("RELEASE_CC"))
     $results += @{name='t_m5_process_exec_bench_contract'; mode='portable-git'; exitCode=$LASTEXITCODE}
     $results | ConvertTo-Json | Set-Content "$evidence/results.json"
     Get-Content "$evidence/results.json"
+    if (@($results | Where-Object { $_.exitCode -ne 0 }).Count) {
+        throw 'Native validation failed; see results.json'
+    }
 } finally {
     [IO.File]::WriteAllText((Join-Path $PWD 'config.nims'), $originalConfig)
 }
