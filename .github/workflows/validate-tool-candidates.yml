@@ -25,6 +25,7 @@ on:
           - io-mon-propagation
           - io-mon-linux-predicate
           - io-mon-linux-repro
+          - io-mon-linux-source-pair
           - runquota-macos-authority
           - runquota-macos-capacity
           - reprobuild-windows-exit
@@ -98,7 +99,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '7d0d135bf075e43f0ed5eaf56563b5c73c8dd450' || '822c3c5e4af00d991841b01e6b8a756d9be2ec04' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '31b7f724993faf6f24ae955a6dfd4000cb53aff2' || '822c3c5e4af00d991841b01e6b8a756d9be2ec04' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,7 +113,7 @@ jobs:
           CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
           case "$CHECKS:$PRODUCT" in
-            complete:*|io-mon-propagation:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
+            complete:*|io-mon-propagation:io-mon|io-mon-linux-source-pair:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
             *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
           esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
@@ -134,6 +135,34 @@ jobs:
           set -euo pipefail
           mkdir -p test-logs
           nix develop --profile "$RUNNER_TEMP/tool-test-shell" --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+      - name: Compare matching and mismatched Linux shared-memory sources
+        if: inputs.checks == 'io-mon-linux-source-pair'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs build/source-pair
+          current=$(nix eval --impure --raw --expr '(builtins.fetchTree { type = "github"; owner = "metacraft-labs"; repo = "nim-shm-gset"; rev = "c646982b354cb5b1fa8734f94b951a660419d75c"; narHash = "sha256-nO7XSWxBWrLgL8d9q1zhTcGMMjGokZKjYtX9byb9/Vk="; }).outPath')
+          old=$(nix eval --impure --raw --expr '(builtins.fetchTree { type = "github"; owner = "metacraft-labs"; repo = "nim-shm-gset"; rev = "cf0adf2f39647f5b203b2ab694414a3c50e93951"; }).outPath')
+          export PAIR_CURRENT="$current/src" PAIR_OLD="$old/src"
+          cat > "$RUNNER_TEMP/io-mon-source-pair.sh" <<'BASH'
+          set -euo pipefail
+          for stem in test_io_mon_host_session_scope test_io_mon_evidence_scope_older_shim; do
+            if [[ "$stem" == test_io_mon_host_session_scope ]]; then group=posix; else group=linux; fi
+            binary="build/source-pair/$stem"
+            SHM_GSET_SRC="$PAIR_CURRENT" nim c --threads:on --hints:off               --nimcache:"build/source-pair/cache-$stem" --out:"$binary" "tests/$group/$stem.nim"
+            env -u LD_PRELOAD -u REPRO_MONITOR_SHIM_LIB -u REPRO_MONITOR_SESSION               SHM_GSET_SRC="$PAIR_CURRENT" timeout --foreground 300 "$binary" > "test-logs/$stem-matched.log" 2>&1
+            cat "test-logs/$stem-matched.log"
+            code=0
+            env -u LD_PRELOAD -u REPRO_MONITOR_SHIM_LIB -u REPRO_MONITOR_SESSION               SHM_GSET_SRC="$PAIR_OLD" timeout --foreground 300 "$binary" > "test-logs/$stem-mismatched.log" 2>&1 || code=$?
+            if [[ "$code" == 0 || "$code" == 124 ]]; then
+              cat "test-logs/$stem-mismatched.log"
+              echo "The layout mismatch control did not produce the expected assertion failure: $code"
+              exit 1
+            fi
+            grep -F '[FAILED]' "test-logs/$stem-mismatched.log"
+          done
+          BASH
+          nix develop --command bash "$RUNNER_TEMP/io-mon-source-pair.sh" 2>&1 | tee test-logs/source-pair.log
       - name: Diagnose Linux descendant loss
         if: inputs.checks == 'io-mon-propagation'
         shell: bash
