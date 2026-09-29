@@ -41,6 +41,7 @@ on:
           - runquota-windows-deadline-graph
           - runquota-linux-process-heap
           - runquota-linux-heap-backtrace
+          - runquota-linux-heap-serialization
           - runquota-windows-arm-children
           - runquota-macos-telemetry
           - io-mon-linux-predicate
@@ -1642,7 +1643,7 @@ jobs:
           if-no-files-found: warn
 
   runquota-linux-heap-backtrace:
-    if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-heap-backtrace'
+    if: inputs.product == 'runquota' && (inputs.checks == 'runquota-linux-heap-backtrace' || inputs.checks == 'runquota-linux-heap-serialization')
     runs-on: ubuntu-24.04
     timeout-minutes: 65
     permissions:
@@ -1685,6 +1686,7 @@ jobs:
         shell: bash
         env:
           HEAP_STACK_ONLY: "1"
+          HEAP_SERIALIZE_ONLY: ${{ inputs.checks == 'runquota-linux-heap-serialization' && '1' || '' }}
         run: nix develop --profile "$RUNNER_TEMP/runquota-heap-shell" --command python3 .diagnostic-tools/diagnostics/runquota-linux-heap-backtrace.py
       - name: Preserve runtime comparison and debugger evidence
         if: always()

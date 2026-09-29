@@ -52,6 +52,42 @@ run('restore-runtime', ['nix', 'copy', '--from', 'https://cache.nixos.org',
 run('fixture-loader', ['ldd', str(binary)], required=True)
 run('apps-build', ['bash', 'scripts/build_apps.sh'], required=True)
 variants = {'original': monitor / 'build/lib/librepro_monitor_shim.so'}
+if os.environ.get('HEAP_SERIALIZE_ONLY'):
+    # Diagnostic-only source comparison: protect the process-local shard view
+    # while preserving the real shared-memory protocol and compiler settings.
+    # Production needs an explicit fork lifecycle and its own regression.
+    source = monitor / 'src/io_mon/shim/linux_preload.nim'
+    before = source.read_text()
+    old = '    appendFragmentRecord(fragmentDir, stamped)'
+    assert before.count(old) == 1
+    source.write_text(before.replace(old, '''    acquire(recordLock)
+    try:
+      appendFragmentRecord(fragmentDir, stamped)
+    finally:
+      release(recordLock)'''))
+    run('serialization-diff', ['git', 'diff', '--', str(source.relative_to(monitor))], cwd=monitor)
+    output = evidence / 'serialized'
+    environment = dict(os.environ, IO_MON_SHIM_OUT_DIR=str(output),
+                       IO_MON_SHIM_NIMCACHE_DIR=str(evidence / 'serialized-cache'))
+    run('serialized-build', ['nix', 'develop', '--command', 'bash',
+        'scripts/build_shim.sh'], cwd=monitor, env=environment, required=True)
+    variants['serialized'] = output / 'librepro_monitor_shim.so'
+    for repetition in range(1, 9):
+        for mode, shim in variants.items():
+            environment = dict(os.environ)
+            for key in list(environment):
+                if key.startswith('REPRO_MONITOR_') or key == 'LD_PRELOAD':
+                    del environment[key]
+            environment['REPRO_MONITOR_SHIM_LIB'] = str(shim)
+            name = f'{mode}-{repetition}'
+            run(name, [str(cli), 'run', '--depfile',
+                       str(evidence / (name + '.iomon')), '--', str(binary)],
+                env=environment)
+    original = [row for row in results if re.fullmatch(r'original-\d+', row['name'])]
+    repaired = [row for row in results if re.fullmatch(r'serialized-\d+', row['name'])]
+    assert any(row['exitCode'] for row in original), 'Original failure did not reproduce'
+    assert not any(row['exitCode'] for row in repaired), 'Serialization does not repair the failure'
+    raise SystemExit(0)
 runtime_settings = [] if os.environ.get('HEAP_STACK_ONLY') else [('arc', ['--mm:arc']),
                     ('policy', ['--mm:arc', '--stackTrace:off', '--lineTrace:off',
                                 '-d:noSignalHandler'])]
