@@ -160,7 +160,7 @@ test('Windows ARM64 hosted migration is version-scoped and drives MSI verificati
   assert.deepEqual(plan(root).msiRunner, target.runner);
 });
 
-test('runner selection keeps native POSIX alternatives version-scoped and preserves the payload contract', t => {
+test('runner selection keeps native alternatives version-scoped and preserves the payload contract', t => {
   const root = fixture(t);
   fs.mkdirSync(path.join(root, '.github'));
   fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
@@ -171,7 +171,8 @@ test('runner selection keeps native POSIX alternatives version-scoped and preser
       runnerMigration: {...migration}, assets: ['example-linux.tar.gz']},
     {id: 'darwin-aarch64', runner: ['self-hosted', 'macos', 'arm64'], hostedRunner: 'macos-26',
       runnerMigration: {...migration}, assets: ['example-macos.tar.gz']},
-    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], assets: ['example.zip']},
+    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], hostedRunner: 'windows-2025',
+      runnerMigration: {...migration}, assets: ['example.zip']},
   ];
   const spec = {product: 'example', versionFile: 'version.txt', targets};
   const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
@@ -179,7 +180,7 @@ test('runner selection keeps native POSIX alternatives version-scoped and preser
   const fallback = plan(root);
   const hosted = plan(root, true);
   assert.deepEqual(fallback.matrix.map(t => t.runner), targets.map(t => t.runner));
-  assert.deepEqual(hosted.matrix.map(t => t.runner), ['ubuntu-24.04', 'macos-26', targets[2].runner]);
+  assert.deepEqual(hosted.matrix.map(t => t.runner), ['ubuntu-24.04', 'macos-26', 'windows-2025']);
   assert.deepEqual(hosted.expected, fallback.expected);
   assert.deepEqual(hosted.matrix.map(t => t.id), fallback.matrix.map(t => t.id));
   for (const [field, value] of [['version', '0.1.1'], ['owner', ''], ['followup', 'https://example.com/']]) {
@@ -195,6 +196,11 @@ test('runner selection keeps native POSIX alternatives version-scoped and preser
   targets[1].hostedRunner = 'macos-26-xlarge'; write();
   assert.throws(() => plan(root, true), /native standard runner/);
   targets[1].hostedRunner = 'macos-26';
+  for (const runner of ['windows-latest', 'windows-11-arm', 'windows-2025-16core']) {
+    targets[2].hostedRunner = runner; write();
+    assert.throws(() => plan(root, true), /native standard runner/);
+  }
+  targets[2].hostedRunner = 'windows-2025';
   delete targets[0].runnerMigration; write();
   assert.throws(() => plan(root, true), /version-scoped migration/);
 });
