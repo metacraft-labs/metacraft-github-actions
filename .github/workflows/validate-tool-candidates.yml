@@ -295,6 +295,7 @@ jobs:
           name: runquota-windows-toolstore-822c3c5
           path: |
             build/diagnostic-*.json
+            build/diagnostic-fixture.patch
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
@@ -310,7 +311,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: d6c5ab5be8c7c75de7f4171edcd4cdb2bdd4463d
+          ref: 31b7f724993faf6f24ae955a6dfd4000cb53aff2
           persist-credentials: false
       - name: Mint installation token
         id: token
@@ -336,13 +337,13 @@ jobs:
           PR_BASE_SHA: 279a17be71daca6ae4178feb4e6ef1e866a82d2a
           EVENT_BEFORE: ''
         run: |
-          test "$(git rev-parse HEAD)" = d6c5ab5be8c7c75de7f4171edcd4cdb2bdd4463d
+          test "$(git rev-parse HEAD)" = 31b7f724993faf6f24ae955a6dfd4000cb53aff2
           # This dispatch belongs to shared actions; the clone helper needs
           # the identity of the product actually checked out above. Match
           # ordinary PR CI's published dev-base lock (verified in manifests).
           GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/io-mon \
-          GITHUB_SHA=d6c5ab5be8c7c75de7f4171edcd4cdb2bdd4463d \
+          GITHUB_SHA=31b7f724993faf6f24ae955a6dfd4000cb53aff2 \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
           GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
             bash .diagnostic-tools/clone-siblings/clone-siblings.sh
@@ -363,15 +364,40 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
+      - name: Add failure diagnostics without changing fixture assertions
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          path = Path('tests/helpers/host_session_scope.nim')
+          source = path.read_text()
+          needle = '    result.exitCode = monitored.exitCode\n'
+          assert source.count(needle) == 1
+          source = source.replace(needle, needle + '''    for record in monitored.records:
+                if record.kind in {mrEventLoss, mrBackendProfile, mrCapabilityGap}:
+                  echo "session capture metadata: ", record
+          ''')
+          path.write_text(source)
+          path = Path('tests/linux/test_io_mon_evidence_scope_older_shim.nim')
+          source = path.read_text()
+          needle = '      doAssert res.exitCode == 0, tag & ": the fixture failed"\n'
+          assert source.count(needle) == 1
+          source = source.replace(needle, '''      for record in res.depFile.records:
+                  if record.kind in {mrEventLoss, mrBackendProfile, mrCapabilityGap}:
+                    echo tag, " capture metadata: ", record
+          ''' + needle)
+          path.write_text(source)
+          PYCODE
+          git diff -- tests/helpers/host_session_scope.nim tests/linux/test_io_mon_evidence_scope_older_shim.nim > build/diagnostic-fixture.patch
       - name: Execute the complete monitored graph
         run: repro test --daemon=off --tool-provisioning=nix --write-report=build/diagnostic-test.json
       - name: Preserve graph failure evidence before running controls
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: io-mon-linux-graph-d6c5ab5
+          name: io-mon-linux-graph-31b7f72
           path: |
             build/diagnostic-*.json
+            build/diagnostic-fixture.patch
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/
           include-hidden-files: true
@@ -401,9 +427,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: io-mon-linux-repro-d6c5ab5
+          name: io-mon-linux-repro-31b7f72
           path: |
             build/diagnostic-*.json
+            build/diagnostic-fixture.patch
             build/nested-monitor-controls/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/
