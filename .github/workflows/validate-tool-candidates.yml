@@ -26,6 +26,7 @@ on:
           - io-mon-macos-loader
           - gosti-arm-provider
           - io-mon-propagation
+          - io-mon-private-linux-fixtures
           - io-mon-linux-predicate
           - io-mon-linux-repro
           - io-mon-linux-source-pair
@@ -95,7 +96,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -269,6 +270,55 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  io-mon-private-linux-fixtures:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-private-linux-fixtures'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 0a0b592eb8ed11c3dcae8567b900e9bf6fa51650
+          fetch-depth: 0
+          path: io-mon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 72f578249e9d8bbca8e3705c8a41ed5085c05bf9
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-queue
+          ref: 5a8e43b52fa202859658692c9f8432967f3971ea
+          path: nim-shm-queue
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-gset
+          ref: cf0adf2f39647f5b203b2ab694414a3c50e93951
+          path: nim-shm-gset
+          persist-credentials: false
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify private loaders and shared-library negative control
+        working-directory: io-mon
+        run: nix develop --command python3 ../tooling/diagnostics/io-mon-private-linux-fixtures.py
+      - name: Preserve fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-private-linux-fixtures
+          path: io-mon/build/diagnostics/private-linux-fixtures/*.log
+          retention-days: 14
 
   runquota-capture-readiness:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-capture-readiness'
