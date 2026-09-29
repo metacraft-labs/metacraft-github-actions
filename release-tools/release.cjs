@@ -44,7 +44,8 @@ function plan(root = process.cwd(), hosted = false) {
       'self-hosted runner required; legacy ARM routing needs a reason and hosted ARM needs a version-scoped migration');
     if (t.hostedRunner !== undefined) {
       const nativeHosted = (t.id === 'linux-x86_64' && t.hostedRunner === 'ubuntu-24.04') ||
-        (t.id === 'darwin-aarch64' && t.hostedRunner === 'macos-26');
+        (t.id === 'darwin-aarch64' && t.hostedRunner === 'macos-26') ||
+        (t.id === 'windows-x86_64' && t.hostedRunner === 'windows-2025');
       assert(nativeHosted && migrationValid,
         'hosted alternative needs a native standard runner and a version-scoped migration');
     }
