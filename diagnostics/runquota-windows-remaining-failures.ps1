@@ -15,7 +15,7 @@ $names = @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention
     't_integration_runquota_memory_pressure_gate', 't_m5_process_exec_bench_contract',
     't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation',
     't_estimate_store_sqlite_streams')
-if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC -eq '1') {
+if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC) {
     $names = @('t_m5_process_exec_bench_contract', 't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation')
 }
 $filter = '    testSources.sort()' + "`n" + '    var focusedSources: seq[string] = @[]' + "`n" +
@@ -57,6 +57,7 @@ if helperMode.len > 0:
   echo "DIAGNOSTIC helper entered mode=", helperMode
   flushFile(stdout)
 '@
+    if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC -eq '1') {
     Edit-Diagnostic 'tests/support/scratch_root.nim' 'import std/os' @'
 import std/[os, monotimes, times]
 include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
@@ -90,6 +91,7 @@ include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
               sleep(50)
           raise originalFailure
 '@
+    }
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
@@ -109,7 +111,7 @@ include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
     }
     # Preserve the graph result and compare the same binaries after compilation
     # and competing fixtures have finished. Every original deadline still applies.
-    if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC -ne '1') {
+    if (-not $env:RUNQUOTA_CLEANUP_DIAGNOSTIC) {
         foreach ($name in @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention_scheduled')) {
             $binary = Join-Path $PWD "build/test-bin/$name.exe"
             $hash = (Get-FileHash $binary).Hash
