@@ -508,7 +508,7 @@ if [ "${#LAYER_ARGS[@]}" -gt 0 ]; then
     if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
       LAYERS_DESC="${LAYERS_DESC} or ${PRIVATE_MANIFESTS_REPO}@${PRIVATE_MANIFESTS_REF}"
     fi
-    lock_unavailable "No workspace lock for ${SELF} (candidates: ${CANDS}). Neither a repo-workspaces locks/<project>/${SELF}/<sha>.xml nor a reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${LAYERS_DESC}. The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook, or legacy 'workspace lock'), and its lock pushed to the manifest repo."
+    lock_unavailable "No workspace lock for ${SELF} (candidates: ${CANDS}). No reprobuild locks/<project>/${SELF}/<sha>.toml exists in ${LAYERS_DESC}. (Legacy repo-workspaces <sha>.xml records are not locks: support was removed on 2026-09-29.) The commit must be published through the workspace tooling ('repro workspace lock' / the reprobuild pre-push hook), and its lock pushed to the manifest repo."
   else
     echo "Resolved workspace-lock commit for ${SELF}: ${LOCK_SHA}"
     # WHEN THE PINS WERE GENERATED, printed beside the pins themselves.
@@ -528,7 +528,7 @@ if [ "${#LAYER_ARGS[@]}" -gt 0 ]; then
     #
     # A failure here is not a failure of the step. The resolver already answered
     # the question that matters (this commit IS locked) before we got here, and
-    # a missing timestamp -- a `.xml` lock, which has no field for one -- must
+    # a missing timestamp -- a lock whose [lock] table has no created_at -- must
     # not take down a clone that would otherwise work.
     LOCK_CREATED_AT=""
     LOCK_CREATED_AT=$("${RESOLVER}" --repo "${SELF}" --print-created-at \

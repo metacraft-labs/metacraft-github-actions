@@ -189,48 +189,34 @@ check "usage: re-anchoring a commit onto itself is refused" "$RC" "2"
 run --repo "codetracer;rm -rf /" --source-sha "$SRC" --target-sha "$DST" --in "$IN"
 check "usage: a repo name outside [0-9A-Za-z._-] is refused" "$RC" "2"
 run --repo codetracer --source-sha "$SRC" --target-sha "$DST" --in "$TMP/lock.json"
-check "usage: a record whose extension is neither .toml nor .xml is refused" "$RC" "2"
+check "usage: a record whose extension is not .toml is refused" "$RC" "2"
 
 # ===========================================================================
-# 4. The legacy repo-workspaces XML layout. Still the majority of what lands in
-#    metacraft-manifests, so it is not an afterthought here either.
+# 4. Legacy repo-workspaces XML records are REFUSED (removed 2026-09-29).
+#    Re-filing a stale XML composition onto each new commit is how a
+#    2026-09-09 sibling set kept reappearing on codetracer-ruby-recorder; the
+#    resolver no longer reads XML, so a re-filed one would only be noise. The
+#    fixture is a well-formed snapshot that the old anchor_xml accepted, so a
+#    tool that still transformed it would exit 0 and write the output.
 # ===========================================================================
-mk_xml() { # <file> <self-revision>
-	{
-		printf '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
-		printf '  <remote name="metacraft-labs" fetch="https://github.com/metacraft-labs"/>\n'
-		printf '  <project name="infra" path="infra" remote="metacraft-labs" revision="%s" upstream="live"/>\n' "$OTHER"
-		printf '  <project name="codetracer" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$2"
-		printf '  <project name="codetracer-nim" path="codetracer-nim" remote="metacraft-labs" revision="%s" upstream="dev"/>\n' "$OTHER"
-		printf '</manifest>\n'
-	} >"$1"
-}
 XIN="$TMP/lock.xml"
 XGOT="$TMP/out.xml"
-mk_xml "$XIN" "$SRC"
+{
+	printf '<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+'
+	printf '  <remote name="metacraft-labs" fetch="https://github.com/metacraft-labs"/>
+'
+	printf '  <project name="codetracer" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>
+' "$SRC"
+	printf '</manifest>
+'
+} >"$XIN"
+rm -f "$XGOT"
 run --repo codetracer --source-sha "$SRC" --target-sha "$DST" --in "$XIN" --out "$XGOT"
-check "xml: re-anchoring a well-formed snapshot succeeds" "$RC" "0"
-XDIFF="$(diff "$XIN" "$XGOT")"
-check "xml: exactly one line differs from the source snapshot" \
-	"$(printf '%s\n' "$XDIFF" | grep -c '^[<>]')" "2"
-contains "xml: the changed line is the repo's own <project> element" "$XDIFF" ">   <project name=\"codetracer\" remote=\"metacraft-labs\" revision=\"$DST\" upstream=\"dev\""
-check "xml: the head SHA is gone" "$(grep -c "$SRC" "$XGOT")" "0"
-check "xml: a sibling whose name EXTENDS the repo name is not touched" \
-	"$(grep -c "name=\"codetracer-nim\" path=\"codetracer-nim\" remote=\"metacraft-labs\" revision=\"$OTHER\"" "$XGOT")" "1"
-
-XIN2="$TMP/wrong.xml"
-mk_xml "$XIN2" "$OTHER"
-run --repo codetracer --source-sha "$SRC" --target-sha "$DST" --in "$XIN2"
-check "xml: a snapshot anchoring the repo at another commit is refused (exit 4)" "$RC" "4"
-# By the right route: the element WAS found and its revision disagreed. Without
-# this the case would also pass if the matcher had simply failed to see the
-# element at all, which is the defect that made this suite red the first time.
-contains "xml: ...because the revision disagreed, not because nothing matched" "$ERR" "at a different commit than --source-sha"
-
-XIN3="$TMP/nomanifest.xml"
-printf '<project name="codetracer" revision="%s"/>\n' "$SRC" >"$XIN3"
-run --repo codetracer --source-sha "$SRC" --target-sha "$DST" --in "$XIN3"
-check "xml: a fragment with no <manifest> element is refused (exit 5)" "$RC" "5"
+check "xml: a well-formed legacy snapshot is refused (exit 2)" "$RC" "2"
+contains "xml: ...and the refusal says XML records are not supported" "$ERR" "XML lock records are not supported"
+check "xml: ...and no re-anchored record is written" "$(test -e "$XGOT" && echo written || echo none)" "none"
 
 # ===========================================================================
 # 5. Against the real thing.

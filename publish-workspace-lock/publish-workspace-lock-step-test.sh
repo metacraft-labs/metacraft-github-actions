@@ -723,23 +723,30 @@ fi
 unset SOURCE_SHA TARGET_SHA
 
 # ===========================================================================
-# 12. AN OBSERVED COMMIT IS NOT CARRIED ONTO.
+# 12. AN OBSERVED COMMIT IS NOT CARRIED ONTO, AND XML IS NEVER CARRIED.
 #
 #     A push from a workspace whose pre-push gate publishes records the target
 #     BEFORE this job runs. A carried record ADDED beside that observation at a
-#     different path does not confirm it -- it competes with it, and the
-#     resolver picks by glob order (every `.xml` before any `.toml`, first
-#     project wins), so a carried legacy `locks/dev/.../<sha>.xml` SHADOWS the
-#     observed `locks/codetracer/.../<sha>.toml`. That is how
-#     codetracer-python-recorder@377e03bb and codetracer-ruby-recorder@8bacef81
-#     came to resolve a 2026-09-09 composition no workspace had observed since.
+#     different path does not confirm it -- it competes with it.
 #
-#     Pinned here: (a) the shadow itself, through the real resolver, so the
-#     premise is measured rather than asserted; (b) the carry adds nothing to an
-#     observed commit and the observation is what resolves; (c) a target whose
-#     only record is a PARTICIPATION record is still unlocked and IS carried;
-#     (d) a same-path disagreement is still the hard immutability failure of
-#     contract 3 -- the guard skips additions, it does not swallow conflicts.
+#     The field case was XML: the resolver used to glob every `.xml` before any
+#     `.toml` and settle on the first project it met, so a carried legacy
+#     `locks/dev/.../<sha>.xml` SHADOWED the observed
+#     `locks/codetracer/.../<sha>.toml`. That is how
+#     codetracer-python-recorder@377e03bb and codetracer-ruby-recorder@8bacef81
+#     came to resolve a 2026-09-09 composition no workspace had observed since,
+#     and this carry is what kept re-filing it. XML lock records were dropped on
+#     2026-09-29: the resolver ignores them and this action neither carries one
+#     nor counts one as a record.
+#
+#     Pinned here: (a) an .xml beside an observed .toml no longer shadows it,
+#     through the real resolver; (b) an XML-only source is NO source -- the
+#     loud "will not invent one" failure, nothing filed; (b2) a source with both
+#     carries only its .toml; (b3) a target whose only record is an .xml is
+#     unrecorded, and is carried onto; (c) a target whose only record is a
+#     PARTICIPATION record is still unlocked and IS carried; (d) a same-path
+#     disagreement is still the hard immutability failure of contract 3 -- the
+#     guard skips additions, it does not swallow conflicts.
 # ===========================================================================
 SIB_OBS="4444444444444444444444444444444444444444"
 xml_body() { # <self-revision>
@@ -772,29 +779,59 @@ resolve_as_recorder() { # <sibling> <sha>
 		--prefer-project codetracer-python-recorder 2>&1)" || RESOLVE_RC=$?
 }
 
-# (a) the premise: with BOTH present for one commit, the resolver answers from
-#     the legacy XML, not from the observation.
+# (a) with an .xml and an observed .toml for one commit, the resolver answers
+#     from the observation. (Before 2026-09-29 it answered from the .xml.)
 mk_manifests plant_legacy_source_and_observed_target
 refresh_checkout
 mkdir -p "$CHECKOUT/locks/dev/codetracer"
 xml_body "$MERGE_SHA" >"$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml"
 resolve_as_recorder nim-agents "$MERGE_SHA"
-check "observed: premise -- a legacy .xml beside an observed .toml shadows it in the resolver" \
-	"$RESOLVE_OUT" "$SIB_A"
+check "observed: a legacy .xml beside an observed .toml no longer shadows it" \
+	"$RESOLVE_OUT" "$SIB_OBS"
 
-# (b) the carry adds nothing, and the observation is what resolves.
+# (b) an XML-only source is no source at all.
 mk_manifests plant_legacy_source_and_observed_target
 BEFORE_TIP="$(remote_tip)"
 run_step
-check "observed: a carry onto an already-recorded commit succeeds" "$RC" "0"
-contains "observed: ...and says why it adds nothing" "$OUT" \
-	"Not adding locks/dev/codetracer/$MERGE_SHA.xml: codetracer@$MERGE_SHA is already recorded"
-check "observed: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
+check "xml: a source recorded only by a legacy .xml fails like an unlocked one" "$RC" "1"
+contains "xml: ...with the no-source diagnostic" "$OUT" "will not invent one"
+contains "xml: ...and says the .xml was seen and not carried" "$OUT" \
+	"Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
+check "xml: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
 refresh_checkout
-check "observed: ...and no legacy record filed beside the observation" \
+check "xml: ...and no legacy record filed under the target" \
 	"$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
+
+# (b2) a source with BOTH an .xml and a .toml: only the .toml is carried.
+plant_legacy_beside_source() {
+	mkdir -p "$MAN_WORK/locks/dev/codetracer"
+	xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
+}
+mk_manifests plant_legacy_beside_source
+run_step
+check "xml: a source with an .xml beside its .toml is carried" "$RC" "0"
+contains "xml: ...the .toml is published" "$OUT" \
+	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+contains "xml: ...the .xml is reported as not carried" "$OUT" \
+	"Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
+refresh_checkout
+check "xml: ...and no .xml is filed under the target" \
+	"$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
+
+# (b3) a target whose only record is an .xml is NOT recorded: the carry adds
+#      the .toml rather than deferring to the .xml.
+plant_legacy_target() {
+	mkdir -p "$MAN_WORK/locks/dev/codetracer"
+	xml_body "$MERGE_SHA" >"$MAN_WORK/locks/dev/codetracer/$MERGE_SHA.xml"
+}
+mk_manifests plant_legacy_target
+run_step
+check "xml: a target recorded only by an .xml is still carried onto" "$RC" "0"
+contains "xml: ...and the lock is published" "$OUT" \
+	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+refresh_checkout
 resolve_as_recorder nim-agents "$MERGE_SHA"
-check "observed: ...so the commit resolves to what was OBSERVED at it" "$RESOLVE_OUT" "$SIB_OBS"
+check "xml: ...and the target resolves from the carried .toml" "$RESOLVE_OUT" "$SIB_A"
 
 # (c) a participation record is not a lock: the commit is still unlocked, and
 #     the carry must still reach it.

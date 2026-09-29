@@ -12,9 +12,10 @@ description: >
       `sibling-strategy` (default `auto`) and reported on one line every run:
       `clone-siblings` (the workspace-PROJECT lock in `metacraft-manifests`,
       via `metacraft-labs/metacraft-github-actions/clone-siblings`, reading the
-      repo's `.github/sibling-repos` or the `siblings` input; both lock layouts
-      are served — reprobuild `<sha>.toml` and legacy repo-workspaces
-      `<sha>.xml`), or `repro-lock` (the consuming repo's own committed
+      repo's `.github/sibling-repos` or the `siblings` input; the lock is
+      reprobuild's `<sha>.toml`, and legacy repo-workspaces `<sha>.xml`
+      records are not read since 2026-09-29), or `repro-lock` (the consuming
+      repo's own committed
       `repro.lock`, via `repro develop --all`);
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
@@ -377,8 +378,8 @@ runs:
     # `.github/sibling-repos` (one repo name per line; '#' comments and
     # blank lines ignored). This step clones each sibling adjacent to the
     # host checkout (`../<name>`) at the revision pinned by the per-commit
-    # workspace lock — reprobuild's `<sha>.toml` or repo-workspaces'
-    # `<sha>.xml`, both accepted — the single approved
+    # workspace lock — reprobuild's `<sha>.toml`; legacy repo-workspaces
+    # `<sha>.xml` records are not read since 2026-09-29 — the single approved
     # source of sibling revisions (see
     # codetracer-specs/Testing/Cross-Repo-CI-Integration.md). The lock is
     # read with the bundled `resolve-sibling-rev.sh`; a missing lock fails

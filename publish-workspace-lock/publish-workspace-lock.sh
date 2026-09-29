@@ -37,8 +37,10 @@ SELF_SLUG="${INPUT_REPO:-${DEFAULT_REPO}}"
 # -----------------------------------------------------------------
 die() { echo "::error::$*"; exit 1; }
 
-# is_lock_record <file> -- exit 0 iff the file is a workspace LOCK, i.e. NOT a
-# routed participation record. Any repo-workspaces `.xml` is a lock. A `.toml`
+# is_lock_record <file.toml> -- exit 0 iff the file is a workspace LOCK, i.e.
+# NOT a routed participation record. Only `.toml` files are ever passed here:
+# legacy repo-workspaces `.xml` records are not locks at all (removed
+# 2026-09-29) and are never globbed by this action. A `.toml`
 # is a participation record -- and so NOT a lock -- exactly when it announces no
 # top-level `schema`, every table in it is `[[repo]]`, and the only repo name it
 # pins is ${SELF_NAME} itself: the semantic test resolve-sibling-rev.sh's
@@ -49,9 +51,6 @@ die() { echo "::error::$*"; exit 1; }
 # other repos, which the resolver treats as a lock and refuses loudly -- is a
 # lock here too.
 is_lock_record() {
-  case "$1" in
-    *.xml) return 0 ;;
-  esac
   local l key val tables=0 repo_tables=0 names=0 foreign=0
   while IFS= read -r l || [ -n "${l}" ]; do
     l="${l%$'\r'}"
@@ -266,15 +265,24 @@ publish_layer() { # <label> <owner/name> <branch> <dir>
   while :; do
     local -a srcs=() dests=()
     local f dest ext stem
-    # `locks/<project>/<repo>/<sha>.<ext>` and the historical flat
-    # `locks/<project>/<repo>-<sha>.<ext>`, both extensions — the same
-    # four shapes resolve-sibling-rev.sh searches, so a record this
-    # action cannot see is a record the resolver cannot read either.
+    # `locks/<project>/<repo>/<sha>.toml` and the historical flat
+    # `locks/<project>/<repo>-<sha>.toml` — the same two shapes
+    # resolve-sibling-rev.sh searches, so a record this action cannot see
+    # is a record the resolver cannot read either.
+    #
+    # NO `.xml`. Legacy repo-workspaces XML records are not locks (removed
+    # 2026-09-29), and this carry is precisely what kept a 2026-09-09 XML
+    # composition alive: it re-filed the source commit's `.xml` under each
+    # new mainline commit, link by link, so the stale set never aged out.
+    # An `.xml` found for the source commit is reported and NOT carried.
+    for f in "${dir}"/locks/*/"${SELF_NAME}"/"${SOURCE_SHA}".xml \
+        "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".xml; do
+      [ -f "${f}" ] || continue
+      echo "Not carrying ${f#${dir}/}: legacy repo-workspaces XML lock records are not supported (removed 2026-09-29) and are never re-filed."
+    done
     for f in \
         "${dir}"/locks/*/"${SELF_NAME}"/"${SOURCE_SHA}".toml \
-        "${dir}"/locks/*/"${SELF_NAME}"/"${SOURCE_SHA}".xml \
-        "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".toml \
-        "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".xml; do
+        "${dir}"/locks/*/"${SELF_NAME}-${SOURCE_SHA}".toml; do
       [ -f "${f}" ] || continue
       ext="${f##*.}"
       stem="${f%.*}"
@@ -301,15 +309,17 @@ publish_layer() { # <label> <owner/name> <branch> <dir>
     # the gate publishes, then pushes -- and that record is an OBSERVATION.
     # Adding a carried record beside it at a DIFFERENT path (another project,
     # or the other format) does not confirm the observation; it competes
-    # with it, and the resolver can pick the carried one: resolve-sibling-rev
-    # globs every `.xml` before any `.toml` and settles on the first project
-    # it meets, so a carried legacy `locks/dev/<repo>/<sha>.xml` SHADOWS an
-    # observed `locks/codetracer/<repo>/<sha>.toml` for the same commit.
+    # with it, and the resolver can pick the carried one: it settles on the
+    # canonical project first and otherwise on the first project it meets,
+    # which need not be the observation's.
     #
     # Measured, not hypothesised: codetracer-python-recorder@377e03bb and
-    # codetracer-ruby-recorder@8bacef81 carry only a legacy `locks/dev/`
-    # record, re-filed link by link from a 2026-09-09 composition, and a
-    # `locks/codetracer/` record published beside either one is not read.
+    # codetracer-ruby-recorder@8bacef81 carried only a legacy `locks/dev/`
+    # XML record, re-filed link by link from a 2026-09-09 composition, and a
+    # `locks/codetracer/` record published beside either one was not read.
+    # (XML records are no longer read, carried or counted at all since
+    # 2026-09-29; the same shadowing can happen between two `.toml` records
+    # in different projects, which is why this guard stays.)
     #
     # So a destination that does not exist yet is NOT ADDED when the target
     # is already recorded in this layer. Destinations that DO exist are still
@@ -320,9 +330,7 @@ publish_layer() { # <label> <owner/name> <branch> <dir>
     local -a observed=()
     for f in \
         "${dir}"/locks/*/"${SELF_NAME}"/"${TARGET_SHA}".toml \
-        "${dir}"/locks/*/"${SELF_NAME}"/"${TARGET_SHA}".xml \
-        "${dir}"/locks/*/"${SELF_NAME}-${TARGET_SHA}".toml \
-        "${dir}"/locks/*/"${SELF_NAME}-${TARGET_SHA}".xml; do
+        "${dir}"/locks/*/"${SELF_NAME}-${TARGET_SHA}".toml; do
       [ -f "${f}" ] || continue
       is_lock_record "${f}" || continue
       observed+=("${f#${dir}/}")
