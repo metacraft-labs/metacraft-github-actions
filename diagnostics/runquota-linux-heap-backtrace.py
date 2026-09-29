@@ -94,20 +94,18 @@ for repetition in range(1, 4):
                 'set environment REPRO_MONITOR_FRAGMENT_DIR=' + str(fragments),
                 'set environment REPRO_MONITOR_OUTPUT=' + str(evidence / (name + '.iomon')),
                 'set environment REPRO_MONITOR_DEP_SHM_DISABLE=1',
-                # Explicitly discard the pending startup trap on resume;
-                # changing its policy to pass also affects that pending signal.
-                # https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signaling.html
-                'starti', 'handle SIGTRAP nostop noprint pass', 'signal 0',
+                'handle SIGTRAP stop print nopass',
+                'source ' + str(root / '.diagnostic-tools/diagnostics/drive-shim-gdb.py'),
                 'thread apply all bt full', 'info sharedlibrary']
     args = [gdb, '--batch']
     for command in commands:
         args.extend(['-ex', command])
     run(name, [*args, '--args', str(binary)])
     transcript = (evidence / (name + '.log')).read_text(errors='replace')
-    if 'SIGABRT' in transcript:
+    if 'received signal SIGABRT' in transcript or 'received signal SIGSEGV' in transcript:
         break
 else:
-    raise SystemExit('No SIGABRT stack was captured; debugger result is inconclusive')
+    raise SystemExit('No crash stack was captured; debugger result is inconclusive')
 
 if any(row['exitCode'] for row in results):
     raise SystemExit('At least one comparison failed; inspect retained evidence')
