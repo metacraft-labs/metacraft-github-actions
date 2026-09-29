@@ -24,6 +24,7 @@ on:
           - complete
           - hosted-macos
           - io-mon-macos-loader
+          - gosti-arm-provider
           - io-mon-propagation
           - io-mon-linux-predicate
           - io-mon-linux-repro
@@ -93,7 +94,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -268,6 +269,53 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  gosti-arm-provider:
+    if: inputs.product == 'gosti' && inputs.checks == 'gosti-arm-provider'
+    # Exact-pin diagnosis for shared source-closure issue; owner zah.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/gosti
+          ref: 94d3b0513e54b4af22bc8ff5e27a4f2781d916bb
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Build the exact selected source bootstrap
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@68033518cb0b508994b7ebb5211158f6d72b6e20
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 90dc43218b00f2a1a7de94c174fb849f21b3a377
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Compare ambient and rooted native compilers
+        shell: bash
+        run: '"$REPROBUILD_BOOTSTRAP_PYTHON" .diagnostic-tools/diagnostics/gosti-arm-provider.py'
+      - name: Preserve provider failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosti-94d3b05-arm-provider
+          path: |
+            build/arm-provider-evidence/
+            .repro/build/*/build-failure-report.json
+            .repro/build/*/build-engine-cache/actions/*.log
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
   runquota-windows-focused:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-focused'
     # Supplemental native diagnosis; owner zah. Ordinary gates remain required.
@@ -300,7 +348,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-focused-718598e
+          name: runquota-windows-focused-ac18bcf
           path: build/windows-focused/
           retention-days: 14
           if-no-files-found: error
