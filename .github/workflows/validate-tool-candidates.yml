@@ -102,7 +102,7 @@ jobs:
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && '2582d9062ed9633fa3eca377a06eca371081c556' || '292e578d57eb85d6037f9e2d3a03f0bcb0489dbb' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && 'a33714c54b5b0c3cdd912e6e9190b7ee5833e372' || '292e578d57eb85d6037f9e2d3a03f0bcb0489dbb' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,7 +124,7 @@ jobs:
           git log -1 --format='%H %s'
           uname -a
           case "$(uname -s)" in
-            Darwin) /usr/sbin/sysctl hw.logicalcpu hw.memsize; df -h / /nix 2>/dev/null || df -h / ;;
+            Darwin) /usr/sbin/sysctl hw.logicalcpu hw.memsize; /usr/bin/csrutil status; df -h / /nix 2>/dev/null || df -h / ;;
             *) getconf _NPROCESSORS_ONLN ;;
           esac
       - name: Setup Nix
