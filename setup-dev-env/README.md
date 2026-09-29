@@ -51,6 +51,16 @@ jobs:
 | `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                                 |
 | `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                               |
 
+### Source-built Reprobuild inputs
+
+`repro-build-pin` chooses the Reprobuild source revision.
+`repro-runquota-pin` chooses its RunQuota source dependency, including the
+Windows bootstrap lease daemon. Both default to `dev`; use published commit
+SHAs to validate a particular source combination. The RunQuota input is also
+available as `runquota-ref` on the standalone `reprobuild-provision` action.
+The consumer project's lock and sibling selection are independent of these
+bootstrap inputs.
+
 ## Which mechanism clones the siblings
 
 There are two, and they answer different questions:

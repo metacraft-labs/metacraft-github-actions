@@ -196,6 +196,10 @@ inputs:
       Set to a SHA for fully reproducible runs.
     required: false
     default: "dev"
+  repro-runquota-pin:
+    description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon.
+    required: false
+    default: "dev"
   repro-publish-key:
     description: >
       ECDSA-P256 signing private key (PEM) for publishing `repro build`
@@ -646,10 +650,11 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2c92c1fb562bce220e7cb0151ea8ce58e306f140
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@66cc54a8ebd31cbc645c1f925f8ab05d970f4acb
       with:
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
+        runquota-ref: ${{ inputs.repro-runquota-pin }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
