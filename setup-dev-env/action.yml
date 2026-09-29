@@ -646,7 +646,7 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@dev
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2c92c1fb562bce220e7cb0151ea8ce58e306f140
       with:
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
