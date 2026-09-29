@@ -1,0 +1,48 @@
+name: Verify optional release dependency scheduling
+
+# Diagnostic only: real GitHub scheduler nodes, no product build or publication.
+# The empty commands isolate dependency semantics from artifact generation.
+on:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths: [.github/workflows/diagnose-optional-release-job.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  optional-msi:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
+  assemble:
+    needs: optional-msi
+    if: always() && needs.optional-msi.result == 'skipped'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
+  original-condition:
+    needs: assemble
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
+  repaired-condition:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
+  verify:
+    needs: [original-condition, repaired-condition]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          ORIGINAL: ${{ needs.original-condition.result }}
+          REPAIRED: ${{ needs.repaired-condition.result }}
+        run: |
+          test "$ORIGINAL" = skipped
+          test "$REPAIRED" = success
