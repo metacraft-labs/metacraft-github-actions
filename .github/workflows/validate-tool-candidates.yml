@@ -38,6 +38,7 @@ on:
           - io-mon-windows-loader
           - runquota-windows-active-builds
           - runquota-windows-repro
+          - runquota-windows-focused
           - runquota-windows-env-case
           - runquota-windows-arm-msi
           - m3-worker-foreground
@@ -92,7 +93,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -266,6 +267,43 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  runquota-windows-focused:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-focused'
+    # Supplemental native diagnosis; owner zah. Ordinary gates remain required.
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 718598e04b7434fcfabf3981c51b3df9603fcb0d
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Install pinned native compiler
+        shell: pwsh
+        env:
+          RELEASE_TARGET: windows-x86_64
+        run: ./.diagnostic-tools/release-tools/setup-windows.ps1
+      - name: Provide the pinned shared-memory dependency
+        shell: pwsh
+        run: ./scripts/provide_shm_lease.ps1 -Destination (Join-Path $env:RUNNER_TEMP 'nim-shm-lease')
+      - name: Diagnose native benchmark, latency and connection cleanup
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-focused.ps1
+      - name: Preserve native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-windows-focused-718598e
+          path: build/windows-focused/
+          retention-days: 14
+          if-no-files-found: error
 
   runquota-windows-env-case:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-env-case'
