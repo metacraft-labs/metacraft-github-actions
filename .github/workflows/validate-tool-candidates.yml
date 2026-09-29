@@ -1683,6 +1683,8 @@ jobs:
       - name: Compare runtime settings and capture the failing stack
         timeout-minutes: 45
         shell: bash
+        env:
+          HEAP_STACK_ONLY: "1"
         run: nix develop --profile "$RUNNER_TEMP/runquota-heap-shell" --command python3 .diagnostic-tools/diagnostics/runquota-linux-heap-backtrace.py
       - name: Preserve runtime comparison and debugger evidence
         if: always()

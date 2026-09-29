@@ -50,9 +50,10 @@ run('restore-runtime', ['nix', 'copy', '--from', 'https://cache.nixos.org',
 run('fixture-loader', ['ldd', str(binary)], required=True)
 run('apps-build', ['bash', 'scripts/build_apps.sh'], required=True)
 variants = {'original': monitor / 'build/lib/librepro_monitor_shim.so'}
-for name, flags in [('arc', ['--mm:arc']),
+runtime_settings = [] if os.environ.get('HEAP_STACK_ONLY') else [('arc', ['--mm:arc']),
                     ('policy', ['--mm:arc', '--stackTrace:off', '--lineTrace:off',
-                                '-d:noSignalHandler'])]:
+                                '-d:noSignalHandler'])]
+for name, flags in runtime_settings:
     output = evidence / name
     environment = dict(os.environ, IO_MON_SHIM_OUT_DIR=str(output),
                        IO_MON_SHIM_NIMCACHE_DIR=str(evidence / (name + '-cache')))
@@ -60,7 +61,7 @@ for name, flags in [('arc', ['--mm:arc']),
         'scripts/build_shim.sh', *flags], cwd=monitor, env=environment, required=True)
     variants[name] = output / 'librepro_monitor_shim.so'
 
-for mode in ['native', *variants]:
+for mode in ([] if os.environ.get('HEAP_STACK_ONLY') else ['native', *variants]):
     for repetition in range(1, 4):
         name = f'{mode}-{repetition}'
         environment = dict(os.environ)
@@ -85,21 +86,27 @@ for repetition in range(1, 4):
     fragments = evidence / (name + '-fragments')
     fragments.mkdir()
     commands = ['set pagination off', 'set confirm off',
+                'set startup-with-shell off',
                 'set follow-fork-mode parent', 'set detach-on-fork on',
-                'handle SIGTRAP nostop noprint pass',
                 'set environment LD_PRELOAD=' + str(variants['original']),
                 'set environment REPRO_MONITOR_SHIM_LIB=' + str(variants['original']),
                 'set environment REPRO_MONITOR_SESSION=' + name,
                 'set environment REPRO_MONITOR_FRAGMENT_DIR=' + str(fragments),
                 'set environment REPRO_MONITOR_OUTPUT=' + str(evidence / (name + '.iomon')),
                 'set environment REPRO_MONITOR_DEP_SHM_DISABLE=1',
-                'run', 'thread apply all bt full', 'info sharedlibrary']
+                # Consume GDB's initial exec trap before passing the shim's
+                # real INT3 traps through to its signal handler.
+                'starti', 'handle SIGTRAP nostop noprint pass', 'continue',
+                'thread apply all bt full', 'info sharedlibrary']
     args = [gdb, '--batch']
     for command in commands:
         args.extend(['-ex', command])
     run(name, [*args, '--args', str(binary)])
-    if 'SIGABRT' in (evidence / (name + '.log')).read_text(errors='replace'):
+    transcript = (evidence / (name + '.log')).read_text(errors='replace')
+    if 'SIGABRT' in transcript:
         break
+else:
+    raise SystemExit('No SIGABRT stack was captured; debugger result is inconclusive')
 
 if any(row['exitCode'] for row in results):
     raise SystemExit('At least one comparison failed; inspect retained evidence')
