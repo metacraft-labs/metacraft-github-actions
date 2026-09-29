@@ -1493,7 +1493,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: e8df8203d27463970cea2152f8313a7c5c49807f
+          ref: 5e71adf033b860c0fdbe13dda4320cf4a580f632
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
