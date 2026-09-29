@@ -93,6 +93,7 @@ GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" 
 # $GITHUB_WORKSPACE arrives backslashed.
 WS="${GITHUB_WORKSPACE//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
+RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
 # commands below to run from. See the long note in `preflight`: inside the
@@ -257,10 +258,10 @@ if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
 	# -----------------------------------------------------------------------
 	check_pins \
 		"${SIBLING_OWNER}/codetracer-native-recorder:stable" \
-		"${SIBLING_OWNER}/runquota:dev"
+		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}"
 
 	clone "${SIBLING_OWNER}/codetracer-native-recorder" stable
-	clone "${SIBLING_OWNER}/runquota" dev
+	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF"
 else
 	# -----------------------------------------------------------------------
 	# Windows: reprobuild's env.ps1 reads sibling repos for source-only Nim deps.
@@ -269,7 +270,7 @@ else
 	# the archived repo-workspaces framework.
 	# -----------------------------------------------------------------------
 	check_pins \
-		"${SIBLING_OWNER}/runquota:dev" \
+		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
 		"${SIBLING_OWNER}/nim-stackable-hooks:dev" \
 		"${SIBLING_OWNER}/io-mon:dev" \
 		"${SIBLING_OWNER}/codetracer:dev" \
@@ -280,7 +281,7 @@ else
 		"${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
 		"${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
 
-	clone "${SIBLING_OWNER}/runquota" dev --submodules
+	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
 	clone "${SIBLING_OWNER}/io-mon" dev --submodules
 	clone "${SIBLING_OWNER}/nim-shm-lease" dev
