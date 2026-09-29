@@ -303,7 +303,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 11548ab8cb4820d9277f453814cebfbbbf9a823d
+          ref: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           persist-credentials: false
       - name: Mint installation token
         id: token
@@ -329,16 +329,19 @@ jobs:
           PR_BASE_SHA: e9f9011a4c5637e6e0ddd50745a924f43c7901e2
           EVENT_BEFORE: ''
         run: |
-          test "$(git rev-parse HEAD)" = 11548ab8cb4820d9277f453814cebfbbbf9a823d
+          test "$(git rev-parse HEAD)" = 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/runquota \
-          GITHUB_SHA=11548ab8cb4820d9277f453814cebfbbbf9a823d \
+          GITHUB_SHA=292e578d57eb85d6037f9e2d3a03f0bcb0489dbb \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
           GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
             bash .diagnostic-tools/clone-siblings/clone-siblings.sh
-      - uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2c92c1fb562bce220e7cb0151ea8ce58e306f140
+      - uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@66cc54a8ebd31cbc645c1f925f8ab05d970f4acb
         with:
+          runquota-ref: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           gh-token: ${{ steps.token.outputs.token }}
+      - name: Record bootstrap input
+        run: git -C runquota rev-parse HEAD
       - name: Build the candidate's selected Reprobuild
         uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@2c92c1fb562bce220e7cb0151ea8ce58e306f140
         with:
@@ -346,8 +349,11 @@ jobs:
           repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
           gh-token: ${{ steps.token.outputs.token }}
       - name: Prove the declared Windows tool-store environment supplies SQLite
+        shell: pwsh
         run: |
-          REPRO_TOOL_PROVISIONING=tarball repro exec -- sqlite3 --version
+          $env:REPRO_TOOL_PROVISIONING = "tarball"
+          repro exec -- sqlite3 --version
+          if ($LASTEXITCODE -ne 0) { throw "SQLite is not available in the declared environment" }
           repro build --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-build.json
       - name: Refresh authentication before the complete test graph
         uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
@@ -356,6 +362,7 @@ jobs:
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
       - name: Execute every test through the Windows tool-store environment
+        shell: pwsh
         run: repro test --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-test.json
       - name: Compare failed binaries and inspect native storage facts
         if: always() && hashFiles('build/diagnostic-test.json') != ''
@@ -365,7 +372,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-toolstore-11548ab
+          name: runquota-windows-toolstore-292e578
           path: |
             build/diagnostic-*.json
             build/diagnostic-fixture.patch

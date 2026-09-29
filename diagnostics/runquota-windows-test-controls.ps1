@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $report = Get-Content build/diagnostic-test.json -Raw | ConvertFrom-Json
 $failed = @($report.actions | Where-Object {
-    $_.id.StartsWith('runquota.test_execute.') -and $_.status -eq 'asFailed'
+    $_.id.StartsWith('runquota.test_execute.') -and $_.status -in @('asFailed', 'asBlocked')
 })
 $evidence = Join-Path $PWD 'build/windows-controls'
 New-Item -ItemType Directory -Force $evidence | Out-Null
@@ -14,6 +14,7 @@ $results = @()
 foreach ($action in $failed) {
     $name = $action.id.Substring('runquota.test_execute.'.Length)
     $binary = Join-Path $PWD "build/test-bin/$name.exe"
+    if (-not (Test-Path $binary)) { continue }
     $before = (Get-FileHash -Algorithm SHA256 $binary).Hash
     foreach ($mode in @('direct', 'timeout')) {
         $log = Join-Path $evidence "$name-$mode.log"
