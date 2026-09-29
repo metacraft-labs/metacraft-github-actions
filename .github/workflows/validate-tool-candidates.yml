@@ -211,7 +211,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 4b2bb3910283bac4d109012411e42ce67f9c969c
+          ref: 179f925e0edaed99c9eaabb589c023fc1155149c
           persist-credentials: false
       - name: Mint installation token
         id: token
@@ -237,13 +237,13 @@ jobs:
           PR_BASE_SHA: 279a17be71daca6ae4178feb4e6ef1e866a82d2a
           EVENT_BEFORE: ''
         run: |
-          test "$(git rev-parse HEAD)" = 4b2bb3910283bac4d109012411e42ce67f9c969c
+          test "$(git rev-parse HEAD)" = 179f925e0edaed99c9eaabb589c023fc1155149c
           # This dispatch belongs to shared actions; the clone helper needs
           # the identity of the product actually checked out above. Match
           # ordinary PR CI's published dev-base lock (verified in manifests).
           GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/io-mon \
-          GITHUB_SHA=4b2bb3910283bac4d109012411e42ce67f9c969c \
+          GITHUB_SHA=179f925e0edaed99c9eaabb589c023fc1155149c \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
           GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
             bash .diagnostic-tools/clone-siblings/clone-siblings.sh
@@ -256,8 +256,8 @@ jobs:
           from-source: true
           repro-build-pin: 90dc43218b00f2a1a7de94c174fb849f21b3a377
           gh-token: ${{ steps.token.outputs.token }}
-      - name: Build with the product's ordinary PATH provisioning
-        run: repro build --daemon=off --tool-provisioning=path --write-report=build/diagnostic-build.json
+      - name: Build with the product's declared Nix provisioning
+        run: repro build --daemon=off --tool-provisioning=nix --write-report=build/diagnostic-build.json
       - name: Refresh credentials before the complete test graph
         uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
         with:
@@ -265,14 +265,34 @@ jobs:
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
       - name: Execute the complete monitored graph
-        run: repro test --daemon=off --tool-provisioning=path --write-report=build/diagnostic-test.json
+        run: repro test --daemon=off --tool-provisioning=nix --write-report=build/diagnostic-test.json
+      - name: Compare the failed nested-monitor programs without an outer shim
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/nested-monitor-controls
+          nix develop --command bash -c '
+            status=0
+            for stem in test_io_mon_host_session_scope test_io_mon_evidence_scope_older_shim test_io_mon_evidence_scope_shim_gate test_io_mon_library_load_closure test_io_mon_linux_fragment_fd_reuse; do
+              binary="build/test-bin/$stem"
+              test -x "$binary" || { echo "Missing compiled control: $binary"; status=1; continue; }
+              env -u LD_PRELOAD -u REPRO_MONITOR_SHIM_LIB -u REPRO_MONITOR_SESSION \
+                "$binary" > "build/nested-monitor-controls/$stem.log" 2>&1
+              code=$?
+              echo "$stem: direct exit=$code"
+              tail -8 "build/nested-monitor-controls/$stem.log"
+              test "$code" = 0 || status=1
+            done
+            exit "$status"
+          '
       - name: Preserve graph reports and every action's output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: io-mon-linux-repro-4b2bb39
+          name: io-mon-linux-repro-179f925
           path: |
             build/diagnostic-*.json
+            build/nested-monitor-controls/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/
           include-hidden-files: true
