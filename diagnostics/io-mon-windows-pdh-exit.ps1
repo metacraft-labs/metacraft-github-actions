@@ -77,6 +77,18 @@ if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
     $env:PATH = "$sqliteRoot;$env:PATH"
     & "$sqliteRoot/sqlite3.exe" --version
     if ($LASTEXITCODE -ne 0) { throw 'SQLite runtime unavailable' }
+    # Reprobuild c14b1e61 uses Nim 2.2.10 for graph test compilation, while
+    # source bootstrap and releases use 2.2.8. Hold the shim fixed and test both.
+    $nimRoot = Join-Path $env:RUNNER_TEMP 'exit-control-nim-2.2.10'
+    New-Item -ItemType Directory -Force $nimRoot | Out-Null
+    $nimArchive = "$nimRoot/nim.zip"
+    Invoke-WebRequest 'https://nim-lang.org/download/nim-2.2.10_x64.zip' -OutFile $nimArchive
+    if ((Get-FileHash $nimArchive -Algorithm SHA256).Hash -ne 'fe0686a9b298e5b13d0a983df37e002a8c6320f8b16cc45a51d15cf4046a109f') { throw 'Nim archive digest mismatch' }
+    Expand-Archive $nimArchive $nimRoot -Force
+    $nimVersions = @(
+        @{version='2.2.8'; executable=$env:RELEASE_NIM},
+        @{version='2.2.10'; executable="$nimRoot/nim-2.2.10/bin/nim.exe"}
+    )
     $sources = @('libs/runquota_observation_store/tests/t_ambient_sample_atomicity.nim', 'tests/integration/t_host_load_reading_invariants.nim')
     $results = @()
     Push-Location '.runquota'
@@ -85,8 +97,12 @@ if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
         # Ordinary buildNimUnittest uses debug mode, threads on and all checks.
         $ReleaseFlags = @($ReleaseFlags | Where-Object { $_ -ne '-d:release' })
         $ReleaseFlags | ConvertTo-Json | Set-Content "$evidence/runquota-compiler.json"
-        foreach ($source in $sources) {
-            $name = [IO.Path]::GetFileNameWithoutExtension($source)
+        foreach ($nimVersion in $nimVersions) {
+          $env:RELEASE_NIM = $nimVersion.executable
+          & $env:RELEASE_NIM --version
+          if ($LASTEXITCODE -ne 0) { throw 'Nim compiler unavailable' }
+          foreach ($source in $sources) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($source) + '-nim-' + $nimVersion.version
             $binary = "$evidence/$name.exe"
             Invoke-ReleaseNim $source $binary
             $hash = (Get-FileHash $binary).Hash
@@ -102,6 +118,7 @@ if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
                 $results += @{name=$name; mode=$mode; exitCode=$capture.exitCode; exitHex=$capture.exitHex; timedOut=$capture.timedOut; sha256=$hash}
                 if ((Get-FileHash $binary).Hash -ne $hash) { throw 'RunQuota fixture changed during comparison' }
             }
+          }
         }
     } finally {
         Pop-Location
