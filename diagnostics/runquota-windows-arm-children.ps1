@@ -27,6 +27,10 @@ try {
     git diff -- repro.nim | Set-Content "$evidence/diagnostic-subset.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/monitored.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/monitored.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
+    # Native comparison needs the same declared SQLite runtime as graph actions.
+    $sqlite = Get-ChildItem -LiteralPath '.repro/build/repro/tool-store/prefixes/sqlite3' -Recurse -File -Filter sqlite3.exe | Select-Object -First 1
+    if (-not $sqlite) { throw 'Declared SQLite runtime is missing' }
+    $env:PATH = "$(Split-Path $sqlite.FullName);$env:PATH"
     foreach ($name in @('t_owner_identity','t_host_state_directory_rules','t_stats_table_publication')) {
         $binary = Join-Path $PWD "build/test-bin/$name.exe"
         $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash

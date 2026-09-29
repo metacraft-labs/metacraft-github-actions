@@ -30,6 +30,7 @@ on:
           - io-mon-windows-just-path
           - io-mon-windows-arm-fixtures
           - io-mon-windows-system-child
+          - io-mon-windows-exit-status
           - runquota-windows-exit-status
           - runquota-windows-arm-children
           - runquota-macos-telemetry
@@ -102,7 +103,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1110,7 +1111,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 8add80468e0e1ba2b08f02df8b4720aab085f967
+          ref: 1d381e5ae17f062f7d9421b01bea4c02c59dda13
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1298,5 +1299,48 @@ jobs:
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+  io-mon-windows-exit-status:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-exit-status'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      RELEASE_TARGET: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 94ac0c1468b64c458755d9b7f5664bdaa149933f
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: 7bc6271c3cb5d1b91d10179a93465050338e477e
+          path: .release-tools
+          persist-credentials: false
+      - name: Install pinned release compiler
+        shell: pwsh
+        run: ./.release-tools/release-tools/setup-windows.ps1
+      - name: Compare original and repaired termination forwarding
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/io-mon-windows-exit-status.ps1
+      - name: Preserve termination evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-windows-exit-status-${{ matrix.runner }}
+          path: |
+            build/windows-termination-status/*.log
+            build/windows-termination-status/*.json
           retention-days: 14
           if-no-files-found: warn
