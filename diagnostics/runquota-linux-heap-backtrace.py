@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+import time
 
 root = Path.cwd()
 evidence = root / 'build/linux-heap-backtrace'
@@ -78,29 +80,64 @@ for mode in ([] if os.environ.get('HEAP_STACK_ONLY') else ['native', *variants])
 
 # GDB stays outside the injected process. Only its inferior receives the shim
 # environment; SIGTRAP is passed through to the real syscall-hook handler.
+clean_environment = dict(os.environ)
+for key in list(clean_environment):
+    if key.startswith('REPRO_MONITOR_') or key == 'LD_PRELOAD':
+        del clean_environment[key]
+clean_environment['REPRO_MONITOR_SHIM_LIB'] = str(variants['original'])
+for transport in ('shm', 'file'):
+    environment = dict(clean_environment)
+    if transport == 'file':
+        environment['REPRO_MONITOR_DEP_SHM_DISABLE'] = '1'
+    for repetition in range(1, 4):
+        name = f'transport-{transport}-{repetition}'
+        run(name, [str(cli), 'run', '--depfile',
+                   str(evidence / (name + '.iomon')), '--', str(binary)],
+            env=environment)
+
 gdb = shutil.which('gdb')
 assert gdb, 'The workflow must provision GDB before collecting a stack'
 run('gdb-version', [gdb, '--version'], required=True)
 for repetition in range(1, 4):
     name = f'gdb-original-{repetition}'
-    fragments = evidence / (name + '-fragments')
-    fragments.mkdir()
+    host_environment = evidence / (name + '-environment.json')
+    host_log = (evidence / (name + '-host.log')).open('w')
+    host = subprocess.Popen([str(cli), 'run', '--depfile',
+                             str(evidence / (name + '-host.iomon')), '--',
+                             sys.executable,
+                             str(root / '.diagnostic-tools/diagnostics/hold-monitor-environment.py'),
+                             str(host_environment)], env=clean_environment,
+                            stdout=host_log, stderr=subprocess.STDOUT)
+    deadline = time.monotonic() + 30
+    while not host_environment.exists() and host.poll() is None:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    assert host_environment.exists(), 'Real monitor host did not become ready'
+    inferior_environment = json.loads(host_environment.read_text())
+    assert inferior_environment.get('REPRO_MONITOR_DEP_SHM'), 'SHM control fell back to files'
     commands = ['set pagination off', 'set confirm off',
                 'set startup-with-shell off',
+                'add-auto-load-safe-path /nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libthread_db.so.1',
                 'set follow-fork-mode parent', 'set detach-on-fork on',
-                'set environment LD_PRELOAD=' + str(variants['original']),
-                'set environment REPRO_MONITOR_SHIM_LIB=' + str(variants['original']),
-                'set environment REPRO_MONITOR_SESSION=' + name,
-                'set environment REPRO_MONITOR_FRAGMENT_DIR=' + str(fragments),
-                'set environment REPRO_MONITOR_OUTPUT=' + str(evidence / (name + '.iomon')),
-                'set environment REPRO_MONITOR_DEP_SHM_DISABLE=1',
+                *['set environment ' + key + '=' + value
+                  for key, value in inferior_environment.items()],
                 'handle SIGTRAP stop print nopass',
                 'source ' + str(root / '.diagnostic-tools/diagnostics/drive-shim-gdb.py'),
                 'thread apply all bt full', 'info sharedlibrary']
     args = [gdb, '--batch']
     for command in commands:
         args.extend(['-ex', command])
-    run(name, [*args, '--args', str(binary)])
+    try:
+        run(name, [*args, '--args', str(binary)], env=clean_environment)
+    finally:
+        host_environment.with_suffix('.stop').touch()
+        try:
+            host.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            host.terminate()
+            host.wait(timeout=10)
+        host_log.close()
     transcript = (evidence / (name + '.log')).read_text(errors='replace')
     if 'received signal SIGABRT' in transcript or 'received signal SIGSEGV' in transcript:
         break
