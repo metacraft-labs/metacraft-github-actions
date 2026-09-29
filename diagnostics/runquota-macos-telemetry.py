@@ -14,7 +14,7 @@ results = []
 
 def run(name, args):
     with (evidence / (name + '.log')).open('w') as out:
-        p = subprocess.run(args, stdout=out, stderr=subprocess.STDOUT, timeout=1800)
+        p = subprocess.run(args, stdout=out, stderr=subprocess.STDOUT, timeout=5400)
     results.append({'name': name, 'exitCode': p.returncode})
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
     print(name, p.returncode, flush=True)
@@ -36,7 +36,11 @@ assert changed != original and 'diagnosticChildren.add' in changed
 try:
     fixture.write_text(changed)
     (evidence / 'child-diagnostics.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(fixture)], text=True))
-    for attempt in range(1, 6):
+    # Run the complete ordinary graph first: focused execution did not
+    # reproduce the readiness failure at 8add804. Keep all graph scheduling.
+    run('diagnostic-complete', ['dev-exec', 'repro', 'test', '--tool-provisioning=nix',
+        '--write-report=' + str(evidence / 'diagnostic-complete.json')])
+    for attempt in range(1, 4):
         name = 'diagnostic-monitored-' + str(attempt)
         run(name, ['repro', 'build', '--daemon=off', '--tool-provisioning=nix',
             '--force-rebuild', '.#test-t_runquota_host_macos_native_process_telemetry',

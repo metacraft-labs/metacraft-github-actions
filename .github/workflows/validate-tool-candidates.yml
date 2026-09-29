@@ -368,7 +368,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/gosti
-          ref: 709311b67006f8ca9d75346a46624805e79333c8
+          ref: 2cf48cae378880aaee67df11b4b741ff82dabcf5
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -406,7 +406,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gosti-709311b-arm-provider
+          name: gosti-2cf48ca-arm-provider
           path: |
             build/arm-provider-evidence/
             .repro/build/*/build-failure-report.json

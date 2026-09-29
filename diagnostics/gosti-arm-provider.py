@@ -27,7 +27,7 @@ def run(name, argv, env):
 
 for attempt in range(1, 4):
     name = 'provider-' + str(attempt)
-    args = ['repro', 'build', '--daemon=off', '--tool-provisioning=nix',
+    args = ['dev-exec', 'repro', 'build', '--tool-provisioning=nix',
             '--write-report=' + str(evidence / (name + '.json'))]
     if attempt > 1:
         args += ['--work-root=' + str(evidence / ('fresh-work-' + str(attempt)))]
