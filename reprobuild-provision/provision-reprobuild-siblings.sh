@@ -273,6 +273,7 @@ else
 		"${SIBLING_OWNER}/nim-stackable-hooks:dev" \
 		"${SIBLING_OWNER}/io-mon:dev" \
 		"${SIBLING_OWNER}/codetracer:dev" \
+		"${SIBLING_OWNER}/nim-shm-lease:dev" \
 		"${SIBLING_OWNER}/nim-shm-queue:dev" \
 		"${SIBLING_OWNER}/nim-shm-gset:dev" \
 		"${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
@@ -282,6 +283,7 @@ else
 	clone "${SIBLING_OWNER}/runquota" dev --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
 	clone "${SIBLING_OWNER}/io-mon" dev --submodules
+	clone "${SIBLING_OWNER}/nim-shm-lease" dev
 	clone "${SIBLING_OWNER}/nim-shm-queue" dev
 	clone "${SIBLING_OWNER}/nim-shm-gset" dev
 	clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
