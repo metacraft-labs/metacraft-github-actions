@@ -94,6 +94,7 @@ GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" 
 WS="${GITHUB_WORKSPACE//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
 RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
+IO_MON_REF="${IO_MON_REF:-dev}"
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
 # commands below to run from. See the long note in `preflight`: inside the
@@ -272,7 +273,7 @@ else
 	check_pins \
 		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
 		"${SIBLING_OWNER}/nim-stackable-hooks:dev" \
-		"${SIBLING_OWNER}/io-mon:dev" \
+		"${SIBLING_OWNER}/io-mon:${IO_MON_REF}" \
 		"${SIBLING_OWNER}/codetracer:dev" \
 		"${SIBLING_OWNER}/nim-shm-lease:dev" \
 		"${SIBLING_OWNER}/nim-shm-queue:dev" \
@@ -283,7 +284,7 @@ else
 
 	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
 	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
-	clone "${SIBLING_OWNER}/io-mon" dev --submodules
+	clone "${SIBLING_OWNER}/io-mon" "$IO_MON_REF" --submodules
 	clone "${SIBLING_OWNER}/nim-shm-lease" dev
 	clone "${SIBLING_OWNER}/nim-shm-queue" dev
 	clone "${SIBLING_OWNER}/nim-shm-gset" dev
