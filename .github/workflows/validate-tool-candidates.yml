@@ -23,6 +23,7 @@ on:
         options:
           - complete
           - hosted-macos
+          - io-mon-macos-loader
           - io-mon-propagation
           - io-mon-linux-predicate
           - io-mon-linux-repro
@@ -95,14 +96,14 @@ jobs:
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
-    runs-on: ${{ (inputs.checks == 'hosted-macos' || inputs.checks == 'runquota-macos-capacity') && 'macos-26' || inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (inputs.checks == 'io-mon-macos-loader' || inputs.checks == 'hosted-macos' || inputs.checks == 'runquota-macos-capacity') && 'macos-26' || inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && 'a33714c54b5b0c3cdd912e6e9190b7ee5833e372' || '529f40c997f068af496c79d046676bd0971de532' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && '9b7d67a552732146b408f679b15d7f05c6ef81b7' || '529f40c997f068af496c79d046676bd0971de532' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,7 +117,7 @@ jobs:
           CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
           case "$CHECKS:$PRODUCT" in
-            complete:*|hosted-macos:*|io-mon-propagation:io-mon|io-mon-linux-source-pair:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
+            complete:*|hosted-macos:*|io-mon-macos-loader:io-mon|io-mon-propagation:io-mon|io-mon-linux-source-pair:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
             *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
           esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
@@ -138,6 +139,20 @@ jobs:
           set -euo pipefail
           mkdir -p test-logs
           nix develop --profile "$RUNNER_TEMP/tool-test-shell" --command just test 2>&1 | tee test-logs/candidate-linux-suite.log
+      - name: Verify native macOS injection with independent loader evidence
+        if: inputs.checks == 'io-mon-macos-loader'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs build
+          cat > "$RUNNER_TEMP/loader-fixtures.sh" <<'BASH'
+          set -euo pipefail
+          for stem in test_io_mon_macos_r5_path_canon test_io_mon_macos_setexec test_io_mon_macos_sip_system_child; do
+            nim c --threads:on --hints:off --out:"build/$stem" "tests/macos/$stem.nim"
+            "build/$stem"
+          done
+          BASH
+          nix develop --profile "$RUNNER_TEMP/tool-test-shell" --command bash "$RUNNER_TEMP/loader-fixtures.sh" 2>&1 | tee test-logs/loader-fixtures.log
       - name: Compare matching and mismatched Linux shared-memory sources
         if: inputs.checks == 'io-mon-linux-source-pair'
         shell: bash
