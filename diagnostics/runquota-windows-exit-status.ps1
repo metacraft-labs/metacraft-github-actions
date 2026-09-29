@@ -19,6 +19,16 @@ $changed = $original.Replace('    testSources.sort()', $filter.TrimEnd())
 $changed = $changed.Replace('actionId = "runquota.test_execute." & name)', 'actionId = "runquota.test_execute." & name, cacheable = false)')
 if ($changed -eq $original -or -not $changed.Contains('cacheable = false')) { throw 'Diagnostic recipe anchor changed' }
 $results = @()
+$started = Get-Date
+$dumpRoot = Join-Path $evidence 'dumps'
+New-Item -ItemType Directory -Force $dumpRoot | Out-Null
+foreach ($image in @('t_ambient_sample_atomicity.exe','t_host_load_reading_invariants.exe','thread-exit-probe.exe')) {
+    $key = "HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\$image"
+    New-Item -Force $key | Out-Null
+    New-ItemProperty $key -Name DumpFolder -Value $dumpRoot -PropertyType ExpandString -Force | Out-Null
+    New-ItemProperty $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty $key -Name DumpCount -Value 1 -PropertyType DWord -Force | Out-Null
+}
 try {
     [IO.File]::WriteAllText($recipe, $changed)
     git diff -- repro.nim | Set-Content "$evidence/diagnostic-subset.patch"
@@ -46,24 +56,39 @@ try {
     $timeout = Tool 'timeout' 'timeout.exe'
     $env:PATH = "$(Split-Path $sqlite);$(Split-Path $timeout);$(Split-Path $shell);$env:PATH"
     @{sqlite=$sqlite; sh=$shell; timeout=$timeout} | ConvertTo-Json | Set-Content "$evidence/tools.json"
-    foreach ($name in @('t_ambient_sample_atomicity', 't_host_load_reading_invariants')) {
+    # Independent real thread lifecycle probe: same native/monitored comparison.
+    $probeSource = Join-Path $evidence 'thread_exit_probe.nim'
+    @'
+# No mocks: real joined threads and temporary filesystem operations.
+import std/[os, strutils]
+proc worker(id: int) {.thread.} =
+  let path = getTempDir() / ("monitor-thread-exit-" & $getCurrentProcessId() & "-" & $id)
+  for i in 0..<20:
+    writeFile(path, "probe " & $i)
+    removeFile(path)
+var threads: array[8, Thread[int]]
+for i in 0..<threads.len: createThread(threads[i], worker, i)
+joinThreads(threads)
+echo "all real workers joined"
+'@ | Set-Content $probeSource
+    & nim c --hints:off --cc:gcc --threads:on -d:release '--out:build/test-bin/thread-exit-probe.exe' $probeSource *> "$evidence/thread-probe-build.log"
+    if ($LASTEXITCODE -ne 0) { throw 'Thread lifecycle probe compile failed' }
+    foreach ($name in @('t_ambient_sample_atomicity', 't_host_load_reading_invariants', 'thread-exit-probe')) {
         $binary = Join-Path $PWD "build/test-bin/$name.exe"
         if (-not (Test-Path $binary)) { throw "Missing real fixture $binary" }
         $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash
         $bashPath = $binary.Replace('\','/')
-        foreach ($mode in @('native','timeout','shell','shell-timeout','monitor-native','monitor-timeout','monitor-shell','monitor-shell-timeout')) {
+        foreach ($mode in @('native','monitor-native','monitor-shell-timeout')) {
             $log = "$evidence/$name-$mode.log"
-            switch ($mode) {
-                native { & $binary *> $log }
-                timeout { & $timeout --kill-after=10 600 $binary *> $log }
-                shell { & $shell -c "'$bashPath' </dev/null" *> $log }
-                shell-timeout { & $shell -c "timeout --kill-after=10 600 '$bashPath' </dev/null" *> $log }
-                monitor-native { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $binary }
-                monitor-timeout { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $timeout --kill-after=10 600 $binary }
-                monitor-shell { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $shell -c "'$bashPath' </dev/null" }
-                monitor-shell-timeout { & bash "$PSScriptRoot/capture-ci-command.sh" $log repro internal io monitor --depfile "$evidence/$name-$mode.iomon" --events jsonl --event-stream "$evidence/$name-$mode.events.jsonl" -- $shell -c "timeout --kill-after=10 600 '$bashPath' </dev/null" }
+            $argv = switch ($mode) {
+                native { @($binary) }
+                monitor-native { @((Get-Command repro).Source, 'internal','io','monitor','--depfile',"$evidence/$name-$mode.iomon",'--events','jsonl','--event-stream',"$evidence/$name-$mode.events.jsonl",'--',$binary) }
+                monitor-shell-timeout { @((Get-Command repro).Source,'internal','io','monitor','--depfile',"$evidence/$name-$mode.iomon",'--events','jsonl','--event-stream',"$evidence/$name-$mode.events.jsonl",'--',$shell,'-c',"timeout --kill-after=10 600 '$bashPath' </dev/null") }
             }
-            $code = $LASTEXITCODE
+            & python "$PSScriptRoot/capture-windows-exit.py" "$evidence/$name-$mode" @argv
+            if ($LASTEXITCODE -ne 0) { throw 'Exit capture failed' }
+            $capture = Get-Content "$evidence/$name-$mode.json" -Raw | ConvertFrom-Json
+            $code = $capture.exitCode
             if ((Get-FileHash -Algorithm SHA256 $binary).Hash -ne $hash) { throw 'Fixture bytes changed during control' }
             $results += @{name=$name; mode=$mode; exitCode=$code; sha256=$hash}
             Write-Host "$name $mode exit=$code sha256=$hash"
@@ -73,6 +98,9 @@ try {
     $results | ConvertTo-Json -Depth 5 | Set-Content "$evidence/results.json"
     if (@($results | Where-Object { $_.exitCode -ne 0 }).Count) { throw 'Some exit-status controls failed; inspect retained evidence' }
 } finally {
+    Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$started; Id=1000,1001} -ErrorAction SilentlyContinue |
+        Where-Object { $_.Message -match 't_ambient_sample_atomicity|t_host_load_reading_invariants|thread-exit-probe|repro' } |
+        Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Depth 4 | Set-Content "$evidence/windows-crash-events.json"
     $results | ConvertTo-Json -Depth 5 | Set-Content "$evidence/results.json"
     [IO.File]::WriteAllText($recipe, $original)
 }
