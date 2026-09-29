@@ -36,6 +36,7 @@ on:
           - io-mon-windows-loader
           - runquota-windows-active-builds
           - runquota-windows-repro
+          - runquota-windows-env-case
           - m3-worker-foreground
           - m3-runquota-checkout-repair
 
@@ -88,7 +89,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary RunQuota macOS measurement-capacity diagnostic; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -246,6 +247,45 @@ jobs:
         with:
           name: candidate-linux-${{ matrix.product }}-${{ env.CANDIDATE_REVISION }}
           path: test-logs/
+          retention-days: 14
+          if-no-files-found: warn
+
+  runquota-windows-env-case:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-env-case'
+    # Native regression control while the existing Windows lane is occupied.
+    # Owner zah; follow-up: RunQuota's Windows child-environment issue.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Install pinned native compiler
+        shell: pwsh
+        env:
+          RELEASE_TARGET: windows-x86_64
+        run: ./.diagnostic-tools/release-tools/setup-windows.ps1
+      - name: Provide the pinned shared-memory dependency
+        shell: pwsh
+        run: ./scripts/provide_shm_lease.ps1 -Destination (Join-Path $env:RUNNER_TEMP 'nim-shm-lease')
+      - name: Prove old failure and fixed child environment
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-env-case.ps1
+      - name: Preserve native regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-windows-env-case-292e578
+          path: build/windows-env-case/
           retention-days: 14
           if-no-files-found: warn
 
