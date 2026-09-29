@@ -29,7 +29,7 @@ $started = Get-Date
 $dumpRoot = Join-Path $evidence 'dumps'
 New-Item -ItemType Directory -Force $dumpRoot | Out-Null
 foreach ($image in @('t_ambient_sample_atomicity.exe','t_host_load_reading_invariants.exe','thread-exit-probe.exe')) {
-    $key = "HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\$image"
+    $key = "HKLM:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\$image"
     New-Item -Force $key | Out-Null
     New-ItemProperty $key -Name DumpFolder -Value $dumpRoot -PropertyType ExpandString -Force | Out-Null
     New-ItemProperty $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
