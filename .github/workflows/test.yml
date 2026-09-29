@@ -68,6 +68,9 @@ jobs:
       - name: no credential persisted into the checkout
         run: bash .github/assert-no-persisted-credential.sh
 
+      - name: RunQuota bootstrap revision with real Git repositories
+        run: python3 reprobuild-provision/test-runquota-ref.py
+
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
