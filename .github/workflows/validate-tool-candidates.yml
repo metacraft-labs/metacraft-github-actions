@@ -32,6 +32,7 @@ on:
           - io-mon-windows-system-child
           - io-mon-windows-exit-status
           - io-mon-windows-pdh-exit
+          - runquota-windows-fast-exit
           - runquota-windows-exit-status
           - runquota-windows-arm-children
           - runquota-macos-telemetry
@@ -104,7 +105,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1347,7 +1348,7 @@ jobs:
           if-no-files-found: warn
 
   io-mon-windows-pdh-exit:
-    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-pdh-exit'
+    if: inputs.checks == 'runquota-windows-fast-exit' || (inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-pdh-exit')
     strategy:
       fail-fast: false
       matrix:
@@ -1358,11 +1359,19 @@ jobs:
     env:
       RELEASE_TARGET: windows-x86_64
       DIAGNOSTIC_CC: ${{ matrix.compiler }}
+      DIAGNOSTIC_RUNQUOTA: ${{ inputs.checks == 'runquota-windows-fast-exit' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
           ref: 347c8dbda4671abf7ebbb155a86c4db464ba0ac7
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: inputs.checks == 'runquota-windows-fast-exit'
+        with:
+          repository: metacraft-labs/runquota
+          ref: 177e2af74e6c79e5815482d428ab49dafc174f5f
+          path: .runquota
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1394,5 +1403,6 @@ jobs:
           path: |
             build/pdh-exit/*.log
             build/pdh-exit/*.json
+            build/pdh-exit/*.exe
           retention-days: 14
           if-no-files-found: warn

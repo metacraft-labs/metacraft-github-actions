@@ -66,3 +66,46 @@ if ($LASTEXITCODE -ne 0) { throw 'Process capture failed' }
 Get-Content "$evidence/probe.log"
 $result = Get-Content "$evidence/probe.json" -Raw | ConvertFrom-Json
 if ($result.timedOut -or $result.exitCode -ne 0) { throw 'PDH exit control failed' }
+if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
+    # Same SQLite release and digest as the production package catalog.
+    $sqliteRoot = Join-Path $env:RUNNER_TEMP 'exit-control-sqlite'
+    New-Item -ItemType Directory -Force $sqliteRoot | Out-Null
+    $archive = "$sqliteRoot/sqlite.zip"
+    Invoke-WebRequest 'https://sqlite.org/2026/sqlite-tools-win-x64-3530400.zip' -OutFile $archive
+    if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'f46ee2475de4cbe287e6e5f7d43c838796b14e7379cd216bdbb28d391429f9fc') { throw 'SQLite archive digest mismatch' }
+    Expand-Archive $archive $sqliteRoot -Force
+    $env:PATH = "$sqliteRoot;$env:PATH"
+    & "$sqliteRoot/sqlite3.exe" --version
+    if ($LASTEXITCODE -ne 0) { throw 'SQLite runtime unavailable' }
+    $sources = @('libs/runquota_observation_store/tests/t_ambient_sample_atomicity.nim', 'tests/integration/t_host_load_reading_invariants.nim')
+    $results = @()
+    Push-Location '.runquota'
+    try {
+        Get-ReleaseDependency 'nim-shm-lease' 'SHM_LEASE_SRC'
+        # Ordinary buildNimUnittest uses debug mode, threads on and all checks.
+        $ReleaseFlags = @($ReleaseFlags | Where-Object { $_ -ne '-d:release' })
+        $ReleaseFlags | ConvertTo-Json | Set-Content "$evidence/runquota-compiler.json"
+        foreach ($source in $sources) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($source)
+            $binary = "$evidence/$name.exe"
+            Invoke-ReleaseNim $source $binary
+            $hash = (Get-FileHash $binary).Hash
+            foreach ($mode in @('native', 'monitored')) {
+                $prefix = "$evidence/$name-$mode"
+                [string[]]$argv = if ($mode -eq 'native') { @($binary) } else {
+                    @("$evidence/cli-fixed.exe", 'run', '--depfile', "$prefix.iomon", '--', $binary)
+                }
+                & python "$PSScriptRoot/capture-windows-exit.py" $prefix @argv
+                if ($LASTEXITCODE -ne 0) { throw 'RunQuota process capture failed' }
+                Get-Content "$prefix.log"
+                $capture = Get-Content "$prefix.json" -Raw | ConvertFrom-Json
+                $results += @{name=$name; mode=$mode; exitCode=$capture.exitCode; exitHex=$capture.exitHex; timedOut=$capture.timedOut; sha256=$hash}
+                if ((Get-FileHash $binary).Hash -ne $hash) { throw 'RunQuota fixture changed during comparison' }
+            }
+        }
+    } finally {
+        Pop-Location
+        $results | ConvertTo-Json -Depth 5 | Set-Content "$evidence/runquota-results.json"
+    }
+    if (@($results | Where-Object { $_.timedOut -or $_.exitCode -ne 0 }).Count) { throw 'RunQuota exit control failed' }
+}
