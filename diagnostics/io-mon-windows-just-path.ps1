@@ -15,12 +15,12 @@ Get-Content "$evidence/source-roots.json"
 $oldRecipe = Join-Path $PWD 'Justfile.before-path-quoting'
 & git show 9529c44cc18c4f86135ec450fd1fbac35d1d6356:Justfile | Set-Content $oldRecipe
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read the old Justfile' }
-& dev-exec just --justfile $oldRecipe --working-directory $PWD build-shim *> "$evidence/old.log"
+& bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/old.log" dev-exec just --justfile $oldRecipe --working-directory $PWD build-shim
 $oldCode = $LASTEXITCODE
 if ($oldCode -eq 0) { throw 'Old Windows backslash-path control unexpectedly passed' }
 Write-Host "Old Windows recipe exit=$oldCode"
 Get-Content "$evidence/old.log" -Tail 10
-& dev-exec just build *> "$evidence/fixed.log"
+& bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/fixed.log" dev-exec just build
 $fixedCode = $LASTEXITCODE
 Write-Host "Repaired Windows recipe exit=$fixedCode"
 Get-Content "$evidence/fixed.log" -Tail 15

@@ -24,7 +24,7 @@ try {
     git diff -- repro.nim | Set-Content "$evidence/diagnostic-subset.patch"
     for ($round = 1; $round -le 3; $round++) {
         $report = "$evidence/graph-$round.json"
-        & repro test --daemon=off --tool-provisioning=tarball "--write-report=$report" *> "$evidence/graph-$round.log"
+        & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph-$round.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$report"
         $code = $LASTEXITCODE
         $results += @{mode='monitored-graph'; round=$round; exitCode=$code}
         Write-Host "Monitored graph round $round exit $code"
