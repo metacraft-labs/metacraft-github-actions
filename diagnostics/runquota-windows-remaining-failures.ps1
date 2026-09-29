@@ -24,7 +24,15 @@ $filter = '    testSources.sort()' + "`n" + '    var focusedSources: seq[string]
     '        focusedSources.add(source)' + "`n" + '    testSources = focusedSources'
 $results = @()
 try {
-    Edit-Diagnostic 'repro.nim' '    testSources.sort()' $filter
+    if (-not $env:RUNQUOTA_DEADLINE_GRAPH) {
+        Edit-Diagnostic 'repro.nim' '    testSources.sort()' $filter
+    } elseif ($env:RUNQUOTA_DEADLINE_GRAPH -eq 'isolated') {
+        Edit-Diagnostic 'repro.nim' '    const measurementTests = [' @'
+    const measurementTests = [
+      "t_e2e_runquota_client_exit_releases_lease",
+      "t_observation_retention_scheduled",
+'@
+    }
     Edit-Diagnostic 'repro.nim' 'actionId = "runquota.test_execute." & name)' 'actionId = "runquota.test_execute." & name, cacheable = false)'
     Edit-Diagnostic 'libs/runquota_persistence/src/runquota_persistence.nim' '  SqliteRun(' @'
   if not captured.ok:
@@ -95,6 +103,7 @@ include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
+    if (-not $env:RUNQUOTA_DEADLINE_GRAPH) {
     # repro exec resolves every declared tool, including the Bash used by nested
     # fixtures. Merely adding SQLite to ambient PATH would compare different inputs.
     $env:REPRO_TOOL_PROVISIONING = 'tarball'
@@ -124,6 +133,7 @@ include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
                 $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
             }
         }
+    }
     }
 } finally {
     $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
