@@ -38,6 +38,7 @@ on:
           - runquota-windows-active-builds
           - runquota-windows-repro
           - runquota-windows-env-case
+          - runquota-windows-arm-msi
           - m3-worker-foreground
           - m3-runquota-checkout-repair
 
@@ -90,7 +91,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -289,6 +290,50 @@ jobs:
           path: build/windows-env-case/
           retention-days: 14
           if-no-files-found: warn
+
+  runquota-windows-arm-msi:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-arm-msi'
+    # Native MSI migration control; owner zah. Original fleet run is retained.
+    # Follow-up: metacraft-specs/infrastructure/gosti-io-mon-runquota-releases.md
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 68a2e491c219af4850b9e18940e633fc00ed9adb
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Fetch the previously built native release packages
+        uses: actions/download-artifact@v4
+        with:
+          repository: metacraft-labs/runquota
+          github-token: ${{ steps.token.outputs.token }}
+          run-id: 36435050729
+          pattern: release-windows-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/github-script@v7
+        with:
+          script: core.exportVariable('RELEASE_NODE', process.execPath)
+      - name: Verify both MSI packages and actual lease execution
+        shell: pwsh
+        run: |
+          if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') {
+            throw 'A native Windows ARM64 host is required'
+          }
+          ./scripts/release/verify-windows.ps1 -Dist dist -Version 0.1.0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runquota-hosted-arm64-msi-control
+          path: test-logs/
 
   runquota-windows-repro:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-repro'
