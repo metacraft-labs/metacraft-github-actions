@@ -271,6 +271,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p build/nested-monitor-controls
+          # shellcheck disable=SC2016 # Expanded by the inner shell.
           nix develop --command bash -c '
             status=0
             for stem in test_io_mon_host_session_scope test_io_mon_evidence_scope_older_shim test_io_mon_evidence_scope_shim_gate test_io_mon_library_load_closure test_io_mon_linux_fragment_fd_reuse; do
