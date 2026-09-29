@@ -67,6 +67,19 @@ Get-Content "$evidence/probe.log"
 $result = Get-Content "$evidence/probe.json" -Raw | ConvertFrom-Json
 if ($result.timedOut -or $result.exitCode -ne 0) { throw 'PDH exit control failed' }
 if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
+    # The failing source bootstrap builds its shim in debug mode. Compare
+    # that actual mode against the release shim using identical test binaries.
+    $releaseShim = $env:REPRO_MONITOR_SHIM_LIB
+    $env:IO_MON_BUILD_MODE = 'debug'
+    $env:IO_MON_SHIM_OUT_DIR = 'build/lib/pdh-debug'
+    $env:IO_MON_SHIM_NIMCACHE_DIR = 'build/nimcache/pdh-shim-debug'
+    $debugFlags = @($ReleaseFlags | Where-Object { $_ -ne '-d:release' })
+    & bash scripts/build_shim.sh @debugFlags *> "$evidence/build-debug-shim.log"
+    if ($LASTEXITCODE -ne 0) { throw 'Debug shim build failed' }
+    $debugShim = Join-Path $PWD 'build/lib/pdh-debug/librepro_monitor_shim.dll'
+    if (-not (Test-Path $debugShim)) { throw 'Debug shim missing' }
+    Copy-Item $releaseShim "$evidence/release-shim.dll"
+    Copy-Item $debugShim "$evidence/debug-shim.dll"
     # Same SQLite release and digest as the production package catalog.
     $sqliteRoot = Join-Path $env:RUNNER_TEMP 'exit-control-sqlite'
     New-Item -ItemType Directory -Force $sqliteRoot | Out-Null
@@ -106,8 +119,9 @@ if ($env:DIAGNOSTIC_RUNQUOTA -eq '1') {
             $binary = "$evidence/$name.exe"
             Invoke-ReleaseNim $source $binary
             $hash = (Get-FileHash $binary).Hash
-            foreach ($mode in @('native', 'monitored')) {
+            foreach ($mode in @('native', 'monitored-release', 'monitored-debug')) {
                 $prefix = "$evidence/$name-$mode"
+                $env:REPRO_MONITOR_SHIM_LIB = if ($mode -eq 'monitored-debug') { $debugShim } else { $releaseShim }
                 [string[]]$argv = if ($mode -eq 'native') { @($binary) } else {
                     @("$evidence/cli-fixed.exe", 'run', '--depfile', "$prefix.iomon", '--', $binary)
                 }

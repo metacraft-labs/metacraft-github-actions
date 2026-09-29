@@ -1404,5 +1404,6 @@ jobs:
             build/pdh-exit/*.log
             build/pdh-exit/*.json
             build/pdh-exit/*.exe
+            build/pdh-exit/*.dll
           retention-days: 14
           if-no-files-found: warn
