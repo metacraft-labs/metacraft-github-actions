@@ -94,9 +94,10 @@ for repetition in range(1, 4):
                 'set environment REPRO_MONITOR_FRAGMENT_DIR=' + str(fragments),
                 'set environment REPRO_MONITOR_OUTPUT=' + str(evidence / (name + '.iomon')),
                 'set environment REPRO_MONITOR_DEP_SHM_DISABLE=1',
-                # Consume GDB's initial exec trap before passing the shim's
-                # real INT3 traps through to its signal handler.
-                'starti', 'handle SIGTRAP nostop noprint pass', 'continue',
+                # Explicitly discard the pending startup trap on resume;
+                # changing its policy to pass also affects that pending signal.
+                # https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signaling.html
+                'starti', 'handle SIGTRAP nostop noprint pass', 'signal 0',
                 'thread apply all bt full', 'info sharedlibrary']
     args = [gdb, '--batch']
     for command in commands:
