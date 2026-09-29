@@ -33,6 +33,18 @@ $env:IO_MON_SHIM_NIMCACHE_DIR = 'build/nimcache/source-original'
 & bash scripts/build_shim.sh *> "$evidence/build-original-shim.log"
 if ($LASTEXITCODE -ne 0) { throw 'Original shim compilation failed' }
 $originalShim = Join-Path $PWD 'build/source-exit/original-shim/librepro_monitor_shim.dll'
+$hookSource = Join-Path $PWD 'src/io_mon/shim/windows_interpose.nim'
+$originalHook = [IO.File]::ReadAllText($hookSource)
+$oldCast = "int32(uint32(ctx.args[1] and 0xFFFFFFFF'u64))"
+if (-not $originalHook.Contains($oldCast)) { throw 'Original NTSTATUS cast anchor changed' }
+try {
+    [IO.File]::WriteAllText($hookSource, $originalHook.Replace($oldCast, "cast[int32](uint32(ctx.args[1] and 0xFFFFFFFF'u64))"))
+    $env:IO_MON_SHIM_OUT_DIR = 'build/source-exit/status-only-shim'
+    $env:IO_MON_SHIM_NIMCACHE_DIR = 'build/nimcache/source-status-only'
+    & bash scripts/build_shim.sh *> "$evidence/build-status-only-shim.log"
+    if ($LASTEXITCODE -ne 0) { throw 'Single-cast repair compilation failed' }
+} finally { [IO.File]::WriteAllText($hookSource, $originalHook) }
+$statusOnlyShim = Join-Path $PWD 'build/source-exit/status-only-shim/librepro_monitor_shim.dll'
 $fixedShim = Join-Path $controls 'debug-shim.dll'
 $cli = Join-Path $controls 'cli-fixed.exe'
 $reference = Get-Content "$controls/runquota-results.json" -Raw | ConvertFrom-Json
@@ -56,9 +68,9 @@ try {
         New-Item -Force $key | Out-Null
         New-ItemProperty $key -Name DumpFolder -Value $dumpRoot -PropertyType ExpandString -Force | Out-Null
         New-ItemProperty $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
-        foreach ($mode in @('native', 'original', 'fixed-1', 'fixed-2', 'fixed-3')) {
+        foreach ($mode in @('native', 'original', 'status-only-1', 'status-only-2', 'status-only-3', 'fixed-1')) {
             $prefix = "$evidence/$name-$mode"
-            $env:REPRO_MONITOR_SHIM_LIB = if ($mode -eq 'original') { $originalShim } else { $fixedShim }
+            $env:REPRO_MONITOR_SHIM_LIB = if ($mode -eq 'original') { $originalShim } elseif ($mode.StartsWith('status-only-')) { $statusOnlyShim } else { $fixedShim }
             [string[]]$argv = if ($mode -eq 'native') { @($binary) } else {
                 @($cli, 'run', '--depfile', "$prefix.iomon", '--', $binary)
             }
