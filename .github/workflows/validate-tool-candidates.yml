@@ -22,6 +22,7 @@ on:
         default: complete
         options:
           - complete
+          - hosted-macos
           - io-mon-propagation
           - io-mon-linux-predicate
           - io-mon-linux-repro
@@ -91,16 +92,16 @@ jobs:
   test:
     if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
-    # Temporary RunQuota macOS measurement-capacity diagnostic; owner zah.
+    # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
-    runs-on: ${{ inputs.checks == 'runquota-macos-capacity' && 'macos-26-xlarge' || inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (inputs.checks == 'hosted-macos' || inputs.checks == 'runquota-macos-capacity') && 'macos-26' || inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '31b7f724993faf6f24ae955a6dfd4000cb53aff2' || '822c3c5e4af00d991841b01e6b8a756d9be2ec04' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '4c2d81749a3a49cee007b30fb18e338b70fa24ae' || matrix.product == 'io-mon' && '2582d9062ed9633fa3eca377a06eca371081c556' || '292e578d57eb85d6037f9e2d3a03f0bcb0489dbb' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,7 +115,7 @@ jobs:
           CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
           case "$CHECKS:$PRODUCT" in
-            complete:*|io-mon-propagation:io-mon|io-mon-linux-source-pair:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
+            complete:*|hosted-macos:*|io-mon-propagation:io-mon|io-mon-linux-source-pair:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
             *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
           esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
@@ -130,7 +131,7 @@ jobs:
         with:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run the complete product test suite
-        if: inputs.checks == 'complete' || inputs.checks == '' || inputs.checks == 'runquota-macos-capacity'
+        if: inputs.checks == 'complete' || inputs.checks == '' || inputs.checks == 'runquota-macos-capacity' || inputs.checks == 'hosted-macos'
         shell: bash
         run: |
           set -euo pipefail
