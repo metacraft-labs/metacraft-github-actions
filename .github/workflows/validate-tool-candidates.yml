@@ -31,6 +31,7 @@ on:
           - io-mon-windows-arm-fixtures
           - io-mon-windows-system-child
           - io-mon-windows-exit-status
+          - io-mon-windows-spawn-machine
           - io-mon-windows-pdh-exit
           - runquota-windows-fast-exit
           - runquota-windows-source-exit
@@ -106,7 +107,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1475,3 +1476,50 @@ jobs:
             build/source-exit/dumps/
           if-no-files-found: warn
           retention-days: 14
+
+  io-mon-windows-spawn-machine:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-spawn-machine'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      RELEASE_TARGET: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: e8df8203d27463970cea2152f8313a7c5c49807f
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: 96ac63b99d8d6c3a06ca43a9214abbc00f4ac01e
+          path: .release-tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .bootstrap-tools
+          persist-credentials: false
+      - name: Install pinned release compiler
+        shell: pwsh
+        run: ./.release-tools/release-tools/setup-windows.ps1
+      - name: Compare real suspended child architecture and injection
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/io-mon-windows-spawn-machine.ps1
+      - name: Preserve architecture and injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-windows-spawn-machine-${{ matrix.runner }}
+          path: build/windows-spawn-machine/
+          retention-days: 14
+          if-no-files-found: warn
