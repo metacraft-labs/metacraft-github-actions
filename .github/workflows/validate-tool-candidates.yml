@@ -26,6 +26,7 @@ on:
           - io-mon-linux-predicate
           - io-mon-linux-repro
           - runquota-macos-authority
+          - runquota-macos-capacity
           - reprobuild-windows-exit
           - reprobuild-linux-hash-runtime
           - runquota-windows-checkout
@@ -87,14 +88,16 @@ jobs:
   test:
     if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
-    runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
+    # Temporary RunQuota macOS measurement-capacity diagnostic; owner zah.
+    # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
+    runs-on: ${{ inputs.checks == 'runquota-macos-capacity' && 'macos-26-xlarge' || inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(inputs.product == 'all' && '["gosti", "io-mon", "runquota"]' || format('["{0}"]', inputs.product)) }}
     env:
-      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '7d0d135bf075e43f0ed5eaf56563b5c73c8dd450' || '103b9ff0f9e930afd54c5e89678f2db7bfdcbbd9' }}
+      CANDIDATE_REVISION: ${{ matrix.product == 'gosti' && '63680f806a2fdb5f085cc7c81b16dc18fe5ee3da' || matrix.product == 'io-mon' && '7d0d135bf075e43f0ed5eaf56563b5c73c8dd450' || '822c3c5e4af00d991841b01e6b8a756d9be2ec04' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,7 +111,7 @@ jobs:
           CHECKS: ${{ inputs.checks || 'complete' }}
         run: |
           case "$CHECKS:$PRODUCT" in
-            complete:*|io-mon-propagation:io-mon|runquota-macos-authority:runquota) ;;
+            complete:*|io-mon-propagation:io-mon|runquota-macos-authority:runquota|runquota-macos-capacity:runquota) ;;
             *) echo 'Select the matching product for a focused diagnostic'; exit 2 ;;
           esac
           test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
@@ -116,7 +119,7 @@ jobs:
           git log -1 --format='%H %s'
           uname -a
           case "$(uname -s)" in
-            Darwin) /usr/sbin/sysctl -n hw.logicalcpu ;;
+            Darwin) /usr/sbin/sysctl hw.logicalcpu hw.memsize; df -h / /nix 2>/dev/null || df -h / ;;
             *) getconf _NPROCESSORS_ONLN ;;
           esac
       - name: Setup Nix
@@ -124,7 +127,7 @@ jobs:
         with:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run the complete product test suite
-        if: inputs.checks == 'complete' || inputs.checks == ''
+        if: inputs.checks == 'complete' || inputs.checks == '' || inputs.checks == 'runquota-macos-capacity'
         shell: bash
         run: |
           set -euo pipefail
