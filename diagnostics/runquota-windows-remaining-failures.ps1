@@ -33,12 +33,34 @@ try {
 '@
     Edit-Diagnostic 'tests/integration/t_observation_retention_scheduled.nim' '      reported = client.retention()' '      reported = client.retention(); echo "DIAGNOSTIC retention: ", reported'
     Edit-Diagnostic 'tests/integration/t_observation_retention_scheduled.nim' '      check healthyRemoved == 250' '      echo "DIAGNOSTIC healthy retention: ", client.retention(); check healthyRemoved == 250'
+    $lifecycle = 'tests/e2e/crash-recovery/t_e2e_runquota_client_exit_releases_lease.nim'
+    Edit-Diagnostic $lifecycle 'import std/[envvars, json, os, osproc, strutils, unittest]' 'import std/[envvars, json, monotimes, os, osproc, streams, strutils, times, unittest]'
+    Edit-Diagnostic $lifecycle 'proc spawnHelper(mode: string; args: openArray[string] = []): owned(Process) =' @'
+proc diagnosticWait(helper: Process; timeoutMillis: int): int =
+  let started = getMonoTime()
+  let pid = helper.processID
+  result = helper.waitForExit(timeoutMillis)
+  echo "DIAGNOSTIC helper pid=", pid, " elapsed_ms=",
+    (getMonoTime() - started).inMilliseconds, " result=", result,
+    " running=", helper.running
+  if not helper.running:
+    echo "DIAGNOSTIC helper output: ", helper.outputStream.readAll()
+
+proc spawnHelper(mode: string; args: openArray[string] = []): owned(Process) =
+'@
+    Edit-Diagnostic $lifecycle 'helper.waitForExit(3000)' 'diagnosticWait(helper, 3000)'
+    Edit-Diagnostic $lifecycle 'if helperMode.len > 0:' @'
+if helperMode.len > 0:
+  echo "DIAGNOSTIC helper entered mode=", helperMode
+  flushFile(stdout)
+'@
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
     # repro exec resolves every declared tool, including the Bash used by nested
     # fixtures. Merely adding SQLite to ambient PATH would compare different inputs.
     $env:REPRO_TOOL_PROVISIONING = 'tarball'
+    $reproExe = (Get-Command repro).Source
     foreach ($name in $names) {
         $binary = Join-Path $PWD "build/test-bin/$name.exe"
         if (-not (Test-Path $binary)) { throw "Missing real fixture $binary" }
@@ -48,6 +70,20 @@ try {
         Get-Content "$evidence/$name-native.log" -Tail 25
         if ((Get-FileHash $binary).Hash -ne $hash) { throw 'Fixture changed' }
         $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+    }
+    # Preserve the graph result and compare the same binaries after compilation
+    # and competing fixtures have finished. Every original deadline still applies.
+    foreach ($name in @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention_scheduled')) {
+        $binary = Join-Path $PWD "build/test-bin/$name.exe"
+        $hash = (Get-FileHash $binary).Hash
+        foreach ($round in 1..3) {
+            $prefix = "$evidence/$name-quiet-monitor-$round"
+            & bash "$PSScriptRoot/capture-ci-command.sh" "$prefix.log" repro exec -- timeout --kill-after=10 600 $reproExe internal io monitor --depfile "$prefix.iomon" -- $binary
+            $results += @{name=$name; mode='quiet-monitored'; round=$round; exitCode=$LASTEXITCODE; sha256=$hash}
+            Get-Content "$prefix.log" -Tail 35
+            if ((Get-FileHash $binary).Hash -ne $hash) { throw 'Fixture changed' }
+            $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+        }
     }
 } finally {
     $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
