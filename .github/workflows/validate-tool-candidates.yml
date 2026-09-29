@@ -234,7 +234,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 822c3c5e4af00d991841b01e6b8a756d9be2ec04
+          ref: 7511801bf6f4a0ffb79679c08b46dbf26fbbea60
           persist-credentials: false
       - name: Mint installation token
         id: token
@@ -260,10 +260,10 @@ jobs:
           PR_BASE_SHA: e9f9011a4c5637e6e0ddd50745a924f43c7901e2
           EVENT_BEFORE: ''
         run: |
-          test "$(git rev-parse HEAD)" = 822c3c5e4af00d991841b01e6b8a756d9be2ec04
+          test "$(git rev-parse HEAD)" = 7511801bf6f4a0ffb79679c08b46dbf26fbbea60
           GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/runquota \
-          GITHUB_SHA=822c3c5e4af00d991841b01e6b8a756d9be2ec04 \
+          GITHUB_SHA=7511801bf6f4a0ffb79679c08b46dbf26fbbea60 \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
           GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
             bash .diagnostic-tools/clone-siblings/clone-siblings.sh
@@ -278,7 +278,7 @@ jobs:
           gh-token: ${{ steps.token.outputs.token }}
       - name: Prove the declared Windows tool-store environment supplies SQLite
         run: |
-          repro exec --tool-provisioning=tarball -- sqlite3 --version
+          REPRO_TOOL_PROVISIONING=tarball repro exec -- sqlite3 --version
           repro build --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-build.json
       - name: Refresh authentication before the complete test graph
         uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
@@ -292,7 +292,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-toolstore-822c3c5
+          name: runquota-windows-toolstore-7511801
           path: |
             build/diagnostic-*.json
             build/diagnostic-fixture.patch
