@@ -263,7 +263,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 7511801bf6f4a0ffb79679c08b46dbf26fbbea60
+          ref: 11548ab8cb4820d9277f453814cebfbbbf9a823d
           persist-credentials: false
       - name: Mint installation token
         id: token
@@ -275,7 +275,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/metacraft-github-actions
-          ref: 2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+          ref: ${{ github.sha }}
           path: .diagnostic-tools
           persist-credentials: false
       - name: Resolve the candidate's source dependencies
@@ -289,10 +289,10 @@ jobs:
           PR_BASE_SHA: e9f9011a4c5637e6e0ddd50745a924f43c7901e2
           EVENT_BEFORE: ''
         run: |
-          test "$(git rev-parse HEAD)" = 7511801bf6f4a0ffb79679c08b46dbf26fbbea60
+          test "$(git rev-parse HEAD)" = 11548ab8cb4820d9277f453814cebfbbbf9a823d
           GITHUB_EVENT_NAME=pull_request \
           GITHUB_REPOSITORY=metacraft-labs/runquota \
-          GITHUB_SHA=7511801bf6f4a0ffb79679c08b46dbf26fbbea60 \
+          GITHUB_SHA=11548ab8cb4820d9277f453814cebfbbbf9a823d \
           GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
           GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
             bash .diagnostic-tools/clone-siblings/clone-siblings.sh
@@ -317,14 +317,19 @@ jobs:
           owner: metacraft-labs
       - name: Execute every test through the Windows tool-store environment
         run: repro test --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-test.json
+      - name: Compare failed binaries and inspect native storage facts
+        if: always() && hashFiles('build/diagnostic-test.json') != ''
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-test-controls.ps1
       - name: Retain graph reports and failure evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-toolstore-7511801
+          name: runquota-windows-toolstore-11548ab
           path: |
             build/diagnostic-*.json
             build/diagnostic-fixture.patch
+            build/windows-controls/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
