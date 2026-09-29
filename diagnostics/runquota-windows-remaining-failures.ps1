@@ -15,6 +15,9 @@ $names = @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention
     't_integration_runquota_memory_pressure_gate', 't_m5_process_exec_bench_contract',
     't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation',
     't_estimate_store_sqlite_streams')
+if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC -eq '1') {
+    $names = @('t_m5_process_exec_bench_contract', 't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation')
+}
 $filter = '    testSources.sort()' + "`n" + '    var focusedSources: seq[string] = @[]' + "`n" +
     '    for source in testSources:' + "`n" + '      if source.extractFilename.changeFileExt("") in [' +
     (($names | ForEach-Object { '"' + $_ + '"' }) -join ', ') + ']:' + "`n" +
@@ -54,6 +57,39 @@ if helperMode.len > 0:
   echo "DIAGNOSTIC helper entered mode=", helperMode
   flushFile(stdout)
 '@
+    Edit-Diagnostic 'tests/support/scratch_root.nim' 'import std/os' @'
+import std/[os, monotimes, times]
+include "../../.diagnostic-tools/diagnostics/windows_file_owners.nim"
+'@
+    Edit-Diagnostic 'tests/support/scratch_root.nim' @'
+      except OSError:
+        if retried >= SettleBudgetMillis:
+          raise
+'@ @'
+      except OSError as cleanupError:
+        if retried >= SettleBudgetMillis:
+          # The original two-second deadline remains a failure. Observe what
+          # releases the image afterward without turning that failure green.
+          let originalFailure = cleanupError
+          let diagnosticStart = getMonoTime()
+          echo "DIAGNOSTIC cleanup deadline root=", root,
+            " pid=", getCurrentProcessId(), " error=", cleanupError.msg
+          try:
+            diagnosticCleanupOwners(root)
+          except CatchableError as ownerError:
+            echo "DIAGNOSTIC owner query failed: ", ownerError.msg
+          for attempt in 0 ..< 600:
+            try:
+              removeDir(root)
+              echo "DIAGNOSTIC cleanup later succeeded elapsed_ms=",
+                (getMonoTime() - diagnosticStart).inMilliseconds
+              break
+            except OSError:
+              if attempt == 599:
+                echo "DIAGNOSTIC cleanup still locked after observation"
+              sleep(50)
+          raise originalFailure
+'@
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
@@ -73,16 +109,18 @@ if helperMode.len > 0:
     }
     # Preserve the graph result and compare the same binaries after compilation
     # and competing fixtures have finished. Every original deadline still applies.
-    foreach ($name in @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention_scheduled')) {
-        $binary = Join-Path $PWD "build/test-bin/$name.exe"
-        $hash = (Get-FileHash $binary).Hash
-        foreach ($round in 1..3) {
-            $prefix = "$evidence/$name-quiet-monitor-$round"
-            & bash "$PSScriptRoot/capture-ci-command.sh" "$prefix.log" repro exec -- timeout --kill-after=10 600 $reproExe internal io monitor --depfile "$prefix.iomon" -- $binary
-            $results += @{name=$name; mode='quiet-monitored'; round=$round; exitCode=$LASTEXITCODE; sha256=$hash}
-            Get-Content "$prefix.log" -Tail 35
-            if ((Get-FileHash $binary).Hash -ne $hash) { throw 'Fixture changed' }
-            $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+    if ($env:RUNQUOTA_CLEANUP_DIAGNOSTIC -ne '1') {
+        foreach ($name in @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention_scheduled')) {
+            $binary = Join-Path $PWD "build/test-bin/$name.exe"
+            $hash = (Get-FileHash $binary).Hash
+            foreach ($round in 1..3) {
+                $prefix = "$evidence/$name-quiet-monitor-$round"
+                & bash "$PSScriptRoot/capture-ci-command.sh" "$prefix.log" repro exec -- timeout --kill-after=10 600 $reproExe internal io monitor --depfile "$prefix.iomon" -- $binary
+                $results += @{name=$name; mode='quiet-monitored'; round=$round; exitCode=$LASTEXITCODE; sha256=$hash}
+                Get-Content "$prefix.log" -Tail 35
+                if ((Get-FileHash $binary).Hash -ne $hash) { throw 'Fixture changed' }
+                $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+            }
         }
     }
 } finally {

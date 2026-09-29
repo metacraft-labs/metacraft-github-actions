@@ -36,6 +36,7 @@ on:
           - runquota-windows-fast-exit
           - runquota-windows-source-exit
           - runquota-windows-exit-status
+          - runquota-windows-cleanup-owners
           - runquota-windows-arm-children
           - runquota-macos-telemetry
           - io-mon-linux-predicate
@@ -107,7 +108,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1062,14 +1063,15 @@ jobs:
           if-no-files-found: warn
 
   runquota-windows-exit-status:
-    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-exit-status'
+    if: inputs.product == 'runquota' && (inputs.checks == 'runquota-windows-exit-status' || inputs.checks == 'runquota-windows-cleanup-owners')
     strategy:
       fail-fast: false
       matrix:
-        runner: [windows-2025, windows-11-arm]
+        runner: ${{ fromJSON(inputs.checks == 'runquota-windows-cleanup-owners' && '["windows-11-arm"]' || '["windows-2025","windows-11-arm"]') }}
     runs-on: ${{ matrix.runner }}
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
+      RUNQUOTA_CLEANUP_DIAGNOSTIC: ${{ inputs.checks == 'runquota-windows-cleanup-owners' && '1' || '' }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
