@@ -40,6 +40,7 @@ on:
           - runquota-windows-cleanup-fix
           - runquota-windows-deadline-graph
           - runquota-windows-arm-build-budget
+          - runquota-linux-bootstrap-monitor
           - runquota-linux-process-heap
           - runquota-linux-heap-backtrace
           - runquota-linux-heap-serialization
@@ -115,7 +116,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-linux-bootstrap-monitor' && inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1796,3 +1797,56 @@ jobs:
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
+
+  runquota-linux-bootstrap-monitor:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-bootstrap-monitor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 8cf662c4270b46c90866af94a4036c8e6aa853ce
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@e42cbc75eeba13dc94ce8459ba21a301be935b6f
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-posix-io-mon-pin: 3df08c24ee91900b950ed20a3827923d213f2a9c
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Run the complete graph with the explicitly pinned monitor
+        timeout-minutes: 100
+        shell: bash
+        run: |
+          mkdir -p build/linux-bootstrap
+          bash .diagnostic-tools/diagnostics/capture-ci-command.sh build/linux-bootstrap/build.log dev-exec repro build --tool-provisioning=nix --write-report=build/linux-bootstrap/build.json
+          bash .diagnostic-tools/diagnostics/capture-ci-command.sh build/linux-bootstrap/test.log dev-exec repro test --tool-provisioning=nix --write-report=build/linux-bootstrap/test.json
+      - name: Preserve process exit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-linux-bootstrap-monitor
+          path: |
+            build/linux-bootstrap/
+            build/diagnostics/
+            .repro/build/*/build-failure-report.json
+            .repro/build/*/build-engine-cache/actions/*.log
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
