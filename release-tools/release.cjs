@@ -8,7 +8,7 @@ const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file))
 const run = (...args) => cp.execFileSync(args[0], args.slice(1), {encoding: 'utf8'}).trim();
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-function plan(root = process.cwd()) {
+function plan(root = process.cwd(), hosted = false) {
   const spec = JSON.parse(fs.readFileSync(path.join(root, '.github/release.json')));
   assert(/^[a-z][a-z0-9-]*$/.test(spec.product), 'invalid product name');
   const source = fs.readFileSync(path.join(root, spec.versionFile), 'utf8');
@@ -35,18 +35,24 @@ function plan(root = process.cwd()) {
     const legacyArmRunner = t.id === 'linux-aarch64' && t.runner === 'eph-linux-arm64' &&
       typeof t.runnerReason === 'string' && t.runnerReason.trim().length > 0;
     const migration = t.runnerMigration;
-    const hostedArmRunner = ((t.id === 'linux-aarch64' && t.runner === 'ubuntu-24.04-arm') ||
-      (t.id === 'windows-aarch64' && t.runner === 'windows-11-arm')) &&
-      migration?.version === version && typeof migration.owner === 'string' &&
+    const migrationValid = migration?.version === version && typeof migration.owner === 'string' &&
       migration.owner.trim().length > 0 && typeof migration.followup === 'string' &&
       migration.followup.startsWith('https://github.com/metacraft-labs/metacraft-specs/');
+    const hostedArmRunner = ((t.id === 'linux-aarch64' && t.runner === 'ubuntu-24.04-arm') ||
+      (t.id === 'windows-aarch64' && t.runner === 'windows-11-arm')) && migrationValid;
     assert(capabilityRunner || releaseLane || legacyArmRunner || hostedArmRunner,
       'self-hosted runner required; legacy ARM routing needs a reason and hosted ARM needs a version-scoped migration');
+    if (t.hostedRunner !== undefined) {
+      const nativeHosted = (t.id === 'linux-x86_64' && t.hostedRunner === 'ubuntu-24.04') ||
+        (t.id === 'darwin-aarch64' && t.hostedRunner === 'macos-26');
+      assert(nativeHosted && migrationValid,
+        'hosted alternative needs a native standard runner and a version-scoped migration');
+    }
     assert(Array.isArray(t.assets) && t.assets.length > 0, `no assets for ${t.id}`);
     const assets = t.assets.map(expand);
     assert(assets.every(a => /^[A-Za-z0-9_.+-]+$/.test(a)), 'unsafe asset name');
     assert(t.id.startsWith('windows-') || !assets.some(a => a.endsWith('.msi')), 'MSI requires a Windows target');
-    return {...t, assets};
+    return {...t, runner: hosted && t.hostedRunner ? t.hostedRunner : t.runner, assets};
   });
   const expected = matrix.flatMap(t => t.assets).sort();
   assert(new Set(matrix.map(t => t.id)).size === matrix.length, 'duplicate target');
@@ -89,7 +95,7 @@ function assemble(dir, expected) {
 }
 
 async function githubPlan({github, context, core}) {
-  const p = plan();
+  const p = plan(process.cwd(), process.env.RELEASE_HOSTED === 'true');
   const sha = run('git', 'rev-parse', 'HEAD');
   assert(sha === context.sha, 'checkout differs from triggering commit');
   if (context.eventName === 'push' && context.ref.startsWith('refs/tags/')) {

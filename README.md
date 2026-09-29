@@ -1,6 +1,28 @@
 # metacraft-github-actions
 Shared GitHub Actions for metacraft-labs projects
 
+## Release tools
+
+`.github/workflows/release-tools.yml` builds the caller's declared target
+inventory, verifies transferred artifacts, and publishes only tag-triggered
+releases with a successful dry run for the same source commit. Dispatches are
+dry runs. Product build and smoke-test scripts remain in the caller.
+
+Planning, assembly and publication use the shared `CI_RUNNER_MODE` selector:
+standard `ubuntu-24.04` when hosted is selected, otherwise the exact
+`eph-linux-x64-release` scale-set route. A POSIX target may declare
+`hostedRunner` alongside its existing `runner`; the planner uses that alternative
+only when the selector chose hosted. Allowed alternatives are Linux x64 on
+`ubuntu-24.04` and macOS ARM64 on `macos-26`. Each requires `runnerMigration`
+with the exact source version, a nonempty owner and a metacraft-specs follow-up.
+The planner rejects expired or incomplete exceptions even on the fallback route.
+Existing Linux/Windows ARM64 migration entries keep their explicit native routes.
+
+The first-release scope and migration ownership are documented in
+[the product release plan](https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md).
+Runner selection does not change artifact membership, signatures, installer
+checks, Linux portability checks or publication requirements.
+
 ## `assert-workflow-triggers`
 
 Fails when a workflow's `push` / `pull_request` branch filters do not name the
