@@ -1352,15 +1352,17 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2025]
+        compiler: [clang, gcc]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
       RELEASE_TARGET: windows-x86_64
+      DIAGNOSTIC_CC: ${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 94ac0c1468b64c458755d9b7f5664bdaa149933f
+          ref: 347c8dbda4671abf7ebbb155a86c4db464ba0ac7
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1372,17 +1374,23 @@ jobs:
           ref: 7bc6271c3cb5d1b91d10179a93465050338e477e
           path: .release-tools
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .bootstrap-tools
+          persist-credentials: false
       - name: Install pinned release compiler
         shell: pwsh
         run: ./.release-tools/release-tools/setup-windows.ps1
-      - name: Compare original and repaired termination forwarding
+      - name: Compare native and monitored performance-counter shutdown
         shell: pwsh
         run: ./.diagnostic-tools/diagnostics/io-mon-windows-pdh-exit.ps1
       - name: Preserve termination evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: io-mon-windows-pdh-exit-${{ matrix.runner }}
+          name: io-mon-windows-pdh-exit-${{ matrix.runner }}-${{ matrix.compiler }}
           path: |
             build/pdh-exit/*.log
             build/pdh-exit/*.json
