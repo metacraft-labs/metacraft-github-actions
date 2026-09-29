@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -36,6 +37,17 @@ def run(name, args, *, cwd=root, env=None, required=False, bound=480):
     return code
 
 
+# Downloaded ELF files keep their original Nix interpreter and runpaths. Restore
+# those exact store closures before execution; never patch the retained binary.
+store_paths = set()
+for executable in (binary, cli, monitor / 'build/lib/librepro_monitor_shim.so'):
+    metadata = subprocess.check_output(['readelf', '-l', '-d', str(executable)],
+                                       text=True)
+    (evidence / (executable.name + '-elf.txt')).write_text(metadata)
+    store_paths.update(re.findall(r'/nix/store/[a-z0-9]{32}-[^/\s:]+', metadata))
+run('restore-runtime', ['nix', 'copy', '--from', 'https://cache.nixos.org',
+                        *sorted(store_paths)], required=True)
+run('fixture-loader', ['ldd', str(binary)], required=True)
 run('apps-build', ['bash', 'scripts/build_apps.sh'], required=True)
 variants = {'original': monitor / 'build/lib/librepro_monitor_shim.so'}
 for name, flags in [('arc', ['--mm:arc']),
@@ -60,7 +72,8 @@ for mode in ['native', *variants]:
             environment['REPRO_MONITOR_SHIM_LIB'] = str(variants[mode])
             command = [str(cli), 'run', '--depfile',
                        str(evidence / (name + '.iomon')), '--', *command]
-        run(name, ['timeout', '--kill-after=10', '420', *command], env=environment)
+        run(name, ['timeout', '--kill-after=10', '420', *command], env=environment,
+            required=(mode == 'native'))
 
 # GDB stays outside the injected process. Only its inferior receives the shim
 # environment; SIGTRAP is passed through to the real syscall-hook handler.
