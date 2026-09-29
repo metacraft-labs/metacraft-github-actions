@@ -34,6 +34,7 @@ on:
           - m3-runner-state
           - io-mon-windows-loader
           - runquota-windows-active-builds
+          - runquota-windows-repro
           - m3-worker-foreground
           - m3-runquota-checkout-repair
 
@@ -86,7 +87,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds'
+    if: inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary RunQuota macOS measurement-capacity diagnostic; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -218,6 +219,87 @@ jobs:
           path: test-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  runquota-windows-repro:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-repro'
+    # Temporary Windows x64 source/tool-store diagnostic; owner zah.
+    # Follow-up: RunQuota issues/2026-09-28-windows-checkout-blocked-by-retained-shim.md
+    # Return this leg to a self-hosted VM after its lifecycle canary passes.
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 822c3c5e4af00d991841b01e6b8a756d9be2ec04
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: 2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Resolve the candidate's source dependencies
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SIBLINGS_INPUT: ''
+          SIBLING_OWNER: metacraft-labs
+          JOB_TOKEN_OWNERS: metacraft-labs
+          MANIFESTS_REPO: metacraft-labs/metacraft-manifests
+          PRIVATE_MANIFESTS_REPO: ''
+          PR_BASE_SHA: e9f9011a4c5637e6e0ddd50745a924f43c7901e2
+          EVENT_BEFORE: ''
+        run: |
+          test "$(git rev-parse HEAD)" = 822c3c5e4af00d991841b01e6b8a756d9be2ec04
+          GITHUB_EVENT_NAME=pull_request \
+          GITHUB_REPOSITORY=metacraft-labs/runquota \
+          GITHUB_SHA=822c3c5e4af00d991841b01e6b8a756d9be2ec04 \
+          GITHUB_ACTION_PATH="$PWD/.diagnostic-tools/clone-siblings" \
+          GIT_AUTH_DIR="$PWD/.diagnostic-tools/git-auth" \
+            bash .diagnostic-tools/clone-siblings/clone-siblings.sh
+      - uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2f1abf5e4e2102f2a9abe1ea9a0f3b4097ec9717
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Build the candidate's selected Reprobuild
+        uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@32f11f839677dc3052b7c47c19896fb74173c322
+        with:
+          from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Prove the declared Windows tool-store environment supplies SQLite
+        run: |
+          repro exec --tool-provisioning=tarball -- sqlite3 --version
+          repro build --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-build.json
+      - name: Refresh authentication before the complete test graph
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Execute every test through the Windows tool-store environment
+        run: repro test --daemon=off --tool-provisioning=tarball --write-report=build/diagnostic-test.json
+      - name: Retain graph reports and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-windows-toolstore-822c3c5
+          path: |
+            build/diagnostic-*.json
+            .repro/build/*/build-failure-report.json
+            .repro/build/*/build-engine-cache/actions/*.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
 
   linux-repro:
     if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-linux-repro'
