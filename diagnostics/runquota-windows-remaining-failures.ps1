@@ -13,7 +13,8 @@ function Edit-Diagnostic([string]$Path, [string]$Before, [string]$After) {
 }
 $names = @('t_e2e_runquota_client_exit_releases_lease', 't_observation_retention_scheduled',
     't_integration_runquota_memory_pressure_gate', 't_m5_process_exec_bench_contract',
-    't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation')
+    't_observation_store_degraded_capture_build', 't_standalone_daemonless_degradation',
+    't_estimate_store_sqlite_streams')
 $filter = '    testSources.sort()' + "`n" + '    var focusedSources: seq[string] = @[]' + "`n" +
     '    for source in testSources:' + "`n" + '      if source.extractFilename.changeFileExt("") in [' +
     (($names | ForEach-Object { '"' + $_ + '"' }) -join ', ') + ']:' + "`n" +

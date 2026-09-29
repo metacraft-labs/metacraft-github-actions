@@ -1067,12 +1067,14 @@ jobs:
       matrix:
         runner: [windows-2025, windows-11-arm]
     runs-on: ${{ matrix.runner }}
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 128a3c6dd7eaa33ae7c6722db3faa00e06fe6ff2
+          ref: a9d9f4084da1b24592458b9b68ddd7d44e7eb297
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
