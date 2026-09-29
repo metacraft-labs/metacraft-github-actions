@@ -1062,13 +1062,17 @@ jobs:
 
   runquota-windows-exit-status:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-exit-status'
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 8add80468e0e1ba2b08f02df8b4720aab085f967
+          ref: 128a3c6dd7eaa33ae7c6722db3faa00e06fe6ff2
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1083,23 +1087,25 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
-      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@93de03f82560d545ea345b9810123135ca875674
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@96ac63b99d8d6c3a06ca43a9214abbc00f4ac01e
         with:
           env-flavor: reprobuild
           repro-from-source: true
           repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
           repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: e8df8203d27463970cea2152f8313a7c5c49807f
           gh-token: ${{ steps.token.outputs.token }}
       - name: Compare monitored and native process exit statuses
         shell: pwsh
-        run: ./.diagnostic-tools/diagnostics/runquota-windows-exit-status.ps1
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-remaining-failures.ps1
       - name: Preserve process exit evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-exit-status
+          name: runquota-windows-remaining-${{ matrix.runner }}
           path: |
-            build/windows-exit-status/
+            build/windows-remaining/
+            build/diagnostics/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
@@ -1114,7 +1120,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 1d381e5ae17f062f7d9421b01bea4c02c59dda13
+          ref: 128a3c6dd7eaa33ae7c6722db3faa00e06fe6ff2
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1129,23 +1135,27 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
-      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@93de03f82560d545ea345b9810123135ca875674
+      - uses: actions/checkout@v4
         with:
-          env-flavor: reprobuild
-          repro-from-source: true
-          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
-          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repository: metacraft-labs/io-mon
+          ref: e8df8203d27463970cea2152f8313a7c5c49807f
+          path: .io-mon
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@96ac63b99d8d6c3a06ca43a9214abbc00f4ac01e
+        with:
+          env-flavor: nix
           gh-token: ${{ steps.token.outputs.token }}
-      - name: Observe real telemetry fixture children
+      - name: Compare real ambient windows and telemetry with both monitor sources
         shell: bash
-        run: '"$REPROBUILD_BOOTSTRAP_PYTHON" .diagnostic-tools/diagnostics/runquota-macos-telemetry.py'
+        run: python3 .diagnostic-tools/diagnostics/runquota-macos-ambient.py
       - name: Preserve child startup evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runquota-macos-telemetry
           path: |
-            build/macos-telemetry-evidence/
+            build/macos-ambient-evidence/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
