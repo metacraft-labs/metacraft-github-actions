@@ -40,6 +40,7 @@ on:
           - runquota-windows-cleanup-fix
           - runquota-windows-deadline-graph
           - runquota-linux-process-heap
+          - runquota-linux-heap-backtrace
           - runquota-windows-arm-children
           - runquota-macos-telemetry
           - io-mon-linux-predicate
@@ -111,7 +112,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1636,6 +1637,59 @@ jobs:
             build/test-bin/t_m5_process_exec_bench_contract
             .io-mon/build/lib/librepro_monitor_shim.so
             .io-mon/build/bin/io-mon
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+  runquota-linux-heap-backtrace:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-heap-backtrace'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 86315343051f50de97b88735e172751b9fa8ca53
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          path: .io-mon
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: runquota-linux-process-heap
+          run-id: 36633929242
+          github-token: ${{ github.token }}
+          path: .
+      - uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Provision debugger if absent
+        shell: bash
+        run: |
+          if ! command -v gdb; then
+            sudo apt-get update
+            sudo apt-get install -y gdb
+          fi
+      - name: Compare runtime settings and capture the failing stack
+        timeout-minutes: 45
+        shell: bash
+        run: nix develop --profile "$RUNNER_TEMP/runquota-heap-shell" --command python3 .diagnostic-tools/diagnostics/runquota-linux-heap-backtrace.py
+      - name: Preserve runtime comparison and debugger evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-linux-heap-backtrace
+          path: build/linux-heap-backtrace/
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
