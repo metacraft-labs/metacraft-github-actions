@@ -386,6 +386,10 @@ runs:
         $initialEnv = @{}
         Get-ChildItem env: | ForEach-Object { $initialEnv[$_.Name] = $_.Value }
         . .\env.ps1
+        # Reprobuild needs its lease authority before it can build a consumer.
+        # Keep this bootstrap binary outside consumer outputs, including when
+        # the consumer is RunQuota and its tests rebuild their own daemon.
+        & "$env:GITHUB_ACTION_PATH/build-runquota-bootstrap.ps1"
         if (Get-Command just -ErrorAction SilentlyContinue) {
           just build
         } else {
