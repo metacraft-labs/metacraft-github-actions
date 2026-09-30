@@ -4,6 +4,7 @@ No logging, allocation, extra suspension or deadline change. The existing
 parent reads the exported phase only after the borrowed call has failed.
 """
 import json
+import os
 from pathlib import Path
 
 base = Path('nim-stackable-hooks/src/stackable_hooks/inline_hook/windows')
@@ -13,6 +14,7 @@ declaration = '''
 #include <stdint.h>
 extern volatile unsigned long repro_diagnostic_init_phase;
 extern volatile uintptr_t repro_diagnostic_patch_target;
+extern volatile uintptr_t repro_diagnostic_prepared_target;
 extern volatile unsigned long repro_diagnostic_frozen_count;
 extern volatile unsigned long repro_diagnostic_frozen_tids[4096];
 #define CT_INIT_PHASE(n) (repro_diagnostic_init_phase = (n))
@@ -121,6 +123,46 @@ for old, new in [
     assert s.count(old) == 1, old
     s = s.replace(old, new)
 p.write_text(s)
+
+if os.environ.get('RUNQUOTA_PREPARE_HOOK_PROTECTION') == 'true':
+    # Diagnostic intervention: the exact failed API/page gets one protection
+    # transition while peers can still run. Restore its original permissions
+    # before the ordinary transaction. No bytes, suspension, patching, cache
+    # flushing or production deadline is otherwise changed.
+    anchor = '''    /* Suspend other threads once for the whole batch (atomic
+     * batching).  Then drive each queued op. */'''
+    preparation = '''    void *probe_target = (void *)GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "CreateFileW");
+    for (size_t probe_i = 0; probe_i < g_txn.count; probe_i++) {
+        if (g_txn.ops[probe_i].kind == 0 &&
+            g_txn.ops[probe_i].target == probe_target) {
+            DWORD probe_old, probe_ignored;
+            repro_diagnostic_patch_target = (uintptr_t)probe_target;
+            CT_INIT_PHASE(160);
+            if (!VirtualProtect(probe_target, 5, PAGE_EXECUTE_READWRITE, &probe_old)) {
+                g_txn.active = 0;
+                g_txn.count = 0;
+                LeaveCriticalSection(&g_hooks_cs);
+                return -7;
+            }
+            CT_INIT_PHASE(161);
+            if (!VirtualProtect(probe_target, 5, probe_old, &probe_ignored)) {
+                g_txn.active = 0;
+                g_txn.count = 0;
+                LeaveCriticalSection(&g_hooks_cs);
+                return -7;
+            }
+            repro_diagnostic_prepared_target = (uintptr_t)probe_target;
+        }
+    }
+    CT_INIT_PHASE(162);
+'''
+    assert s.count(anchor) == 1
+    s = s.replace(anchor, preparation + anchor)
+    p.write_text(s)
+    phases.update({'160': 'prepare writable protection with peers active',
+                   '161': 'restore prepared protection with peers active',
+                   '162': 'prepared protection complete'})
 
 # The broad transaction checkpoints distinguish snapshot/suspension, install,
 # allocation and instruction-cache flushing without depending on stack unwinding.

@@ -50,6 +50,10 @@ static void trace_init_phase(HANDLE process, void *fn) {
   void *target = NULL;
   if (symbol && ReadProcessMemory(process, symbol, &target, sizeof(target), &got))
     trace_park_address(process, "patch-target", target);
+  symbol = trace_export_address(process, fn, "repro_diagnostic_prepared_target");
+  void *prepared = NULL;
+  if (symbol && ReadProcessMemory(process, symbol, &prepared, sizeof(prepared), &got) && prepared)
+    trace_park_address(process, "prepared-target", prepared);
   symbol = trace_export_address(process, fn, "repro_diagnostic_frozen_count");
   DWORD count = 0;
   if (!symbol || !ReadProcessMemory(process, symbol, &count, sizeof(count), &got)) return;

@@ -6,6 +6,10 @@ name: Validate tool candidates on Linux
 on:
   workflow_dispatch:
     inputs:
+      prepare-hook-protection:
+        description: Compare a CreateFileW protection transition before thread suspension in the full ARM compiler trace
+        type: boolean
+        default: false
       readiness-full-graph:
         description: Keep the complete RunQuota graph in the Windows readiness diagnostic
         type: boolean
@@ -1901,6 +1905,7 @@ jobs:
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
       RUNQUOTA_BALANCED_CONTEXT: ${{ inputs.checks == 'runquota-windows-balanced-context' && 'true' || 'false' }}
+      RUNQUOTA_PREPARE_HOOK_PROTECTION: ${{ inputs.prepare-hook-protection && 'true' || 'false' }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
