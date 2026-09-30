@@ -8,10 +8,15 @@ New-Item -ItemType Directory -Force $evidence | Out-Null
 $originals = @{}
 $results = @()
 function Edit-Diagnostic([string]$Path, [string]$Before, [string]$After) {
-    $text = [IO.File]::ReadAllText((Join-Path $PWD $Path))
-    if (-not $text.Contains($Before)) { throw "Missing diagnostic anchor in $Path" }
-    if (-not $originals.ContainsKey($Path)) { $originals[$Path] = $text }
-    [IO.File]::WriteAllText((Join-Path $PWD $Path), $text.Replace($Before, $After))
+    $raw = [IO.File]::ReadAllText((Join-Path $PWD $Path))
+    # Windows checkouts can use CRLF. Normalize the disposable transform and
+    # its here-string anchors together; retain the original bytes for cleanup.
+    $text = $raw.Replace("`r`n", "`n")
+    $beforeText = $Before.Replace("`r`n", "`n")
+    $afterText = $After.Replace("`r`n", "`n")
+    if (-not $text.Contains($beforeText)) { throw "Missing diagnostic anchor in $Path" }
+    if (-not $originals.ContainsKey($Path)) { $originals[$Path] = $raw }
+    [IO.File]::WriteAllText((Join-Path $PWD $Path), $text.Replace($beforeText, $afterText))
 }
 try {
   if ($env:RUNQUOTA_READINESS_FULL_GRAPH -ne 'true') {
