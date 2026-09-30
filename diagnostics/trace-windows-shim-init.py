@@ -16,6 +16,7 @@ text = text.replace(anchor, '''{.emit: """
 __declspec(dllexport) volatile unsigned long repro_diagnostic_init_phase = 0;
 __declspec(dllexport) volatile uintptr_t repro_diagnostic_patch_target = 0;
 __declspec(dllexport) volatile uintptr_t repro_diagnostic_prepared_target = 0;
+__declspec(dllexport) volatile unsigned long repro_diagnostic_prepared_count = 0;
 __declspec(dllexport) volatile unsigned long repro_diagnostic_frozen_count = 0;
 __declspec(dllexport) volatile unsigned long repro_diagnostic_frozen_tids[4096];
 """.}

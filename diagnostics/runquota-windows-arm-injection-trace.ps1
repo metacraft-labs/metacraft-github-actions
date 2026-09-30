@@ -3,6 +3,10 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $evidence = Join-Path $PWD 'build/windows-arm-injection'
 New-Item -ItemType Directory -Force $evidence | Out-Null
+$hooksSource = (& git -C nim-stackable-hooks rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $hooksSource -cne '8f4d806ce1ae58e6b4292fed92944171eff4f7a2') {
+    throw 'This controlled graph requires the original 8f4d806 hook source'
+}
 $parkSource = Join-Path $PWD 'nim-stackable-hooks/src/stackable_hooks/windows_entry_park.nim'
 $originalPark = [IO.File]::ReadAllText($parkSource)
 $threadLocalFailure = $false

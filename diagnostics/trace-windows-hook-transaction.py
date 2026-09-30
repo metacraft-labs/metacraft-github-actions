@@ -15,6 +15,7 @@ declaration = '''
 extern volatile unsigned long repro_diagnostic_init_phase;
 extern volatile uintptr_t repro_diagnostic_patch_target;
 extern volatile uintptr_t repro_diagnostic_prepared_target;
+extern volatile unsigned long repro_diagnostic_prepared_count;
 extern volatile unsigned long repro_diagnostic_frozen_count;
 extern volatile unsigned long repro_diagnostic_frozen_tids[4096];
 #define CT_INIT_PHASE(n) (repro_diagnostic_init_phase = (n))
@@ -125,34 +126,39 @@ for old, new in [
 p.write_text(s)
 
 if os.environ.get('RUNQUOTA_PREPARE_HOOK_PROTECTION') == 'true':
-    # Diagnostic intervention: the exact failed API/page gets one protection
+    # Diagnostic intervention: every queued install range gets one protection
     # transition while peers can still run. Restore its original permissions
     # before the ordinary transaction. No bytes, suspension, patching, cache
     # flushing or production deadline is otherwise changed.
     anchor = '''    /* Suspend other threads once for the whole batch (atomic
      * batching).  Then drive each queued op. */'''
-    preparation = '''    void *probe_target = (void *)GetProcAddress(
-        GetModuleHandleW(L"kernel32.dll"), "CreateFileW");
+    preparation = '''    repro_diagnostic_prepared_count = 0;
     for (size_t probe_i = 0; probe_i < g_txn.count; probe_i++) {
-        if (g_txn.ops[probe_i].kind == 0 &&
-            g_txn.ops[probe_i].target == probe_target) {
+        if (g_txn.ops[probe_i].kind == 0 && g_txn.ops[probe_i].target != NULL) {
+            uint8_t *probe_target = (uint8_t *)g_txn.ops[probe_i].target;
+            size_t probe_size = 5;
+            if (detect_hotpatch(probe_target)) {
+                probe_target -= 5;
+                probe_size = 7;
+            }
             DWORD probe_old, probe_ignored;
             repro_diagnostic_patch_target = (uintptr_t)probe_target;
             CT_INIT_PHASE(160);
-            if (!VirtualProtect(probe_target, 5, PAGE_EXECUTE_READWRITE, &probe_old)) {
+            if (!VirtualProtect(probe_target, probe_size, PAGE_EXECUTE_READWRITE, &probe_old)) {
                 g_txn.active = 0;
                 g_txn.count = 0;
                 LeaveCriticalSection(&g_hooks_cs);
                 return -7;
             }
             CT_INIT_PHASE(161);
-            if (!VirtualProtect(probe_target, 5, probe_old, &probe_ignored)) {
+            if (!VirtualProtect(probe_target, probe_size, probe_old, &probe_ignored)) {
                 g_txn.active = 0;
                 g_txn.count = 0;
                 LeaveCriticalSection(&g_hooks_cs);
                 return -7;
             }
             repro_diagnostic_prepared_target = (uintptr_t)probe_target;
+            repro_diagnostic_prepared_count++;
         }
     }
     CT_INIT_PHASE(162);
