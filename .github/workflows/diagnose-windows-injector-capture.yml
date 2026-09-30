@@ -1,0 +1,59 @@
+name: Verify root exit with inherited Windows capture writers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-injector-capture.yml
+      - diagnostics/windows-injector-capture-control.ps1
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    # Existing release-investigation migration exception: owner zah;
+    # metacraft-specs/issues/2026-09-29-windows-arm64-release-runner-migration.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 8f4d806ce1ae58e6b4292fed92944171eff4f7a2
+          path: hooks-original
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: b7a1cdd319022639abaf401a7fc0b53645bad674
+          path: hooks-fixed
+          persist-credentials: false
+      - name: Require original failure and repaired success
+        timeout-minutes: 15
+        shell: pwsh
+        run: ./diagnostics/windows-injector-capture-control.ps1
+      - name: Retain every comparison outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-injector-capture-${{ matrix.runner }}
+          path: build/windows-injector-capture/
+          if-no-files-found: error
+          retention-days: 14
