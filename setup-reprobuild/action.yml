@@ -77,6 +77,10 @@ inputs:
       true, or when a `repro` is already on PATH.
     required: false
     default: "latest"
+  io-mon-pin:
+    description: Optional full io-mon source SHA for a Linux/macOS source build; empty retains the Reprobuild flake lock.
+    required: false
+    default: ""
   from-source:
     description: >
       Build the CLI from source, overriding a CLI already on PATH. For
@@ -299,13 +303,24 @@ runs:
     - name: Build repro CLI (Linux/macOS)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' }}
       shell: bash
+      env:
+        IO_MON_PIN: ${{ inputs.io-mon-pin }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/.reprobuild-src"
+        io_mon_override=()
+        if [ -n "${IO_MON_PIN}" ]; then
+          if [[ ! "${IO_MON_PIN}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::io-mon-pin must be a full lowercase source SHA"
+            exit 1
+          fi
+          io_mon_override=(--override-input io-mon-src "github:metacraft-labs/io-mon/${IO_MON_PIN}")
+        fi
         # Use the dev shell's just target — the same path reprobuild's own CI
         # exercises — overriding the private flake inputs to the local clones
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
         nix develop \
+          "${io_mon_override[@]}" \
           --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
           --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
           --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
