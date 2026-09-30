@@ -47,6 +47,7 @@ on:
           - io-mon-linux-producer-fix
           - runquota-windows-arm-children
           - runquota-macos-telemetry
+          - runquota-macos-ambient-boundaries
           - io-mon-linux-predicate
           - io-mon-linux-repro
           - io-mon-linux-source-pair
@@ -116,7 +117,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-linux-bootstrap-monitor' && inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-macos-ambient-boundaries' && inputs.checks != 'runquota-linux-bootstrap-monitor' && inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1847,5 +1848,36 @@ jobs:
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
           include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+  runquota-macos-ambient-boundaries:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-macos-ambient-boundaries'
+    runs-on: macos-26
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 8cf662c4270b46c90866af94a4036c8e6aa853ce
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare original and corrected real ambient windows
+        timeout-minutes: 70
+        run: python3 .diagnostic-tools/diagnostics/runquota-macos-ambient-boundaries.py
+      - name: Preserve every window and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-macos-ambient-boundaries
+          path: |
+            build/macos-ambient-boundaries/
+            build/diagnostics/ambient_*.nim
           retention-days: 14
           if-no-files-found: warn
