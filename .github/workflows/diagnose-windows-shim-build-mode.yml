@@ -1,0 +1,71 @@
+name: Measure Windows monitor startup across build modes
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-shim-build-mode.yml
+      - diagnostics/windows-shim-build-mode.ps1
+      - diagnostics/windows-shim-build-mode.py
+
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: def2464b2d282c7c1a982689a25953e1d4501f93
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          path: io-mon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-queue
+          ref: 02f442ac12ce2587d9c053c527041097af38609f
+          path: nim-shm-queue
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-gset
+          ref: 1caac0e0ec48f025c69c6370b63017c47c18c96e
+          path: nim-shm-gset
+          persist-credentials: false
+      - name: Compare real compiler injection and capture
+        timeout-minutes: 25
+        shell: pwsh
+        run: ./diagnostics/windows-shim-build-mode.ps1
+      - name: Retain both variants and every outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-shim-build-mode-${{ matrix.runner }}
+          path: build/windows-shim-build-mode/
+          if-no-files-found: error
+          retention-days: 14
