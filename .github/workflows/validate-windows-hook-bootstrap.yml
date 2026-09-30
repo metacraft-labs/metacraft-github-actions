@@ -3,6 +3,9 @@ name: Validate pinned Windows hook bootstrap
 # Real source checkouts, compiler children and file I/O; no mocks.
 # Supplemental bootstrap validation; complete product CI remains mandatory.
 on:
+  # Register and validate this new manual workflow before its first dev merge.
+  push:
+    branches: [fix/windows-bootstrap-hook-pin]
   workflow_dispatch:
     inputs:
       hook-pin:
@@ -23,7 +26,7 @@ jobs:
     timeout-minutes: 60
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
-      REQUESTED_HOOK_PIN: ${{ inputs.hook-pin }}
+      REQUESTED_HOOK_PIN: ${{ inputs.hook-pin || '72f578249e9d8bbca8e3705c8a41ed5085c05bf9' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,7 +47,7 @@ jobs:
           repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
           repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
-          repro-stackable-hooks-pin: ${{ inputs.hook-pin }}
+          repro-stackable-hooks-pin: ${{ env.REQUESTED_HOOK_PIN }}
           gh-token: ${{ steps.token.outputs.token }}
       - name: Check source identity and run real compiler children
         shell: pwsh
