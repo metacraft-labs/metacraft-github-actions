@@ -4,9 +4,14 @@ $PSNativeCommandUseErrorActionPreference = $false
 $evidence = Join-Path $PWD 'build/windows-arm-injection'
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $hooksSource = (& git -C nim-stackable-hooks rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $hooksSource -cne '8f4d806ce1ae58e6b4292fed92944171eff4f7a2') {
-    throw 'This controlled graph requires the original 8f4d806 hook source'
+if ($LASTEXITCODE -ne 0 -or $env:RUNQUOTA_TRACE_HOOKS_SOURCE -cnotmatch '^[0-9a-f]{40}$' -or $hooksSource -cne $env:RUNQUOTA_TRACE_HOOKS_SOURCE) {
+    throw 'This controlled graph requires the exact requested hook source'
 }
+$runquotaSource = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $env:RUNQUOTA_TRACE_SOURCE -cnotmatch '^[0-9a-f]{40}$' -or $runquotaSource -cne $env:RUNQUOTA_TRACE_SOURCE) {
+    throw 'This controlled graph requires the exact requested RunQuota source'
+}
+@{ runquota = $runquotaSource; hooks = $hooksSource } | ConvertTo-Json | Set-Content "$evidence/source-pins.json"
 $parkSource = Join-Path $PWD 'nim-stackable-hooks/src/stackable_hooks/windows_entry_park.nim'
 $originalPark = [IO.File]::ReadAllText($parkSource)
 $threadLocalFailure = $false
