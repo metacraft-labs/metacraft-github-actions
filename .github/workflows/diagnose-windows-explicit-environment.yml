@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/diagnose-windows-explicit-environment.yml
       - diagnostics/windows-explicit-environment.c
+      - diagnostics/runquota-windows-exact-environment.ps1
 
 permissions:
   contents: read
@@ -21,9 +22,17 @@ jobs:
     timeout-minutes: 15
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
+      EXPECT_BASELINE_FAILURE: ${{ matrix.runner == 'windows-11-arm' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 48bb701c4d628ae206e9ed07fec0126b2ba9f6d3
+          path: .runquota
+          fetch-depth: 32
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -44,6 +53,9 @@ jobs:
           $code = $LASTEXITCODE
           Get-Content build/environment-control/result.log
           if ($code) { throw "Real OS control failed: $code" }
+      - name: Compare original, repaired and deliberately inheriting launchers
+        shell: pwsh
+        run: ./diagnostics/runquota-windows-exact-environment.ps1
       - name: Preserve environment control
         if: always()
         uses: actions/upload-artifact@v4
