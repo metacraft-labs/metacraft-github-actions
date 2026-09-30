@@ -17,7 +17,7 @@ permissions:
 jobs:
   observe:
     runs-on: windows-11-arm
-    timeout-minutes: 110
+    timeout-minutes: 150
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
     steps:
@@ -46,8 +46,8 @@ jobs:
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
           repro-stackable-hooks-pin: def2464b2d282c7c1a982689a25953e1d4501f93
           gh-token: ${{ steps.token.outputs.token }}
-      - name: Observe fixed native and monitored test binaries
-        timeout-minutes: 80
+      - name: Compare fixed test binaries with debug and release monitor shims
+        timeout-minutes: 120
         shell: pwsh
         run: ./.diagnostic-tools/diagnostics/runquota-windows-runtime-phases.ps1
       - name: Preserve every test result and read-only observation

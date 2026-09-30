@@ -14,6 +14,7 @@ __declspec(dllexport) volatile unsigned long repro_diagnostic_init_phase = 321;
 static PROCESSENTRY32 processes[4096];
 static DWORD selected[64];
 static unsigned long long selected_birth[64];
+static unsigned image_matches;
 
 static unsigned long long ticks(FILETIME time) {
     return ((unsigned long long)time.dwHighDateTime << 32) | time.dwLowDateTime;
@@ -94,6 +95,7 @@ static unsigned observe_process(DWORD pid, unsigned long long expected) {
             ++found;
             if (phase == 321) ++control_seen;
             printf("PHASE-STATE pid=%lu module=%s phase=%lu\n", pid, module.szModule, phase);
+            printf("PHASE-MODULE pid=%lu path=%s\n", pid, module.szExePath);
             const char *names[] = {"repro_diagnostic_frozen_count", "repro_diagnostic_prepared_count",
                                    "repro_diagnostic_exit_phase"};
             for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
@@ -122,7 +124,8 @@ static unsigned observe_process(DWORD pid, unsigned long long expected) {
     return control_seen;
 }
 
-static int tree(DWORD root, unsigned long long expected) {
+static int tree(DWORD root, unsigned long long expected, const char *test_image) {
+    image_matches = 0;
     HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, root);
     if (!process) return 2;
     unsigned long long created = birth(process);
@@ -140,6 +143,29 @@ static int tree(DWORD root, unsigned long long expected) {
         processes[count++] = entry;
     } while (Process32Next(snapshot, &entry));
     CloseHandle(snapshot);
+    /* MSYS exec/fork transitions can leave an application behind a parent
+     * already absent from this snapshot. Match only the requested full image
+     * and only processes born after the owned invocation. This is a separate
+     * observation anchor, not a claim about ancestry or cleanup ownership. */
+    if (test_image) for (unsigned i = 0; i < count && size < 64; ++i) {
+        DWORD pid = processes[i].th32ProcessID;
+        if (pid == root) continue;
+        HANDLE candidate = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+        if (!candidate) continue;
+        char path[4096];
+        DWORD path_size = sizeof(path);
+        unsigned long long candidate_birth = birth(candidate);
+        if (candidate_birth >= created &&
+            QueryFullProcessImageNameA(candidate, 0, path, &path_size) &&
+            !_stricmp(path, test_image)) {
+            selected_birth[size] = candidate_birth;
+            selected[size++] = pid;
+            ++image_matches;
+            printf("PHASE-IMAGE-ANCHOR pid=%lu creation=%llu path=%s\n",
+                   pid, candidate_birth, path);
+        }
+        CloseHandle(candidate);
+    }
     for (unsigned at = 0; at < size && size < 64; ++at) {
         for (unsigned i = 0; i < count && size < 64; ++i) {
             if (processes[i].th32ParentProcessID != selected[at]) continue;
@@ -183,8 +209,11 @@ static int control(int wrong_phase) {
     int result = 13;
     if (WaitForSingleObject(ready, 10000) == WAIT_OBJECT_0) {
         unsigned seen = observe_process(child.dwProcessId, birth(child.hProcess));
+        HANDLE current = GetCurrentProcess();
         if (seen == 1 && WaitForSingleObject(child.hProcess, 0) == WAIT_TIMEOUT &&
-            tree(child.dwProcessId, birth(child.hProcess)) == 0 &&
+            tree(GetCurrentProcessId(), birth(current), self) == 0 && image_matches > 0 &&
+            tree(GetCurrentProcessId(), birth(current), "C:\\not-the-requested-test.exe") == 0 &&
+            image_matches == 0 &&
             WaitForSingleObject(child.hProcess, 0) == WAIT_TIMEOUT) result = 0;
     }
     /* Control-only cleanup; the observation paths above never terminate. */
@@ -220,6 +249,8 @@ int main(int argc, char **argv) {
         return created ? 0 : 3;
     }
     if (argc == 4 && !strcmp(argv[1], "--tree"))
-        return tree(strtoul(argv[2], NULL, 10), strtoull(argv[3], NULL, 10));
+        return tree(strtoul(argv[2], NULL, 10), strtoull(argv[3], NULL, 10), NULL);
+    if (argc == 5 && !strcmp(argv[1], "--tree-image"))
+        return tree(strtoul(argv[2], NULL, 10), strtoull(argv[3], NULL, 10), argv[4]);
     return 64;
 }

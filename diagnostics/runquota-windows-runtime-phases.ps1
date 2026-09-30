@@ -33,9 +33,18 @@ python "$PSScriptRoot/trace-windows-hook-transaction.py"
 if ($LASTEXITCODE) { throw 'Hook phase exports failed to apply' }
 $env:IO_MON_SHIM_OUT_DIR = Join-Path $PWD 'reprobuild/build/lib'
 $env:IO_MON_SHIM_NIMCACHE_DIR = Join-Path $PWD 'build/runtime-phase-shim-cache'
+$env:IO_MON_BUILD_MODE = 'debug'
 & bash io-mon/scripts/build_shim.sh *> "$evidence/shim-build.log"
 if ($LASTEXITCODE) { throw 'Diagnostic shim did not compile' }
 Get-FileHash "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll" | Format-List | Out-String | Set-Content "$evidence/shim-sha256.txt"
+New-Item -ItemType Directory -Force "$evidence/shims/debug", "$evidence/shims/release" | Out-Null
+Copy-Item "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll" "$evidence/shims/debug/"
+$env:IO_MON_SHIM_OUT_DIR = "$evidence/shims/release"
+$env:IO_MON_SHIM_NIMCACHE_DIR = Join-Path $PWD 'build/runtime-phase-release-shim-cache'
+$env:IO_MON_BUILD_MODE = 'release'
+& bash io-mon/scripts/build_shim.sh *> "$evidence/release-shim-build.log"
+if ($LASTEXITCODE) { throw 'Release-mode diagnostic shim did not compile' }
+Remove-Item Env:IO_MON_BUILD_MODE
 git -C nim-stackable-hooks diff | Set-Content "$evidence/hooks.patch"
 git -C io-mon diff | Set-Content "$evidence/io-mon.patch"
 Copy-Item build/windows-arm-injection/init-phases.json "$evidence/init-phases.json"

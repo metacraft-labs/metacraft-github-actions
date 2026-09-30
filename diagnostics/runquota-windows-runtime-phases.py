@@ -7,6 +7,7 @@ import concurrent.futures
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,7 +32,14 @@ def main():
     if not repro or not bash:
         raise RuntimeError("Missing activated compiler environment")
     outcomes = []
-    for mode in ("native", "monitored"):
+    shim_paths = {mode: evidence / "shims" / mode / "librepro_monitor_shim.dll"
+                  for mode in ("debug", "release")}
+    shim_hashes = {mode: hashlib.sha256(path.read_bytes()).hexdigest()
+                   for mode, path in shim_paths.items()}
+    if shim_hashes["debug"] == shim_hashes["release"]:
+        raise RuntimeError("Build-mode comparison did not produce distinct shims")
+    (evidence / "shim-hashes.json").write_text(json.dumps(shim_hashes, indent=2))
+    for mode in ("native", "debug", "release"):
         if hashes() != baseline:
             raise RuntimeError("A comparison binary changed")
         folder = evidence / mode
@@ -40,7 +48,12 @@ def main():
         def run(name):
             command = [bash, "-c", 'timeout --kill-after=10 600 "$1" </dev/null',
                        "runquota-runtime-phases", str(binaries[name]).replace("\\", "/")]
-            if mode == "monitored":
+            env = os.environ.copy()
+            if mode != "native":
+                shim = shim_paths[mode]
+                if hashlib.sha256(shim.read_bytes()).hexdigest() != shim_hashes[mode]:
+                    raise RuntimeError("The selected shim changed")
+                env["REPRO_MONITOR_SHIM_LIB"] = str(shim)
                 command = [repro, "internal", "io", "monitor", "--depfile",
                            str(folder / (name + ".iomon")), "--", *command]
             started = time.monotonic()
@@ -51,7 +64,7 @@ def main():
             with (folder / (name + ".log")).open("wb") as output, \
                     (folder / (name + ".phases.log")).open("wb") as phases:
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                         stdout=output, stderr=subprocess.STDOUT)
+                                         stdout=output, stderr=subprocess.STDOUT, env=env)
                 try:
                     created = subprocess.run([str(observer), "--creation", str(child.pid)],
                                              capture_output=True, text=True, timeout=30)
@@ -64,7 +77,8 @@ def main():
                             phases.write(f"SAMPLE elapsed={elapsed:.3f} root={child.pid}\n".encode())
                             phases.flush()
                             try:
-                                probe = subprocess.run([str(observer), "--tree", str(child.pid), expected],
+                                probe = subprocess.run([str(observer), "--tree-image", str(child.pid), expected,
+                                                        str(binaries[name])],
                                                        stdout=phases, stderr=subprocess.STDOUT, timeout=30)
                                 phases.write(f"SAMPLE observer-exit={probe.returncode}\n".encode())
                             except subprocess.TimeoutExpired:
@@ -88,7 +102,12 @@ def main():
                         subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
                                        stdout=phases, stderr=subprocess.STDOUT, timeout=30)
                         child.wait(timeout=30)
+            observed = (folder / (name + ".phases.log")).read_text(errors="replace")
+            shim_observed = (mode == "native" or
+                             str(shim_paths[mode]).replace("\\", "/").lower() in
+                             observed.replace("\\", "/").lower())
             return {"mode": mode, "name": name, "exitCode": code, "outerExpired": outer_expired,
+                    "selectedShimObserved": shim_observed,
                     "rootPid": child.pid, "rootCreation": expected, "startedUtc": started_utc,
                     "elapsedSeconds": time.monotonic() - started}
 
@@ -101,7 +120,8 @@ def main():
                 (evidence / "results.json").write_text(json.dumps(outcomes, indent=2))
         if hashes() != baseline:
             raise RuntimeError("A comparison binary changed during execution")
-    return int(any(r["exitCode"] or r["outerExpired"] for r in outcomes))
+    return int(any(r["exitCode"] or r["outerExpired"] or not r["selectedShimObserved"]
+                   for r in outcomes))
 
 
 if __name__ == "__main__":
