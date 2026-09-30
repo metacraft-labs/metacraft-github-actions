@@ -8,8 +8,8 @@ $pins = @{
     '.toolchain' = 'c14b1e618d7c4b64476d89792e80b8e8f10b8a52'
     'nim-stackable-hooks' = '8f4d806ce1ae58e6b4292fed92944171eff4f7a2'
     'io-mon' = '5e71adf033b860c0fdbe13dda4320cf4a580f632'
-    'nim-shm-queue' = '5a8e43b52fa202859658692c9f8432967f3971ea'
-    'nim-shm-gset' = 'cf0adf2f39647f5b203b2ab694414a3c50e93951'
+    'nim-shm-queue' = '02f442ac12ce2587d9c053c527041097af38609f'
+    'nim-shm-gset' = '1caac0e0ec48f025c69c6370b63017c47c18c96e'
 }
 foreach ($repo in $pins.Keys) {
     $actual = git -C $repo rev-parse HEAD

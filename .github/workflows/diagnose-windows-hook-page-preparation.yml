@@ -42,13 +42,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/nim-shm-queue
-          ref: 5a8e43b52fa202859658692c9f8432967f3971ea
+          ref: 02f442ac12ce2587d9c053c527041097af38609f
           path: nim-shm-queue
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/nim-shm-gset
-          ref: cf0adf2f39647f5b203b2ab694414a3c50e93951
+          ref: 1caac0e0ec48f025c69c6370b63017c47c18c96e
           path: nim-shm-gset
           persist-credentials: false
       - name: Compare original and prepared pages
