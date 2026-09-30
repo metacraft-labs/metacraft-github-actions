@@ -1,0 +1,54 @@
+name: Diagnose monitored Linux hook signal chaining
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-linux-hook-signal-chaining.yml
+      - diagnostics/linux-hook-signal-chaining.py
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: f3a9dc18849302dbf52df349aaa4bf6c41413eed
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: actions/create-github-app-token@v2
+        id: token
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Compare fixture signal policy with the same monitor
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace_root=$(nix build --no-link --print-out-paths --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.strace')
+          export HOOKS_SIGNAL_STRACE="$trace_root/bin/strace"
+          export HOOKS_SIGNAL_REPRO
+          HOOKS_SIGNAL_REPRO=$(command -v repro)
+          signal_python=$(command -v python3)
+          repro exec -- "$signal_python" .diagnostic-tools/diagnostics/linux-hook-signal-chaining.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-hook-signal-chaining
+          path: build/signal-chaining/
+          retention-days: 14
+          if-no-files-found: error
