@@ -23,6 +23,12 @@ try {
     # Full logs remain artifacts. Streaming thousands of lines through the
     # Windows console exhausted the diagnostic step after all pairs passed.
     $env:REPRO_DIAGNOSTIC_TAIL_LINES = '12'
+    $compiler = $env:REPRO_BOOTSTRAP_CC
+    if (-not $compiler -or -not (Test-Path $compiler)) { throw 'Missing real compiler for startup observer control' }
+    & $compiler "$PSScriptRoot/windows-helper-startup-control.c" -o "$evidence/helper-startup-control.exe" *> "$evidence/helper-startup-control-build.log"
+    if ($LASTEXITCODE) { throw 'Startup observer control did not compile' }
+    & "$evidence/helper-startup-control.exe" *> "$evidence/helper-startup-control.log"
+    if ($LASTEXITCODE) { throw 'Real startup observer control failed' }
   if ($env:RUNQUOTA_READINESS_FULL_GRAPH -ne 'true') {
     Edit-Diagnostic 'repro.nim' '    testSources.sort()' @'
     testSources.sort()
@@ -78,7 +84,17 @@ proc diagnosticDaemonOutput(process: Process): string =
 
 proc diagnosticHelperWait(process: Process; timeoutMillis: int): int =
   let started = getMonoTime()
-  result = process.waitForExit(timeoutMillis)
+  when defined(windows):
+    let observed = diagnosticWaitHelper(culong(process.processID), culong(timeoutMillis))
+    if observed != 0 and observed != 258:
+      raise newException(OSError, "Could not observe the actual Windows helper wait")
+    result = process.waitForExit(0)
+    # A captured deadline remains a failure even if the helper completes while
+    # the observer collects state. Do not confuse Nim's timeout exit zero with
+    # the intentionally normal supervisor exit.
+    check observed != 258
+  else:
+    result = process.waitForExit(timeoutMillis)
   echo "DIAGNOSTIC helper pid=", process.processID, " exit=", result,
     " running=", process.running,
     " wait_ms=", (getMonoTime() - started).inMilliseconds,
@@ -92,6 +108,16 @@ template diagnosticHelperPhase(label: string) =
       " tick_ns=", getMonoTime().ticks, " phase=", label
     flushFile(stdout)
 '@
+    $observerHeader = (Join-Path $PSScriptRoot 'windows-helper-startup.h').Replace('\', '/')
+    $observer = @"
+when defined(windows):
+  {.emit: staticRead("$observerHeader").}
+  proc diagnosticWaitHelper(pid, timeoutMillis: culong): culong {.
+    importc: "rq_diagnostic_wait_helper", nodecl.}
+
+proc diagnosticHelperWait(process: Process; timeoutMillis: int): int =
+"@
+    Edit-Diagnostic $fixture 'proc diagnosticHelperWait(process: Process; timeoutMillis: int): int =' $observer
     Edit-Diagnostic $fixture '  var child = startProcess(' @'
   diagnosticHelperPhase("begin sleep child spawn")
   var child = startProcess(
