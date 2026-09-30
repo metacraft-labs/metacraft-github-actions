@@ -25,6 +25,32 @@ try {
     Edit-Diagnostic 'repro.nim' 'cacheable = not isolatesEnvironment,' 'cacheable = false,'
     $fixture = 'tests/e2e/crash-recovery/t_e2e_runquota_client_exit_releases_lease.nim'
     Edit-Diagnostic $fixture 'import std/[envvars, json, os, osproc, strutils, unittest]' 'import std/[envvars, json, monotimes, os, osproc, streams, strutils, times, unittest]'
+    Edit-Diagnostic $fixture 'const HelperModeEnv = "RUNQUOTA_E2E_CRASH_MODE"' @'
+when defined(windows):
+  import std/winlean
+
+proc diagnosticDaemonOutput(process: Process): string =
+  # A descendant can retain the write end after the daemon has exited.
+  # Read only bytes already present; logging must not wait for pipe EOF.
+  when defined(windows):
+    let stream = process.outputStream
+    var buffer: array[4096, char]
+    while result.len < 65536:
+      var available = 0'i32
+      if not winlean.peekNamedPipe(winlean.Handle(process.outputHandle),
+          lpTotalBytesAvail = addr available) or available <= 0:
+        break
+      let count = stream.readData(addr buffer[0],
+        min(min(int(available), buffer.len), 65536 - result.len))
+      if count <= 0:
+        break
+      for index in 0 ..< count:
+        result.add(buffer[index])
+  else:
+    result = process.outputStream.readAll()
+
+const HelperModeEnv = "RUNQUOTA_E2E_CRASH_MODE"
+'@
     Edit-Diagnostic $fixture '  let process = startProcess(' @'
   let diagnosticStart = getMonoTime()
   let process = startProcess(
@@ -53,7 +79,7 @@ try {
       discard process.waitForExit(3000)
     if not process.running:
       echo "DIAGNOSTIC daemon exit=", process.peekExitCode(),
-        " output: ", process.outputStream.readAll()
+        " output: ", diagnosticDaemonOutput(process)
     process.close()
 '@
     Edit-Diagnostic 'apps/runquotad/runquotad.nim' '  let runningAsService = beginWindowsServiceHost(windowsServiceName)' @'
