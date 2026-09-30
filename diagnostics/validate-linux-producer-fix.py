@@ -15,9 +15,13 @@ fixture = root / 'build/test-bin/t_m5_process_exec_bench_contract'
 digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
 assert digest == 'e3948fe9a7824d78ecf84d1d354ece929b0532839169514f121a0aabf7ce7165'
 fixture.chmod(0o755)
-old_shim = evidence / 'original-shim.so'
+# The Linux mapping policy identifies its own DSO by this basename. Renaming
+# it would patch the shim itself and fail before the fixture reaches main.
+original = evidence / 'original'
+original.mkdir(exist_ok=True)
+old_shim = original / 'librepro_monitor_shim.so'
 shutil.copy2(monitor / 'build/lib/librepro_monitor_shim.so', old_shim)
-old_cli = evidence / 'original-io-mon'
+old_cli = original / 'io-mon'
 shutil.copy2(monitor / 'build/bin/io-mon', old_cli)
 old_cli.chmod(0o755)
 results = []
@@ -60,13 +64,20 @@ for name, shim in variants.items():
     env = dict(clean, REPRO_MONITOR_SHIM_LIB=str(shim))
     run('growth-' + name, ['nix', 'develop', '--command', str(regression)],
         cwd=monitor, env=env, required=(name == 'production'))
-for repetition in range(1, 6):
+for repetition in range(1, 9):
     for name, shim in variants.items():
         env = dict(clean, REPRO_MONITOR_SHIM_LIB=str(shim))
         label = f'fixture-{name}-{repetition}'
         run(label, [str(old_cli), 'run', '--depfile',
                    str(evidence / (label + '.iomon')), '--', str(fixture)],
             env=env, required=(name == 'production'))
-originals = [row for row in results if row['name'] == 'growth-original'
-             or row['name'].startswith('fixture-original-')]
-assert any(row['exitCode'] for row in originals), 'Original failure did not reproduce'
+heap_failures = []
+for row in results:
+    if not row['name'].startswith('fixture-original-'):
+        continue
+    output = (evidence / (row['name'] + '.log')).read_text(errors='replace')
+    if (row['exitCode'] == 134 and output.count('[OK]') >= 10
+            and re.search(r'double free|invalid pointer|corruption|invalid next size', output)):
+        heap_failures.append(row['name'])
+assert heap_failures, 'Original heap failure did not reproduce after entering the fixture'
+print('Confirmed original heap failures:', ', '.join(heap_failures), flush=True)
