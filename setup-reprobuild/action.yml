@@ -308,19 +308,20 @@ runs:
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/.reprobuild-src"
-        io_mon_override=()
+        # Bash 3.2 treats an empty array as unset under nounset. Keep the
+        # command itself in the array so the default path is nonempty too.
+        nix_develop_args=(develop)
         if [ -n "${IO_MON_PIN}" ]; then
           if [[ ! "${IO_MON_PIN}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::io-mon-pin must be a full lowercase source SHA"
             exit 1
           fi
-          io_mon_override=(--override-input io-mon-src "github:metacraft-labs/io-mon/${IO_MON_PIN}")
+          nix_develop_args+=(--override-input io-mon-src "github:metacraft-labs/io-mon/${IO_MON_PIN}")
         fi
         # Use the dev shell's just target — the same path reprobuild's own CI
         # exercises — overriding the private flake inputs to the local clones
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
-        nix develop \
-          "${io_mon_override[@]}" \
+        nix "${nix_develop_args[@]}" \
           --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
           --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
           --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
