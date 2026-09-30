@@ -209,6 +209,10 @@ inputs:
     description: io-mon source ref for the source-built Windows Reprobuild monitor.
     required: false
     default: "dev"
+  repro-stackable-hooks-pin:
+    description: Optional full lowercase hook-library source SHA for the Windows Reprobuild bootstrap; empty retains dev.
+    required: false
+    default: ""
   repro-publish-key:
     description: >
       ECDSA-P256 signing private key (PEM) for publishing `repro build`
@@ -671,12 +675,13 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c70882ae9281edba7a87ad245cb4b30592331f2c
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c2b603a08e9ad68096761074951395d1875bb289
       with:
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
         runquota-ref: ${{ inputs.repro-runquota-pin }}
         io-mon-ref: ${{ inputs.repro-io-mon-pin }}
+        stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
