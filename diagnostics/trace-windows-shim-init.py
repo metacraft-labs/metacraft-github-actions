@@ -12,7 +12,11 @@ text = source.read_text()
 anchor = 'proc installAllHooks(): int =\n'
 assert text.count(anchor) == 1
 text = text.replace(anchor, '''{.emit: """
+#include <stdint.h>
 __declspec(dllexport) volatile unsigned long repro_diagnostic_init_phase = 0;
+__declspec(dllexport) volatile uintptr_t repro_diagnostic_patch_target = 0;
+__declspec(dllexport) volatile unsigned long repro_diagnostic_frozen_count = 0;
+__declspec(dllexport) volatile unsigned long repro_diagnostic_frozen_tids[4096];
 """.}
 proc traceInitPhase(phase: uint32) {.inline.} =
   {.emit: "repro_diagnostic_init_phase = `phase`;".}

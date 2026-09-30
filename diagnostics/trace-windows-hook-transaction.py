@@ -10,7 +10,11 @@ base = Path('nim-stackable-hooks/src/stackable_hooks/inline_hook/windows')
 phases_path = Path('build/windows-arm-injection/init-phases.json')
 phases = json.loads(phases_path.read_text())
 declaration = '''
+#include <stdint.h>
 extern volatile unsigned long repro_diagnostic_init_phase;
+extern volatile uintptr_t repro_diagnostic_patch_target;
+extern volatile unsigned long repro_diagnostic_frozen_count;
+extern volatile unsigned long repro_diagnostic_frozen_tids[4096];
 #define CT_INIT_PHASE(n) (repro_diagnostic_init_phase = (n))
 '''
 
@@ -100,6 +104,23 @@ instrument(base / 'rel32_fixup.c', [
         ('    arena->base = (uint8_t *)got;', 154, 'thunk arena allocation complete'),
     ]),
 ])
+
+# Retain only code addresses and thread ids. Stores add no calls inside the
+# suspended region; the parent reads them after an already-fatal deadline.
+p = base / 'install_windows.c'
+s = p.read_text()
+for old, new in [
+    ('    out->count = 0;', '    out->count = 0;\n    repro_diagnostic_frozen_count = 0;'),
+    ('                        out->count++;',
+     '                        repro_diagnostic_frozen_tids[out->count] = te.th32ThreadID;\n'
+     '                        out->count++;\n'
+     '                        repro_diagnostic_frozen_count = out->count;'),
+    ('    CT_INIT_PHASE(130);',
+     '    repro_diagnostic_patch_target = (uintptr_t)from;\n    CT_INIT_PHASE(130);'),
+]:
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+p.write_text(s)
 
 # The broad transaction checkpoints distinguish snapshot/suspension, install,
 # allocation and instruction-cache flushing without depending on stack unwinding.
