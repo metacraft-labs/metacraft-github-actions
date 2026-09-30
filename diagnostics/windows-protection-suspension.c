@@ -80,12 +80,17 @@ static DWORD WINAPI protection_worker(void *unused) {
 int main(int argc, char **argv) {
     if (argc != 4) return 2;
     const int active = strcmp(argv[1], "active") == 0;
-    const int protect = active || strcmp(argv[1], "protect") == 0;
+    const int prepared = strcmp(argv[1], "prepared") == 0;
+    const int protect = active || prepared || strcmp(argv[1], "protect") == 0;
     const int flush = strcmp(argv[1], "flush") == 0;
     const int write = strcmp(argv[1], "write") == 0;
     const int all = strcmp(argv[2], "all") == 0;
     const int image = strcmp(argv[3], "image") == 0;
-    const int system = strcmp(argv[3], "system") == 0;
+    const int first = strcmp(argv[3], "createfile") == 0;
+    const int system = first || strcmp(argv[3], "system") == 0;
+    const unsigned rounds = first ? 1 : ROUNDS;
+    /* The failing compiler has only runtime peers at shim initialization. */
+    const unsigned workerCount = first ? 0 : WORKERS;
     if (!protect && !flush && !write) return 2;
     char mappingName[96];
     snprintf(mappingName, sizeof(mappingName), "Local\\ReproProtectionProbe-%lu",
@@ -98,7 +103,7 @@ int main(int argc, char **argv) {
     HMODULE module = image ? LoadLibraryA("protection-target.dll") :
         system ? GetModuleHandleA("kernel32.dll") : NULL;
     unsigned char *page = image ? (unsigned char *)GetProcAddress(module, "repro_probe_code") :
-        system ? (unsigned char *)GetProcAddress(module, "GetFileAttributesW") : code_page();
+        system ? (unsigned char *)GetProcAddress(module, first ? "CreateFileW" : "GetFileAttributesW") : code_page();
     if (!page) return 22;
     const unsigned char expected[] = {0xb8, 7, 0, 0, 0, 0xc3};
     if (!system && memcmp(page, expected, sizeof(expected))) return 23;
@@ -109,30 +114,39 @@ int main(int argc, char **argv) {
                              PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) return 24;
     /* Translate the probe page too: real hook targets already contain code
      * that has executed, unlike a fresh untouched executable allocation. */
-    if (system) {
+    if (first) {
+        /* Preserve the first protection transition on this exact target. */
+    } else if (system) {
         typedef DWORD (WINAPI *AttributesFn)(LPCWSTR);
         if (((AttributesFn)page)(L".") == INVALID_FILE_ATTRIBUTES) return 25;
     } else if (((int (*)(void))page)() != 7) return 15;
     printf("target=%s address=%p type=%lx original-protection=%lx rounds=%u\n",
            argv[3], page, (unsigned long)pageInfo.Type,
-           (unsigned long)pageInfo.Protect, ROUNDS);
+           (unsigned long)pageInfo.Protect, rounds);
     HANDLE workers[WORKERS];
     DWORD workerIds[WORKERS];
-    for (unsigned i = 0; i < WORKERS; i++) {
+    for (unsigned i = 0; i < workerCount; i++) {
         workers[i] = CreateThread(NULL, 0, protection_worker, NULL, 0, &workerIds[i]);
         if (!workers[i]) return 7;
     }
-    while (InterlockedCompareExchange(&ready, 0, 0) != WORKERS) Sleep(0);
-    for (unsigned round = 0; round < ROUNDS; round++) {
+    while ((unsigned)InterlockedCompareExchange(&ready, 0, 0) != workerCount) Sleep(0);
+    for (unsigned round = 0; round < rounds; round++) {
         DWORD old;
-        if (!VirtualProtect(page, 6, write ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ, &old)) return 8;
+        if (prepared) {
+            observe(round, 6);
+            if (!VirtualProtect(page, 6, PAGE_EXECUTE_READWRITE, &old)) return 26;
+            DWORD ignored;
+            if (!VirtualProtect(page, 6, old, &ignored)) return 27;
+        } else if (!first) {
+            if (!VirtualProtect(page, 6, write ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ, &old)) return 8;
+        }
         phase(round, active ? "workers-active" : "freeze-workers");
         HANDLE peers[128]; DWORD ids[128];
         observe(round, 1);
-        unsigned count = all ? peer_handles(peers, ids) : WORKERS;
+        unsigned count = all ? peer_handles(peers, ids) : workerCount;
         if (!all) {
-            memcpy(peers, workers, sizeof(workers));
-            memcpy(ids, workerIds, sizeof(workerIds));
+            memcpy(peers, workers, workerCount * sizeof(workers[0]));
+            memcpy(ids, workerIds, workerCount * sizeof(workerIds[0]));
         }
         observation[2] = 0;
         if (!active) {
@@ -159,13 +173,18 @@ int main(int argc, char **argv) {
                 if (ResumeThread(peers[i]) == (DWORD)-1) return 12;
         }
         if (all) for (unsigned i = 0; i < count; i++) CloseHandle(peers[i]);
+        if (first) {
+            DWORD ignored;
+            if (!VirtualProtect(page, 6, pageInfo.Protect, &ignored)) return 28;
+            printf("runtime-peer-count=%u\n", count);
+        }
         phase(round, "operation-returned");
         if (write && !FlushInstructionCache(GetCurrentProcess(), page, 6)) return 13;
         Sleep(0);
     }
     InterlockedExchange(&stopped, 1);
-    if (WaitForMultipleObjects(WORKERS, workers, TRUE, 5000) != WAIT_OBJECT_0) return 14;
-    for (unsigned i = 0; i < WORKERS; i++) CloseHandle(workers[i]);
+    if (workerCount && WaitForMultipleObjects(workerCount, workers, TRUE, 5000) != WAIT_OBJECT_0) return 14;
+    for (unsigned i = 0; i < workerCount; i++) CloseHandle(workers[i]);
     if (image) FreeLibrary(module);
     else if (!system) VirtualFree(page, 0, MEM_RELEASE);
     UnmapViewOfFile((void *)observation);

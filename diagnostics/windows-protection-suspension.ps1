@@ -10,10 +10,12 @@ if ($LASTEXITCODE) { throw 'Could not compile the real Windows API probe' }
 & gcc -shared -fcf-protection=none -Wall -Wextra -o "$evidence/protection-target.dll" "$PSScriptRoot/windows-protection-target.c" *> "$evidence/target-build.log"
 if ($LASTEXITCODE) { throw 'Could not compile the real image-page target' }
 $results = @()
-foreach ($round in 1..2) {
-  foreach ($scope in @('known', 'all')) {
-   foreach ($backing in @('private', 'image', 'system')) {
-    foreach ($mode in @('active', 'protect', 'flush', 'write')) {
+# Fresh processes are essential: the older repeated-page control changes
+# protection once before suspension, hiding a first-transition dependency.
+foreach ($round in 1..16) {
+  foreach ($scope in @('all')) {
+   foreach ($backing in @('createfile')) {
+    foreach ($mode in @('active', 'protect', 'prepared')) {
         $log = "$evidence/$scope-$backing-$mode-$round.log"
         $err = "$evidence/$scope-$backing-$mode-$round.stderr"
         $process = Start-Process -FilePath "$evidence/probe.exe" -ArgumentList @($mode, $scope, $backing) -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError $err
