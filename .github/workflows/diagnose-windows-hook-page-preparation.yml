@@ -1,0 +1,65 @@
+name: Compare hook page preparation on real assembler children
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-hook-page-preparation.yml
+      - diagnostics/windows-hook-page-preparation.ps1
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: windows-11-arm
+    timeout-minutes: 100
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 8f4d806ce1ae58e6b4292fed92944171eff4f7a2
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          path: io-mon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-queue
+          ref: 5a8e43b52fa202859658692c9f8432967f3971ea
+          path: nim-shm-queue
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-shm-gset
+          ref: cf0adf2f39647f5b203b2ab694414a3c50e93951
+          path: nim-shm-gset
+          persist-credentials: false
+      - name: Compare original and prepared pages
+        timeout-minutes: 90
+        shell: pwsh
+        run: ./diagnostics/windows-hook-page-preparation.ps1
+      - name: Retain both variants and every outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hook-page-preparation
+          path: build/windows-hook-page-preparation/
+          if-no-files-found: error
+          retention-days: 14

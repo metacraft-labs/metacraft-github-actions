@@ -1,15 +1,22 @@
 """Fresh real assembler processes through the pinned injector; no mocks."""
 import concurrent.futures
+import argparse
 import json
 from pathlib import Path
 import subprocess
-import sys
 import time
 
 
 def main():
-    driver, assembler, shim, root = sys.argv[1:]
-    root = Path(root).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("driver", "assembler", "shim", "root"):
+        parser.add_argument(name)
+    parser.add_argument("--samples", type=int, default=128)
+    args = parser.parse_args()
+    if args.samples < 1:
+        parser.error("--samples must be positive")
+    driver, assembler, shim = args.driver, args.assembler, args.shim
+    root = Path(args.root).resolve()
     outcomes = []
 
     def run(mode, index):
@@ -32,7 +39,8 @@ def main():
 
     for mode in ("native", "monitored", "propagated"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(run, mode, i) for i in range(128)]
+            count = 128 if mode == "native" else args.samples
+            futures = [executor.submit(run, mode, i) for i in range(count)]
             for future in concurrent.futures.as_completed(futures):
                 if future.cancelled():
                     continue

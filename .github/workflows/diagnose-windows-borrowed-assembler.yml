@@ -2,13 +2,6 @@ name: Diagnose borrowed-thread assembler startup
 
 on:
   workflow_dispatch:
-  push:
-    branches: [fix/macos-worker-diagnostics]
-    paths:
-      - .github/workflows/diagnose-windows-borrowed-assembler.yml
-      - diagnostics/windows_borrowed_assembler.nim
-      - diagnostics/windows-borrowed-assembler.py
-      - diagnostics/windows-borrowed-assembler.ps1
 
 permissions:
   contents: read
