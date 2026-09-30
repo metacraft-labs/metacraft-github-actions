@@ -3,6 +3,9 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $evidence = Join-Path $PWD 'build/windows-arm-injection'
 New-Item -ItemType Directory -Force $evidence | Out-Null
+$parkSource = Join-Path $PWD 'nim-stackable-hooks/src/stackable_hooks/windows_entry_park.nim'
+$originalPark = [IO.File]::ReadAllText($parkSource)
+$threadLocalFailure = $false
 python "$PSScriptRoot/trace-windows-borrowed-call.py"
 if ($LASTEXITCODE) { throw 'Could not instrument the exact source' }
 if ($env:RUNQUOTA_BALANCED_CONTEXT -eq 'true') {
@@ -22,7 +25,32 @@ if ($env:RUNQUOTA_BALANCED_CONTEXT -eq 'true') {
             & nim c --cpu:amd64 --threads:on "--out:$evidence/$test.exe" "nim-stackable-hooks/tests/$test.nim" *> "$evidence/$test-build.log"
             if ($LASTEXITCODE) { throw "Could not build $test" }
             & "$evidence/$test.exe" *> "$evidence/$test.log"
-            if ($LASTEXITCODE) { throw "$test failed" }
+            if ($LASTEXITCODE) {
+                if ($test -ne 'test_windows_entry_park_thread_locals') { throw "$test failed" }
+                $threadLocalFailure = $true
+                $balancedCode = $LASTEXITCODE
+                $balancedPark = [IO.File]::ReadAllText($parkSource)
+                $savedTemp = $env:TEMP
+                $savedTmp = $env:TMP
+                try {
+                    # Compare the same assertion with the original source before
+                    # attributing its failure to suspended context sampling.
+                    [IO.File]::WriteAllText($parkSource, $originalPark)
+                    $baselineTemp = Join-Path $evidence 'baseline-tls-temp'
+                    New-Item -ItemType Directory -Force $baselineTemp | Out-Null
+                    $env:TEMP = $baselineTemp
+                    $env:TMP = $baselineTemp
+                    & nim c --cpu:amd64 --threads:on "--nimcache:$evidence/baseline-tls-cache" "--out:$evidence/baseline_tls.exe" "nim-stackable-hooks/tests/$test.nim" *> "$evidence/baseline-tls-build.log"
+                    if ($LASTEXITCODE) { throw 'Could not build the original TLS control' }
+                    & "$evidence/baseline_tls.exe" *> "$evidence/baseline-tls.log"
+                    @{original=$LASTEXITCODE; balanced=$balancedCode} | ConvertTo-Json |
+                        Set-Content "$evidence/tls-comparison.json"
+                } finally {
+                    [IO.File]::WriteAllText($parkSource, $balancedPark)
+                    $env:TEMP = $savedTemp
+                    $env:TMP = $savedTmp
+                }
+            }
         }
     } finally {
         $env:STACKABLE_HOOKS_CONTROL_CHILD = $savedChild
@@ -39,3 +67,4 @@ $env:REPROBUILD_MAX_PARALLELISM = '8'
 if ($LASTEXITCODE) { throw 'Full monitored compilation failed; retain failure-only context evidence' }
 & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/test.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/test.json"
 if ($LASTEXITCODE) { throw 'Full monitored execution failed' }
+if ($threadLocalFailure) { throw 'TLS regression failed; original comparison and full graph evidence retained' }
