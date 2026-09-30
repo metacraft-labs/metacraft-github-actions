@@ -56,14 +56,14 @@ static void *export_address(HANDLE process, char *base, const char *wanted) {
     return NULL;
 }
 
-static unsigned observe_process(DWORD pid, unsigned long long earliest) {
+static unsigned observe_process(DWORD pid, unsigned long long expected) {
     HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
     if (!process) {
         printf("PHASE-STATE pid=%lu open-error=%lu\n", pid, GetLastError());
         return 0;
     }
     FILETIME c, e, k, u;
-    if (!GetProcessTimes(process, &c, &e, &k, &u) || ticks(c) < earliest) {
+    if (!GetProcessTimes(process, &c, &e, &k, &u) || ticks(c) != expected) {
         printf("PHASE-STATE pid=%lu rejected-creation-time\n", pid);
         CloseHandle(process);
         return 0;
@@ -72,6 +72,10 @@ static unsigned observe_process(DWORD pid, unsigned long long earliest) {
     GetExitCodeProcess(process, &exit_code);
     printf("PHASE-STATE pid=%lu creation=%llu kernel_100ns=%llu user_100ns=%llu exit=%lu\n",
            pid, ticks(c), ticks(k), ticks(u), exit_code);
+    char path[4096];
+    DWORD path_size = sizeof(path);
+    if (QueryFullProcessImageNameA(process, 0, path, &path_size))
+        printf("PHASE-IMAGE pid=%lu path=%s\n", pid, path);
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
     unsigned control_seen = 0, found = 0;
     if (snapshot != INVALID_HANDLE_VALUE) {
@@ -90,8 +94,9 @@ static unsigned observe_process(DWORD pid, unsigned long long earliest) {
             ++found;
             if (phase == 321) ++control_seen;
             printf("PHASE-STATE pid=%lu module=%s phase=%lu\n", pid, module.szModule, phase);
-            const char *names[] = {"repro_diagnostic_frozen_count", "repro_diagnostic_prepared_count"};
-            for (unsigned i = 0; i < 2; ++i) {
+            const char *names[] = {"repro_diagnostic_frozen_count", "repro_diagnostic_prepared_count",
+                                   "repro_diagnostic_exit_phase"};
+            for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
                 DWORD value = 0;
                 symbol = export_address(process, (char *)module.modBaseAddr, names[i]);
                 if (symbol && ReadProcessMemory(process, symbol, &value, sizeof(value), &got))
@@ -149,12 +154,14 @@ static int tree(DWORD root, unsigned long long expected) {
                 if (!candidate_birth || candidate_birth < selected_birth[at]) continue;
                 selected_birth[size] = candidate_birth;
                 selected[size++] = pid;
+                printf("PHASE-TREE pid=%lu parent=%lu image=%s\n",
+                       pid, selected[at], processes[i].szExeFile);
             }
         }
     }
     printf("PHASE-STATE tree-root=%lu creation=%llu members=%u capped=%d\n",
            root, created, size, size == 64);
-    for (unsigned i = 0; i < size; ++i) observe_process(selected[i], created);
+    for (unsigned i = 0; i < size; ++i) observe_process(selected[i], selected_birth[i]);
     return 0;
 }
 

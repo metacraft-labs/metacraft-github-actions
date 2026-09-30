@@ -9,6 +9,7 @@ on:
       - diagnostics/windows-process-phase.c
       - diagnostics/runquota-windows-runtime-phases.py
       - diagnostics/runquota-windows-runtime-phases.ps1
+      - diagnostics/trace-windows-shim-exit.py
 
 permissions:
   contents: read

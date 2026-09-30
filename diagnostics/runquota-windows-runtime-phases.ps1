@@ -27,6 +27,8 @@ python "$PSScriptRoot/trace-windows-borrowed-call.py"
 if ($LASTEXITCODE) { throw 'Borrowed-call observer failed to apply' }
 python "$PSScriptRoot/trace-windows-shim-init.py"
 if ($LASTEXITCODE) { throw 'Initialization phase exports failed to apply' }
+python "$PSScriptRoot/trace-windows-shim-exit.py"
+if ($LASTEXITCODE) { throw 'Shutdown phase exports failed to apply' }
 python "$PSScriptRoot/trace-windows-hook-transaction.py"
 if ($LASTEXITCODE) { throw 'Hook phase exports failed to apply' }
 $env:IO_MON_SHIM_OUT_DIR = Join-Path $PWD 'reprobuild/build/lib'
