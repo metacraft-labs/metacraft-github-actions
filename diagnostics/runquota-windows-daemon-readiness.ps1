@@ -14,6 +14,7 @@ function Edit-Diagnostic([string]$Path, [string]$Before, [string]$After) {
     [IO.File]::WriteAllText((Join-Path $PWD $Path), $text.Replace($Before, $After))
 }
 try {
+  if ($env:RUNQUOTA_READINESS_FULL_GRAPH -ne 'true') {
     Edit-Diagnostic 'repro.nim' '    testSources.sort()' @'
     testSources.sort()
     var selected: seq[string] = @[]
@@ -22,6 +23,7 @@ try {
         selected.add(source)
     testSources = selected
 '@
+  }
     Edit-Diagnostic 'repro.nim' 'cacheable = not isolatesEnvironment,' 'cacheable = false,'
     $fixture = 'tests/e2e/crash-recovery/t_e2e_runquota_client_exit_releases_lease.nim'
     Edit-Diagnostic $fixture 'import std/[envvars, json, os, osproc, strutils, unittest]' 'import std/[envvars, json, monotimes, os, osproc, streams, strutils, times, unittest]'
@@ -104,32 +106,19 @@ const HelperModeEnv = "RUNQUOTA_E2E_CRASH_MODE"
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
     $results += @{mode='monitored-graph'; exitCode=$LASTEXITCODE}
-    $env:REPRO_TOOL_PROVISIONING = 'tarball'
-    $reproExe = (Get-Command repro).Source
-    $binary = Join-Path $PWD 'build/test-bin/t_e2e_runquota_client_exit_releases_lease.exe'
-    if (-not (Test-Path $binary)) { throw "Missing real fixture $binary" }
-    $fixtureHash = (Get-FileHash $binary).Hash
-    $daemon = Join-Path $PWD 'build/bin/runquotad.exe'
-    $daemonHash = (Get-FileHash $daemon).Hash
-    foreach ($round in 1..8) {
-        foreach ($mode in @('native', 'monitored')) {
-            $prefix = "$evidence/$mode-$round"
-            if ($mode -eq 'native') {
-                & bash "$PSScriptRoot/capture-ci-command.sh" "$prefix.log" repro exec -- timeout --kill-after=10 600 $binary
-            } else {
-                & bash "$PSScriptRoot/capture-ci-command.sh" "$prefix.log" repro exec -- timeout --kill-after=10 600 $reproExe internal io monitor --depfile "$prefix.iomon" -- $binary
-            }
-            $code = $LASTEXITCODE
-            $results += @{mode=$mode; round=$round; exitCode=$code; fixtureSha256=$fixtureHash; daemonSha256=$daemonHash}
-            $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
-            if ((Get-FileHash $binary).Hash -ne $fixtureHash -or (Get-FileHash $daemon).Hash -ne $daemonHash) {
-                throw 'A comparison binary changed'
-            }
-            Get-Content "$prefix.log" -Tail 35
-        }
-    }
-} finally {
     $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+    $env:REPRO_TOOL_PROVISIONING = 'tarball'
+    if ($env:RUNQUOTA_READINESS_FULL_GRAPH -ne 'true') {
+        # Materialize the dev environment once for the entire paired comparison.
+        # Re-entering it for every sample dominated the earlier diagnostic.
+        & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/repetitions.log" repro exec -- pwsh -NoProfile -File "$PSScriptRoot/runquota-windows-daemon-readiness-repeat.ps1"
+        if ($LASTEXITCODE) { throw 'Repeated startup comparison failed' }
+    }
+    $results = @(Get-Content "$evidence/results.json" -Raw | ConvertFrom-Json)
+} finally {
+    if (-not (Test-Path "$evidence/results.json")) {
+        $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
+    }
     foreach ($path in $originals.Keys) { [IO.File]::WriteAllText((Join-Path $PWD $path), $originals[$path]) }
 }
 if (@($results | Where-Object { $_.exitCode -ne 0 }).Count) { throw 'A real comparison failed; inspect daemon startup evidence' }

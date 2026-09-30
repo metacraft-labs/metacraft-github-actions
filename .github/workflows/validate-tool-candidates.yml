@@ -6,6 +6,10 @@ name: Validate tool candidates on Linux
 on:
   workflow_dispatch:
     inputs:
+      readiness-full-graph:
+        description: Keep the complete RunQuota graph in the Windows readiness diagnostic
+        type: boolean
+        default: false
       product:
         description: Product whose complete suite should run
         type: choice
@@ -1136,12 +1140,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [readiness]
+        mode: ${{ fromJSON(inputs.readiness-full-graph && '["readiness-full"]' || '["readiness"]') }}
     runs-on: windows-2025
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
       RUNQUOTA_DEADLINE_GRAPH: ${{ matrix.mode }}
-    timeout-minutes: 90
+      RUNQUOTA_READINESS_FULL_GRAPH: ${{ inputs.readiness-full-graph && 'true' || 'false' }}
+    timeout-minutes: ${{ inputs.readiness-full-graph && 180 || 90 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1170,7 +1175,7 @@ jobs:
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
           gh-token: ${{ steps.token.outputs.token }}
       - name: Compare repeated real daemon startups with unchanged deadlines
-        timeout-minutes: 60
+        timeout-minutes: ${{ inputs.readiness-full-graph && 155 || 60 }}
         shell: pwsh
         run: ./.diagnostic-tools/diagnostics/runquota-windows-daemon-readiness.ps1
       - name: Preserve process exit evidence
