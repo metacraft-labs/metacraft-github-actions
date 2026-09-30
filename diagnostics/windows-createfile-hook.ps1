@@ -17,18 +17,45 @@ $installer = $installer.Replace($anchor, "    repro_hook_probe_state[1] = 131;`n
 & gcc -O1 -Wall -Wextra "-I$source" -o "$evidence/probe.exe" "$PSScriptRoot/windows-createfile-hook.c" "$evidence/install_windows.c" "$source/length_decoder.c" "$source/rel32_fixup.c" *> "$evidence/build.log"
 if ($LASTEXITCODE) { throw 'Could not build the real hook installer control' }
 $results = @()
+if ($env:REPRO_PROBE_SHIM) {
+    # Read only this probe child's one exported diagnostic integer. Native
+    # ARM PowerShell can read the x64 child's address without context decoding.
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class ProbeMemory {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool ReadProcessMemory(IntPtr process, IntPtr address,
+        byte[] buffer, UIntPtr size, out UIntPtr read);
+}
+'@
+}
 foreach ($round in 1..32) {
     foreach ($mode in @('original', 'prepared')) {
         $log = "$evidence/$mode-$round.log"
-        $process = Start-Process -FilePath "$evidence/probe.exe" -ArgumentList $mode -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$evidence/$mode-$round.stderr"
+        $arguments = @($mode)
+        if ($env:REPRO_PROBE_SHIM) {
+            $arguments += '"' + $env:REPRO_PROBE_SHIM + '"'
+            $env:REPRO_MONITOR_FRAGMENT_DIR = "$evidence/fragments-$mode-$round"
+            New-Item -ItemType Directory -Force $env:REPRO_MONITOR_FRAGMENT_DIR | Out-Null
+        }
+        $process = Start-Process -FilePath "$evidence/probe.exe" -ArgumentList $arguments -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$evidence/$mode-$round.stderr"
         $finished = $process.WaitForExit(30000)
         $state = $null
         if (-not $finished) {
             $map = $null; $view = $null
             try {
                 $map = [IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting("Local\ReproHookProbe-$($process.Id)", [IO.MemoryMappedFiles.MemoryMappedFileRights]::Read)
-                $view = $map.CreateViewAccessor(0, 8, [IO.MemoryMappedFiles.MemoryMappedFileAccess]::Read)
+                $view = $map.CreateViewAccessor(0, 16, [IO.MemoryMappedFiles.MemoryMappedFileAccess]::Read)
                 $state = @{stage=$view.ReadInt32(0); patchPhase=$view.ReadInt32(4)}
+                $address = $view.ReadInt64(8)
+                if ($env:REPRO_PROBE_SHIM -and $address) {
+                    $bytes = New-Object byte[] 4
+                    $read = [UIntPtr]::Zero
+                    if ([ProbeMemory]::ReadProcessMemory($process.Handle, [IntPtr]$address, $bytes, [UIntPtr]4, [ref]$read) -and $read.ToUInt64() -eq 4) {
+                        $state.shimPhase = [BitConverter]::ToUInt32($bytes, 0)
+                    } else { $state.readError = [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
+                }
             } catch { $state = @{error=$_.Exception.Message} }
             finally { if ($view) { $view.Dispose() }; if ($map) { $map.Dispose() } }
             $process.Kill($true); $process.WaitForExit()
