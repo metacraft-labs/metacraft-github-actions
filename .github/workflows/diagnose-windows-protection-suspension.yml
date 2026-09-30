@@ -8,6 +8,7 @@ on:
       - .github/workflows/diagnose-windows-protection-suspension.yml
       - diagnostics/windows-protection-suspension.c
       - diagnostics/windows-protection-suspension.ps1
+      - diagnostics/windows-protection-target.c
 
 permissions:
   contents: read
@@ -19,7 +20,7 @@ jobs:
       matrix:
         runner: [windows-2025, windows-11-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
     steps:
