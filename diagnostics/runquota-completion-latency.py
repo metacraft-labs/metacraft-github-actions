@@ -101,7 +101,11 @@ try:
     recipe.write_text(focused)
     for name, contents, daemon_contents in variants:
         fixture.write_text(contents)
-        daemon.write_text(daemon_contents)
+        # The fixture refuses a daemon older than its source files. Rewriting
+        # identical source would change mtime without invalidating Reprobuild's
+        # content cache, manufacturing a stale-binary failure in the next arm.
+        if daemon.read_text() != daemon_contents:
+            daemon.write_text(daemon_contents)
         report = evidence / (name + '.json')
         log = evidence / (name + '.log')
         command = ['repro', 'test', '--daemon=off', '--tool-provisioning=tarball',
@@ -140,5 +144,6 @@ try:
                 raise SystemExit('Positive control did not fail both store-drain and latency checks')
 finally:
     fixture.write_text(original)
-    daemon.write_text(original_daemon)
+    if daemon.read_text() != original_daemon:
+        daemon.write_text(original_daemon)
     recipe.write_text(original_recipe)
