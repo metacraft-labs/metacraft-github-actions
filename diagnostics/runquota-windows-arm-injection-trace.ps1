@@ -58,10 +58,18 @@ if ($env:RUNQUOTA_BALANCED_CONTEXT -eq 'true') {
 }
 $env:IO_MON_SHIM_OUT_DIR = Join-Path $PWD 'reprobuild/build/lib'
 $env:IO_MON_SHIM_NIMCACHE_DIR = Join-Path $PWD 'build/trace-shim-cache'
+python "$PSScriptRoot/trace-windows-shim-init.py"
+if ($LASTEXITCODE) { throw 'Could not instrument the exact shim initialization' }
+git -C io-mon diff | Set-Content "$evidence/shim-diagnostic.patch"
 & bash io-mon/scripts/build_shim.sh *> "$evidence/shim-build.log"
 if ($LASTEXITCODE) { throw 'Diagnostic shim build failed' }
 Get-FileHash "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll" |
     Format-List | Out-String | Set-Content "$evidence/shim-sha256.txt"
+Copy-Item "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll" $evidence
+$objectDump = Get-Command objdump -ErrorAction SilentlyContinue
+if ($objectDump) {
+    & $objectDump.Source -t "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll" *> "$evidence/shim-symbols.txt"
+}
 $env:REPROBUILD_MAX_PARALLELISM = '8'
 & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/build.log" repro build --daemon=off --tool-provisioning=tarball "--write-report=$evidence/build.json"
 if ($LASTEXITCODE) { throw 'Full monitored compilation failed; retain failure-only context evidence' }
