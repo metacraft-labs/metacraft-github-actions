@@ -15,7 +15,7 @@ jobs:
       matrix:
         runner: [windows-2025, windows-11-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 65
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
     steps:
@@ -33,10 +33,11 @@ jobs:
           repository: metacraft-labs/nim-stackable-hooks
           ref: ece47a557a0aa6ded802447e0664626c59863d93
           path: nim-stackable-hooks
+          fetch-depth: 2
           persist-credentials: false
       - name: Run the complete registered Windows host corpus
         shell: pwsh
-        timeout-minutes: 40
+        timeout-minutes: 60
         run: ./diagnostics/windows-hook-page-candidate.ps1
       - name: Preserve compilation and runtime outcomes
         if: always()

@@ -23,23 +23,43 @@ try {
     if ($LASTEXITCODE -or $sources.Count -eq 0) { throw 'Could not enumerate the host corpus' }
     $sources | Set-Content "$evidence/inventory.txt"
     $results = @()
-    foreach ($source in $sources) {
+    $changed = @(& git diff --name-only HEAD^ HEAD)
+    $expected = @('src/stackable_hooks/inline_hook/windows/install_windows.c',
+                  'src/stackable_hooks/inline_hook/windows/install_windows.h')
+    if ($LASTEXITCODE -or (Compare-Object $expected $changed)) {
+        throw 'The paired sources must differ only in page preparation and its API comment'
+    }
+    $savedTemp = $env:TEMP
+    $savedTmp = $env:TMP
+    foreach ($variant in @('original', 'prepared')) {
+      $sourceRef = if ($variant -eq 'original') { 'HEAD^' } else { 'HEAD' }
+      & git restore "--source=$sourceRef" -- $expected
+      if ($LASTEXITCODE) { throw "Cannot select $variant" }
+      $caseDir = Join-Path $evidence $variant
+      New-Item -ItemType Directory -Force $caseDir | Out-Null
+      & git rev-parse $sourceRef > "$caseDir/source-sha.txt"
+      $env:TEMP = $caseDir
+      $env:TMP = $caseDir
+      foreach ($source in $sources) {
         $name = [IO.Path]::GetFileNameWithoutExtension($source)
-        $binary = Join-Path $evidence "$name.exe"
-        & nim c --hints:off --cc:gcc --path:src "--out:$binary" $source *> "$evidence/$name.build.log"
+        $binary = Join-Path $caseDir "$name.exe"
+        & nim c --hints:off --cc:gcc --path:src "--nimcache:$caseDir/cache/$name" "--out:$binary" $source *> "$caseDir/$name.build.log"
         $buildCode = $LASTEXITCODE
         $runCode = $null
         if ($buildCode -eq 0) {
-            & $binary *> "$evidence/$name.test.log"
+            & $binary *> "$caseDir/$name.test.log"
             $runCode = $LASTEXITCODE
         }
-        $results += @{source=$source; buildExitCode=$buildCode; testExitCode=$runCode}
+        $results += @{variant=$variant; source=$source; buildExitCode=$buildCode; testExitCode=$runCode}
         $results | ConvertTo-Json -AsArray | Set-Content "$evidence/results.json"
-        Write-Host "$source build=$buildCode test=$runCode"
+        Write-Host "$variant/$source build=$buildCode test=$runCode"
+    }
     }
     if (@($results | Where-Object { $_.buildExitCode -ne 0 -or $_.testExitCode -ne 0 }).Count) {
-        throw 'The Windows candidate failed its unchanged host corpus'
+        throw 'An original/prepared Windows corpus failed; both outcomes are retained'
     }
 } finally {
+    & git restore --source=HEAD -- src/stackable_hooks/inline_hook/windows/install_windows.c src/stackable_hooks/inline_hook/windows/install_windows.h
+    if (Test-Path variable:savedTemp) { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
     Pop-Location
 }
