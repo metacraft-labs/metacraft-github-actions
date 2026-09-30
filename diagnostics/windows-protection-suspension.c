@@ -51,6 +51,9 @@ int main(int argc, char **argv) {
     const int write = strcmp(argv[1], "write") == 0;
     if (!protect && !flush && !write) return 2;
     unsigned char *page = code_page();
+    /* Translate the probe page too: real hook targets already contain code
+     * that has executed, unlike a fresh untouched executable allocation. */
+    if (((int (*)(void))page)() != 7) return 15;
     HANDLE workers[WORKERS];
     for (unsigned i = 0; i < WORKERS; i++) {
         workers[i] = CreateThread(NULL, 0, protection_worker, NULL, 0, NULL);
