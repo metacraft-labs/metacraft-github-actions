@@ -41,6 +41,7 @@ on:
           - runquota-windows-deadline-graph
           - runquota-windows-arm-build-budget
           - runquota-windows-arm-injection-trace
+          - runquota-windows-balanced-context
           - runquota-linux-bootstrap-monitor
           - runquota-linux-process-heap
           - runquota-linux-heap-backtrace
@@ -118,7 +119,7 @@ jobs:
         run: /usr/bin/sudo -n /usr/bin/python3 diagnostics/m3-runquota-checkout-repair.py
 
   test:
-    if: inputs.checks != 'runquota-windows-arm-injection-trace' && inputs.checks != 'runquota-macos-ambient-boundaries' && inputs.checks != 'runquota-linux-bootstrap-monitor' && inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
+    if: inputs.checks != 'runquota-windows-balanced-context' && inputs.checks != 'runquota-windows-arm-injection-trace' && inputs.checks != 'runquota-macos-ambient-boundaries' && inputs.checks != 'runquota-linux-bootstrap-monitor' && inputs.checks != 'io-mon-linux-producer-fix' && inputs.checks != 'runquota-windows-arm-build-budget' && inputs.checks != 'runquota-linux-heap-serialization' && inputs.checks != 'runquota-linux-heap-backtrace' && inputs.checks != 'runquota-windows-deadline-graph' && inputs.checks != 'runquota-linux-process-heap' && inputs.checks != 'runquota-windows-cleanup-fix' && inputs.checks != 'runquota-windows-cleanup-owners' && inputs.checks != 'io-mon-windows-spawn-machine' && inputs.checks != 'runquota-windows-source-exit' && inputs.checks != 'runquota-windows-fast-exit' && inputs.checks != 'io-mon-windows-pdh-exit' && inputs.checks != 'io-mon-windows-exit-status' && inputs.checks != 'runquota-windows-arm-children' && inputs.checks != 'io-mon-windows-system-child' && inputs.checks != 'io-mon-windows-arm-fixtures' && inputs.checks != 'runquota-macos-telemetry' && inputs.checks != 'io-mon-windows-just-path' && inputs.checks != 'runquota-windows-exit-status' && inputs.checks != 'io-mon-private-linux-fixtures' && inputs.checks != 'runquota-capture-readiness' && inputs.checks != 'gosti-arm-provider' && inputs.product != 'reprobuild' && !startsWith(inputs.checks, 'runquota-windows-checkout') && !startsWith(inputs.checks, 'm3-') && inputs.checks != 'io-mon-linux-predicate' && inputs.checks != 'io-mon-linux-repro' && inputs.checks != 'io-mon-windows-loader' && inputs.checks != 'runquota-windows-active-builds' && inputs.checks != 'runquota-windows-repro' && inputs.checks != 'runquota-windows-env-case' && inputs.checks != 'runquota-windows-focused' && inputs.checks != 'runquota-windows-arm-msi'
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     # Temporary Gosti/io-mon/RunQuota native macOS diagnostics; owner zah.
     # Follow-up: metacraft-specs/issues/2026-09-28-shared-macos-host-has-no-headroom-for-runquota-measurements.md
@@ -1884,10 +1885,15 @@ jobs:
           if-no-files-found: warn
 
   runquota-windows-arm-injection-trace:
-    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-arm-injection-trace'
-    runs-on: windows-11-arm
+    if: inputs.product == 'runquota' && (inputs.checks == 'runquota-windows-arm-injection-trace' || inputs.checks == 'runquota-windows-balanced-context')
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(inputs.checks == 'runquota-windows-balanced-context' && '["windows-2025","windows-11-arm"]' || '["windows-11-arm"]') }}
+    runs-on: ${{ matrix.runner }}
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
+      RUNQUOTA_BALANCED_CONTEXT: ${{ inputs.checks == 'runquota-windows-balanced-context' && 'true' || 'false' }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -1924,7 +1930,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runquota-windows-arm-injection-trace
+          name: runquota-windows-context-${{ matrix.runner }}
           path: |
             build/windows-arm-injection/
             build/diagnostics/
