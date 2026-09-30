@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/nim-stackable-hooks
-          ref: ece47a557a0aa6ded802447e0664626c59863d93
+          ref: d36cab880711c2f50f57079623a1ce89ba4a83dc
           path: nim-stackable-hooks
           fetch-depth: 2
           persist-credentials: false

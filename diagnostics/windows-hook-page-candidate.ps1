@@ -43,7 +43,7 @@ try {
       foreach ($source in $sources) {
         $name = [IO.Path]::GetFileNameWithoutExtension($source)
         $binary = Join-Path $caseDir "$name.exe"
-        & nim c --hints:off --cc:gcc --path:src "--nimcache:$caseDir/cache/$name" "--out:$binary" $source *> "$caseDir/$name.build.log"
+        & nim c --hints:off --cc:gcc --path:src "--nimcache:build/page-candidate-cache/$variant/$name" "--out:$binary" $source *> "$caseDir/$name.build.log"
         $buildCode = $LASTEXITCODE
         $runCode = $null
         if ($buildCode -eq 0) {
