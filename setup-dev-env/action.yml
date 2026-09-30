@@ -667,7 +667,7 @@ runs:
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@cbfba94e2e10ed5a6078e2b9f90b406f5a8784b7
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@58da84d5af27408ca598ce69caa83b133e054592
       with:
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
