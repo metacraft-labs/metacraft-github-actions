@@ -12,7 +12,7 @@ if ($LASTEXITCODE) { throw 'Could not compile the real image-page target' }
 $results = @()
 foreach ($round in 1..2) {
   foreach ($scope in @('known', 'all')) {
-   foreach ($backing in @('private', 'image')) {
+   foreach ($backing in @('private', 'image', 'system')) {
     foreach ($mode in @('active', 'protect', 'flush', 'write')) {
         $log = "$evidence/$scope-$backing-$mode-$round.log"
         $err = "$evidence/$scope-$backing-$mode-$round.stderr"

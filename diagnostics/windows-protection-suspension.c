@@ -9,7 +9,9 @@
 #include <string.h>
 
 #define WORKERS 4
-#define ROUNDS 512
+/* All-thread enumeration costs about 60 ms per round on the ARM host.
+ * Keep a batch well inside the external 30-second observation bound. */
+#define ROUNDS 128
 static volatile LONG ready;
 static volatile LONG stopped;
 static volatile LONG *observation;
@@ -83,6 +85,7 @@ int main(int argc, char **argv) {
     const int write = strcmp(argv[1], "write") == 0;
     const int all = strcmp(argv[2], "all") == 0;
     const int image = strcmp(argv[3], "image") == 0;
+    const int system = strcmp(argv[3], "system") == 0;
     if (!protect && !flush && !write) return 2;
     char mappingName[96];
     snprintf(mappingName, sizeof(mappingName), "Local\\ReproProtectionProbe-%lu",
@@ -92,19 +95,27 @@ int main(int argc, char **argv) {
     if (!mapping) return 20;
     observation = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4 * sizeof(LONG));
     if (!observation) return 21;
-    HMODULE module = image ? LoadLibraryA("protection-target.dll") : NULL;
-    unsigned char *page = image ? (unsigned char *)GetProcAddress(module, "repro_probe_code") : code_page();
+    HMODULE module = image ? LoadLibraryA("protection-target.dll") :
+        system ? GetModuleHandleA("kernel32.dll") : NULL;
+    unsigned char *page = image ? (unsigned char *)GetProcAddress(module, "repro_probe_code") :
+        system ? (unsigned char *)GetProcAddress(module, "GetFileAttributesW") : code_page();
     if (!page) return 22;
     const unsigned char expected[] = {0xb8, 7, 0, 0, 0, 0xc3};
-    if (memcmp(page, expected, sizeof(expected))) return 23;
+    if (!system && memcmp(page, expected, sizeof(expected))) return 23;
     MEMORY_BASIC_INFORMATION pageInfo;
     if (!VirtualQuery(page, &pageInfo, sizeof(pageInfo)) ||
-        pageInfo.Type != (image ? MEM_IMAGE : MEM_PRIVATE) ||
+        pageInfo.Type != (image || system ? MEM_IMAGE : MEM_PRIVATE) ||
         !(pageInfo.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ |
                              PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) return 24;
     /* Translate the probe page too: real hook targets already contain code
      * that has executed, unlike a fresh untouched executable allocation. */
-    if (((int (*)(void))page)() != 7) return 15;
+    if (system) {
+        typedef DWORD (WINAPI *AttributesFn)(LPCWSTR);
+        if (((AttributesFn)page)(L".") == INVALID_FILE_ATTRIBUTES) return 25;
+    } else if (((int (*)(void))page)() != 7) return 15;
+    printf("target=%s address=%p type=%lx original-protection=%lx rounds=%u\n",
+           argv[3], page, (unsigned long)pageInfo.Type,
+           (unsigned long)pageInfo.Protect, ROUNDS);
     HANDLE workers[WORKERS];
     DWORD workerIds[WORKERS];
     for (unsigned i = 0; i < WORKERS; i++) {
@@ -135,7 +146,12 @@ int main(int argc, char **argv) {
         observe(round, 3);
         if (protect && !VirtualProtect(page, 6, PAGE_EXECUTE_READWRITE, &old)) return 10;
         if (flush && !FlushInstructionCache(GetCurrentProcess(), page, 6)) return 11;
-        if (write) ((volatile unsigned char *)page)[1] = (unsigned char)(round & 127);
+        /* A same-byte store exercises the system page's CoW/invalidation
+         * path without corrupting an API that the probe may call later. */
+        if (write) {
+            volatile unsigned char *byte = page + 1;
+            *byte = system ? *byte : (unsigned char)(round & 127);
+        }
         observe(round, 4);
         if (!active) {
             observe(round, 5);
@@ -150,7 +166,8 @@ int main(int argc, char **argv) {
     InterlockedExchange(&stopped, 1);
     if (WaitForMultipleObjects(WORKERS, workers, TRUE, 5000) != WAIT_OBJECT_0) return 14;
     for (unsigned i = 0; i < WORKERS; i++) CloseHandle(workers[i]);
-    if (image) FreeLibrary(module); else VirtualFree(page, 0, MEM_RELEASE);
+    if (image) FreeLibrary(module);
+    else if (!system) VirtualFree(page, 0, MEM_RELEASE);
     UnmapViewOfFile((void *)observation);
     CloseHandle(mapping);
     puts("all rounds completed");
