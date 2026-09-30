@@ -124,6 +124,9 @@ try:
             raise SystemExit('Control did not execute the real completion fixture')
         output = executions[0].get('stdout', '')
         (evidence / (name + '-stdout.log')).write_text(output)
+        parts = [line for line in output.splitlines() if line.startswith('COMPLETION-PART ')]
+        if len(parts) != 12 or not all(' samples=40 ' in line for line in parts):
+            raise SystemExit('Control did not measure all six operations in both arms')
         for line in output.splitlines():
             if ('COMPLETION-PART' in line or ' p50 ' in line or
                     'drains:' in line or 'Check failed:' in line):
