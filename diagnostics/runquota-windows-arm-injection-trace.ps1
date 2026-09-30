@@ -60,6 +60,9 @@ $env:IO_MON_SHIM_OUT_DIR = Join-Path $PWD 'reprobuild/build/lib'
 $env:IO_MON_SHIM_NIMCACHE_DIR = Join-Path $PWD 'build/trace-shim-cache'
 python "$PSScriptRoot/trace-windows-shim-init.py"
 if ($LASTEXITCODE) { throw 'Could not instrument the exact shim initialization' }
+python "$PSScriptRoot/trace-windows-hook-transaction.py"
+if ($LASTEXITCODE) { throw 'Could not instrument the exact hook transaction' }
+git -C nim-stackable-hooks diff | Set-Content "$evidence/hooks-diagnostic.patch"
 git -C io-mon diff | Set-Content "$evidence/shim-diagnostic.patch"
 & bash io-mon/scripts/build_shim.sh *> "$evidence/shim-build.log"
 if ($LASTEXITCODE) { throw 'Diagnostic shim build failed' }
