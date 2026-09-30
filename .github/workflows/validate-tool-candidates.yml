@@ -1136,7 +1136,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [parallel, isolated]
+        mode: [readiness]
     runs-on: windows-2025
     env:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
@@ -1146,7 +1146,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 19ee745d9d2151a020248e5552dad629d478c680
+          ref: 70364629d5214bf4be9ac760d63e572fc257b111
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1161,7 +1161,7 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
-      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@96ac63b99d8d6c3a06ca43a9214abbc00f4ac01e
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@ad0535e1305cf59fa2f52dddb1b0cdc6787a0e21
         with:
           env-flavor: reprobuild
           repro-from-source: true
@@ -1169,17 +1169,17 @@ jobs:
           repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
           gh-token: ${{ steps.token.outputs.token }}
-      - name: Measure the full graph with unchanged fixture deadlines
+      - name: Compare repeated real daemon startups with unchanged deadlines
         timeout-minutes: 60
         shell: pwsh
-        run: ./.diagnostic-tools/diagnostics/runquota-windows-remaining-failures.ps1
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-daemon-readiness.ps1
       - name: Preserve process exit evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runquota-windows-deadline-graph-${{ matrix.mode }}
           path: |
-            build/windows-remaining/
+            build/windows-readiness/
             build/diagnostics/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/*.log
