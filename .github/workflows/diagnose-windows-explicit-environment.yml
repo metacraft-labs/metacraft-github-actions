@@ -1,0 +1,54 @@
+name: Diagnose Windows explicit child environment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-explicit-environment.yml
+      - diagnostics/windows-explicit-environment.c
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - name: Observe real OS environment blocks without a monitor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . (Join-Path $PWD '.toolchain/windows/bootstrap-toolchain.ps1')
+          $null = Invoke-ReproToolchainBootstrap
+          New-Item -ItemType Directory -Force build/environment-control | Out-Null
+          & gcc -O1 -Wall -Wextra -o build/environment-control/probe.exe diagnostics/windows-explicit-environment.c
+          if ($LASTEXITCODE) { throw 'Control compilation failed' }
+          & ./build/environment-control/probe.exe *> build/environment-control/result.log
+          $code = $LASTEXITCODE
+          Get-Content build/environment-control/result.log
+          if ($code) { throw "Real OS control failed: $code" }
+      - name: Preserve environment control
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-explicit-environment-${{ matrix.runner }}
+          path: build/environment-control/
+          retention-days: 14
+          if-no-files-found: error
