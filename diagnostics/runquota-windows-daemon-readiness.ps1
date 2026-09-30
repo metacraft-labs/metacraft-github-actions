@@ -31,6 +31,10 @@ try {
 when defined(windows):
   import std/winlean
 
+# Only this fixture's child daemons may emit extra startup lines. Other real
+# fixtures parse the daemon's public stdout as their readiness barrier.
+putEnv("RUNQUOTA_READINESS_STARTUP_TRACE", "1")
+
 proc diagnosticDaemonOutput(process: Process): string =
   # A descendant can retain the write end after the daemon has exited.
   # Read only bytes already present; logging must not wait for pipe EOF.
@@ -85,23 +89,28 @@ const HelperModeEnv = "RUNQUOTA_E2E_CRASH_MODE"
     process.close()
 '@
     Edit-Diagnostic 'apps/runquotad/runquotad.nim' '  let runningAsService = beginWindowsServiceHost(windowsServiceName)' @'
-  echo "DIAGNOSTIC daemon entered main pid=", getCurrentProcessId()
-  flushFile(stdout)
+  if getEnv("RUNQUOTA_READINESS_STARTUP_TRACE") == "1":
+    echo "DIAGNOSTIC daemon entered main pid=", getCurrentProcessId()
+    flushFile(stdout)
   let runningAsService = beginWindowsServiceHost(windowsServiceName)
-  echo "DIAGNOSTIC service probe returned"
-  flushFile(stdout)
+  if getEnv("RUNQUOTA_READINESS_STARTUP_TRACE") == "1":
+    echo "DIAGNOSTIC service probe returned"
+    flushFile(stdout)
 '@
     Edit-Diagnostic 'apps/runquotad/runquotad.nim' '  let exitCode = serve(config)' @'
-  echo "DIAGNOSTIC entering serve"
-  flushFile(stdout)
+  if getEnv("RUNQUOTA_READINESS_STARTUP_TRACE") == "1":
+    echo "DIAGNOSTIC entering serve"
+    flushFile(stdout)
   let exitCode = serve(config)
 '@
     Edit-Diagnostic 'libs/runquota_daemon/src/runquota_daemon.nim' '  sharedDaemon.daemon = initDaemon(config, deferCapture = true)' @'
-  echo "DIAGNOSTIC entering initDaemon"
-  flushFile(stdout)
+  if getEnv("RUNQUOTA_READINESS_STARTUP_TRACE") == "1":
+    echo "DIAGNOSTIC entering initDaemon"
+    flushFile(stdout)
   sharedDaemon.daemon = initDaemon(config, deferCapture = true)
-  echo "DIAGNOSTIC initDaemon returned"
-  flushFile(stdout)
+  if getEnv("RUNQUOTA_READINESS_STARTUP_TRACE") == "1":
+    echo "DIAGNOSTIC initDaemon returned"
+    flushFile(stdout)
 '@
     git diff | Set-Content "$evidence/diagnostic.patch"
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/graph.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/graph.json"
