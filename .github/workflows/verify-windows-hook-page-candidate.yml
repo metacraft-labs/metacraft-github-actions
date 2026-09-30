@@ -1,0 +1,48 @@
+name: Verify Windows hook page preparation candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/verify-windows-hook-page-candidate.yml
+      - diagnostics/windows-hook-page-candidate.ps1
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: ece47a557a0aa6ded802447e0664626c59863d93
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - name: Run the complete registered Windows host corpus
+        shell: pwsh
+        timeout-minutes: 40
+        run: ./diagnostics/windows-hook-page-candidate.ps1
+      - name: Preserve compilation and runtime outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hook-page-candidate-${{ matrix.runner }}
+          path: build/windows-hook-page-candidate/
+          retention-days: 14
+          if-no-files-found: error
