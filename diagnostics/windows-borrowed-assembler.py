@@ -30,7 +30,7 @@ def main():
         return {"mode": mode, "index": index, "exitCode": code,
                 "elapsedSeconds": time.monotonic() - started}
 
-    for mode in ("native", "monitored"):
+    for mode in ("native", "monitored", "propagated"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(run, mode, i) for i in range(128)]
             for future in concurrent.futures.as_completed(futures):

@@ -20,24 +20,31 @@ let fragmentDir = evidence / "fragments"
 createDir(fragmentDir)
 var code: int
 var rootPid: uint64
-if mode == "native":
+if mode in ["native", "child"]:
   let child = startProcess(assembler, args = [source, "-o", target],
     options = {poParentStreams})
+  rootPid = uint64(child.processID)
   code = child.waitForExit()
   child.close()
+  if mode == "child": writeFile(evidence / "assembler-pid.txt", $rootPid)
 else:
-  doAssert mode == "monitored"
+  doAssert mode in ["monitored", "propagated"]
   var environment = newStringTable(modeCaseInsensitive)
   for key, value in envPairs(): environment[key] = value
   environment["REPRO_MONITOR_FRAGMENT_DIR"] = fragmentDir
   environment["REPRO_MONITOR_SESSION"] = "borrowed-assembler"
   environment["REPRO_MONITOR_SHIM_LIB"] = shim
-  let observed = runWithMonitorShim([assembler, source, "-o", target], shim,
+  let command = if mode == "propagated":
+      @[getAppFilename(), "child", assembler, shim, evidence]
+    else: @[assembler, source, "-o", target]
+  let observed = runWithMonitorShim(command, shim,
     captureStdio = true, captureStdioPath = evidence / "assembler.log",
     env = environment)
   doAssert not observed.monitoringSkipped
   code = observed.exitCode
   rootPid = observed.rootPid
+  if mode == "propagated":
+    rootPid = parseBiggestUInt(readFile(evidence / "assembler-pid.txt").strip())
 doAssert code == 0
 let objectBytes = readFile(target)
 doAssert objectBytes.len > 20
@@ -45,7 +52,7 @@ doAssert objectBytes[0] == '\x64' and objectBytes[1] == '\x86'
 var started = false
 var readSource = false
 var wroteObject = false
-if mode == "monitored":
+if mode in ["monitored", "propagated"]:
   for path in walkFiles(fragmentDir / "*.iomon-frag"):
     for record in decodeFrames(readFile(path).toBytes()):
       if record.osPid != rootPid: continue
