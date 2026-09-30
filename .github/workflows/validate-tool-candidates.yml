@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       prepare-hook-protection:
-        description: Compare a CreateFileW protection transition before thread suspension in the full ARM compiler trace
+        description: Prepare every queued patch range before thread suspension in the full ARM compiler trace
         type: boolean
         default: false
       readiness-full-graph:
