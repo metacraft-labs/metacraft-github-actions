@@ -16,6 +16,8 @@ foreach ($repo in $pins.Keys) {
     if ($LASTEXITCODE -or $actual -ne $pins[$repo]) { throw "Unexpected source for $repo`: $actual" }
 }
 $pins | ConvertTo-Json | Set-Content "$evidence/source-pins.json"
+Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors, TotalPhysicalMemory |
+    ConvertTo-Json | Set-Content "$evidence/host-capacity.json"
 $assembler = (Get-Command as.exe).Source
 Get-FileHash $assembler | Format-List | Out-String | Set-Content "$evidence/assembler-sha256.txt"
 & nim --version | Set-Content "$evidence/nim-version.txt"
@@ -58,7 +60,7 @@ foreach ($variant in @('original', 'prepared')) {
     if ($LASTEXITCODE) { throw "Could not build the $variant shim" }
     $shim = Join-Path $folder 'librepro_monitor_shim.dll'
     Get-FileHash $shim | Format-List | Out-String | Set-Content "$folder/shim-sha256.txt"
-    & python "$PSScriptRoot/windows-borrowed-assembler.py" $driver $assembler $shim $folder --samples 512
+    & python "$PSScriptRoot/windows-borrowed-assembler.py" $driver $assembler $shim $folder --samples 512 --workers 32
     $probeExit = $LASTEXITCODE
     $outcomes += @{ variant = $variant; exitCode = $probeExit }
     $outcomes | ConvertTo-Json -AsArray | Set-Content "$evidence/comparison.json"
