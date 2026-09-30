@@ -1,0 +1,68 @@
+name: Diagnose borrowed-thread assembler startup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-borrowed-assembler.yml
+      - diagnostics/windows_borrowed_assembler.nim
+      - diagnostics/windows-borrowed-assembler.py
+      - diagnostics/windows-borrowed-assembler.ps1
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    runs-on: windows-11-arm
+    timeout-minutes: 55
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 8f4d806ce1ae58e6b4292fed92944171eff4f7a2
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          path: io-mon
+          persist-credentials: false
+      - name: Retrieve the retained failing shim
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 36720335981 --repo metacraft-labs/metacraft-github-actions --name runquota-windows-context-windows-11-arm --dir .shim-artifact
+          if ($LASTEXITCODE) { throw 'Could not retrieve the measured shim' }
+          $shim = (Resolve-Path .shim-artifact/build/windows-arm-injection/librepro_monitor_shim.dll).Path
+          if ((Get-FileHash $shim).Hash -ne '7c2480628faf63a8048bddb3cfd9437096ddeee1adc87828bba36ab462562274') {
+              throw 'The diagnostic shim differs from the measured compiler failure'
+          }
+          "REPRO_PROBE_SHIM=$shim" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Observe fresh real assembler children
+        timeout-minutes: 45
+        shell: pwsh
+        run: ./diagnostics/windows-borrowed-assembler.ps1
+      - name: Retain every outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-borrowed-assembler
+          path: build/windows-borrowed-assembler/
+          if-no-files-found: error
+          retention-days: 14
