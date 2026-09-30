@@ -22,6 +22,7 @@ on:
     # caught it, because this line said `main`.
     branches: [dev]
   pull_request:
+    branches-ignore: [agents]
   workflow_dispatch:
 
 permissions:
