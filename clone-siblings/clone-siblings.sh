@@ -78,6 +78,21 @@ warn | error) ;;
   ;;
 esac
 
+# WHERE REVISIONS COME FROM (reprobuild-specs/Unified-Locking-And-Hooks.md
+# §14.5). `committed` — the default — is the triggering commit's own committed
+# `repro.lock`; `record-store` is the per-project opt-in to a team record store
+# (`locks/<project>/<repo>/<sha>.toml` in the manifests repo). Exactly one of
+# them is consulted, and neither ever falls back to the other: a project that
+# did not opt into a record store must not have its siblings resolved from one
+# it knows nothing about, and a project that did must not quietly lose it.
+case "${LOCK_STORE:=committed}" in
+committed | record-store) ;;
+*)
+  echo "::error::clone-siblings: 'lock-store' must be 'committed' (the default: the triggering commit's own repro.lock) or 'record-store' (the opt-in team record store in 'manifests-repo'); got '${LOCK_STORE}'."
+  exit 1
+  ;;
+esac
+
 # The explicit `siblings` input (if provided) overrides the repo-level
 # `.github/sibling-repos` declaration; otherwise read the file. Both accept
 # '#' comments and whitespace/newline separation.
@@ -359,9 +374,13 @@ for ow in ${OWNERS[@]+"${OWNERS[@]}"}; do add_owner "${ow}"; done
 # The manifest owners are added unconditionally, because the lock is now
 # consulted for EVERY entry and not only for the bare ones. See "WHY THE LOCK IS
 # READ EVEN WHEN NOTHING RESOLVES FROM IT" below.
-add_owner "$(scoped_git_auth_owner_of "${MANIFESTS_REPO}")"
-if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
-  add_owner "$(scoped_git_auth_owner_of "${PRIVATE_MANIFESTS_REPO}")"
+# Only when the record store is what will be read: a committed-lock resolve
+# contacts no manifests repo, so it needs no credential for one.
+if [ "${LOCK_STORE}" = "record-store" ]; then
+  add_owner "$(scoped_git_auth_owner_of "${MANIFESTS_REPO}")"
+  if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
+    add_owner "$(scoped_git_auth_owner_of "${PRIVATE_MANIFESTS_REPO}")"
+  fi
 fi
 
 if [ "${#CLONE_OWNERS[@]}" -eq 0 ]; then
@@ -434,6 +453,143 @@ lock_unavailable() { # <reason>
   LAYER_ARGS=()
 }
 
+# ---------------------------------------------------------------------------
+# THE COMMITTED LOCK (lock-store: committed, the default).
+#
+# `repro lock refresh` writes one `deps` inline table per develop-set sibling
+# into the repo's committed `repro.lock`, on ONE line:
+#
+#   deps = [{ name = "x", path = "../x", coord_kind = "vcs", url = "…",
+#             ref = "dev", revision = "<commit>", integrity = "git-sha1:<commit>",
+#             … }, { … }]
+#
+# That line is the whole input. It is read with bash builtins only (see
+# PORTABILITY above), and read STRICTLY: this is a statement about which
+# commits CI builds, so a value that is not a commit id, or an integrity that
+# names a different commit than the revision, is a defect to report — never a
+# value to guess around.
+#
+# CL_STATE: "ok" (lock read), "absent" (no repro.lock in the checkout),
+# "unreadable" (present but not a solved-graph lock we can read; CL_WHY says
+# why). The per-sibling lookup reports the resolver's exit-code vocabulary so
+# PASS 1 treats both stores alike: 0 found, 4 not pinned, 5 malformed entry.
+# ---------------------------------------------------------------------------
+CL_FILE="${GITHUB_WORKSPACE}/repro.lock"
+CL_STATE=""
+CL_WHY=""
+CL_NAMES=()
+CL_PATHS=()
+CL_REVS=()
+CL_INTEGS=()
+
+cl_field() { # <inline-table-body> <key> -> value on stdout; rc 1 when absent
+  local body=", $1" key="$2" rest
+  case "${body}" in
+  *", ${key} = \""*) ;;
+  *) return 1 ;;
+  esac
+  rest="${body#*", ${key} = \""}"
+  printf '%s' "${rest%%\"*}"
+}
+
+load_committed_lock() {
+  local line deps entry body schema_ok=0
+  if [ ! -f "${CL_FILE}" ]; then
+    CL_STATE="absent"
+    return 0
+  fi
+  deps=""
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+    case "${line}" in
+    'schema = "reprobuild.solved-graph-lock.v2"') schema_ok=1 ;;
+    'deps = ['*) deps="${line#deps = [}" ;;
+    esac
+  done <"${CL_FILE}"
+  if [ "${schema_ok}" -ne 1 ]; then
+    CL_STATE="unreadable"
+    CL_WHY="it does not declare schema = \"reprobuild.solved-graph-lock.v2\" (regenerate it with 'repro lock refresh')"
+    return 0
+  fi
+  deps="${deps%]}"
+  CL_STATE="ok"
+  while [ -n "${deps}" ]; do
+    case "${deps}" in
+    '{ '*' }'*) ;;
+    *)
+      CL_STATE="unreadable"
+      CL_WHY="its deps array is not a list of inline tables"
+      return 0
+      ;;
+    esac
+    entry="${deps%%" }"*}"
+    body="${entry#"{ "}"
+    deps="${deps#"${entry} }"}"
+    deps="${deps#", "}"
+    CL_NAMES+=("$(cl_field "${body}" name)")
+    CL_PATHS+=("$(cl_field "${body}" path)")
+    CL_REVS+=("$(cl_field "${body}" revision)")
+    CL_INTEGS+=("$(cl_field "${body}" integrity)")
+  done
+}
+
+is_commit_id() { # <rev>: a full 40-hex (sha1) or 64-hex (sha256) object id
+  local r="$1" i=0 c
+  [ "${#r}" -eq 40 ] || [ "${#r}" -eq 64 ] || return 1
+  while [ "${i}" -lt "${#r}" ]; do
+    c="${r:${i}:1}"
+    case "${c}" in
+    [0-9a-f]) ;;
+    *) return 1 ;;
+    esac
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# committed_lock_rev <sibling> -> revision on stdout; rc 0 / 4 / 5 as above,
+# with the reason for a 5 on stderr.
+committed_lock_rev() {
+  local name="$1" i rev integ
+  for i in "${!CL_NAMES[@]}"; do
+    [ "${CL_PATHS[$i]}" = "." ] && continue
+    if [ "${CL_NAMES[$i]}" = "${name}" ] || [ "${CL_PATHS[$i]}" = "../${name}" ]; then
+      rev="${CL_REVS[$i]}"
+      integ="${CL_INTEGS[$i]}"
+      if ! is_commit_id "${rev}"; then
+        echo "committed repro.lock: the entry for '${name}' records revision '${rev}', which is not a commit id. A lock pins commits; a branch name here would build whatever that branch points at when the job runs." >&2
+        return 5
+      fi
+      case "${integ}" in
+      git-sha1:* | git-sha256:*)
+        if [ "${integ#*:}" != "${rev}" ]; then
+          echo "committed repro.lock: the entry for '${name}' is self-contradictory: revision ${rev} but integrity ${integ} names a different commit. Re-pin it with 'repro lock refresh'." >&2
+          return 5
+        fi
+        ;;
+      esac
+      printf '%s' "${rev}"
+      return 0
+    fi
+  done
+  return 4
+}
+
+if [ "${LOCK_STORE}" = "committed" ]; then
+  load_committed_lock
+  case "${CL_STATE}" in
+  ok)
+    LOCK_SHA="${GITHUB_SHA}"
+    echo "Resolving siblings from the committed repro.lock of ${SELF}@${GITHUB_SHA} (lock-store: committed); no record store is consulted."
+    ;;
+  absent)
+    lock_unavailable "No committed repro.lock in ${GITHUB_REPOSITORY} at ${GITHUB_SHA} (looked for ${CL_FILE}). With lock-store: committed (the default) a sibling's revision comes from the triggering commit's own repro.lock. THE FIX: run 'repro lock refresh' in a workspace whose manifest declares ${SELF}'s depends edges on these siblings, and commit the repro.lock it writes. If this project deliberately keeps its locks in a team record store instead, set 'lock-store: record-store'."
+    ;;
+  *)
+    lock_unavailable "The committed repro.lock of ${SELF}@${GITHUB_SHA} cannot be read: ${CL_WHY}."
+    ;;
+  esac
+else
 MAN="${RUNNER_TEMP}/metacraft-manifests"
 rm -rf "${MAN}"
 # Credential-free URL. Authentication rides the scoped extraHeader installed
@@ -546,6 +702,7 @@ if [ "${#LAYER_ARGS[@]}" -gt 0 ]; then
     echo "Workspace lock ${SELF}@${LOCK_SHA}: ${LOCK_AGE_NOTE}"
   fi
 fi
+fi # lock-store: record-store
 
 # ---------------------------------------------------------------------------
 # PASS 1 — resolve every revision. Nothing is cloned yet.
@@ -577,8 +734,12 @@ for i in "${!NAMES[@]}"; do
   lock_rev=""
   if [ -n "${LOCK_SHA}" ]; then
     rrc=0
-    lock_rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
-      "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk 2>"${RUNNER_TEMP}/resolve.err")" || rrc=$?
+    if [ "${LOCK_STORE}" = "committed" ]; then
+      lock_rev="$(committed_lock_rev "${name}" 2>"${RUNNER_TEMP}/resolve.err")" || rrc=$?
+    else
+      lock_rev="$("${RESOLVER}" --repo "${SELF}" --sibling "${name}" \
+        "${LAYER_ARGS[@]}" --sha "${LOCK_SHA}" --no-walk 2>"${RUNNER_TEMP}/resolve.err")" || rrc=$?
+    fi
     if [ "${rrc}" -ne 0 ]; then
       lock_rev=""
       # 5 (malformed) and 6 (contradictory) are lock defects. For a BARE entry
@@ -635,6 +796,11 @@ for i in "${!NAMES[@]}"; do
   fi
 done
 
+if [ -n "${MISSING}" ] && [ "${LOCK_STORE}" = "committed" ]; then
+  echo "::error::The committed repro.lock of ${SELF}@${GITHUB_SHA} pins no revision for these sibling(s):${MISSING}. Nothing was cloned. A committed lock records the develop set its repo was built against, so these repos are not part of what ${SELF}'s lock describes."
+  echo "::error::THE FIX: declare them as ${SELF}'s develop-set dependencies (the 'depends' edges of its fragment in the workspace manifest, repos/${SELF}.toml), run 'repro lock refresh' in ${SELF} inside that workspace, and commit the repro.lock it writes. Siblings are matched by repo NAME (or a '../<name>' path). Do NOT reach for '<name>=<branch>': cloning a branch tip is the unpinned build this step refuses to do."
+  exit 1
+fi
 if [ -n "${MISSING}" ]; then
   FIX_IN="${MANIFESTS_REPO}"
   if [ -n "${PRIVATE_MANIFESTS_REPO}" ]; then
@@ -649,7 +815,9 @@ fi
 # The resolution table. One line per sibling, on every run, whether or not
 # anything is wrong — an accidental override has to be visible in a log that
 # SUCCEEDED, which is the only kind of log this case ever produced.
-if [ -n "${LOCK_SHA}" ]; then
+if [ -n "${LOCK_SHA}" ] && [ "${LOCK_STORE}" = "committed" ]; then
+  echo "Sibling resolution for ${SELF} (committed repro.lock at ${SELF}@${LOCK_SHA}):"
+elif [ -n "${LOCK_SHA}" ]; then
   echo "Sibling resolution for ${SELF} (workspace lock ${SELF}@${LOCK_SHA}):"
 else
   echo "Sibling resolution for ${SELF} (no workspace lock was consulted):"
