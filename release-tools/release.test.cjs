@@ -135,3 +135,72 @@ test('the dedicated release lane accepts only Linux x64 and its exact scale-set 
   target.id = 'linux-x86_64'; target.runner = 'eph-linux-x64-release-typo'; write();
   assert.throws(() => plan(root), /self-hosted runner required/);
 });
+
+test('Windows ARM64 hosted migration is version-scoped and drives MSI verification', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const target = {id: 'windows-aarch64', runner: 'windows-11-arm', assets: ['example.msi']};
+  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.runnerMigration = {version: '0.1.0', owner: 'zah',
+    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-29-windows-arm64-release-runner-migration.md'};
+  write();
+  assert.equal(plan(root).msiRunner, 'windows-11-arm');
+  assert.equal(plan(root).hasMsi, true);
+  target.id = 'windows-x86_64'; write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.id = 'windows-aarch64';
+  target.runnerMigration.version = '0.0.9'; write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  delete target.runnerMigration;
+  target.runner = ['self-hosted', 'windows', 'arm64']; write();
+  assert.deepEqual(plan(root).msiRunner, target.runner);
+});
+
+test('runner selection keeps native alternatives version-scoped and preserves the payload contract', t => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, '.github'));
+  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
+  const migration = {version: '0.1.0', owner: 'zah',
+    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md'};
+  const targets = [
+    {id: 'linux-x86_64', runner: 'eph-linux-x64-release', hostedRunner: 'ubuntu-24.04',
+      runnerMigration: {...migration}, assets: ['example-linux.tar.gz']},
+    {id: 'darwin-aarch64', runner: ['self-hosted', 'macos', 'arm64'], hostedRunner: 'macos-26',
+      runnerMigration: {...migration}, assets: ['example-macos.tar.gz']},
+    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], hostedRunner: 'windows-2025',
+      runnerMigration: {...migration}, assets: ['example.zip']},
+  ];
+  const spec = {product: 'example', versionFile: 'version.txt', targets};
+  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  write();
+  const fallback = plan(root);
+  const hosted = plan(root, true);
+  assert.deepEqual(fallback.matrix.map(t => t.runner), targets.map(t => t.runner));
+  assert.deepEqual(hosted.matrix.map(t => t.runner), ['ubuntu-24.04', 'macos-26', 'windows-2025']);
+  assert.deepEqual(hosted.expected, fallback.expected);
+  assert.deepEqual(hosted.matrix.map(t => t.id), fallback.matrix.map(t => t.id));
+  for (const [field, value] of [['version', '0.1.1'], ['owner', ''], ['followup', 'https://example.com/']]) {
+    targets[0].runnerMigration = {...migration, [field]: value}; write();
+    for (const selected of [false, true]) assert.throws(() => plan(root, selected), /version-scoped migration/);
+  }
+  targets[0].runnerMigration = {...migration};
+  for (const runner of ['ubuntu-latest', 'ubuntu-24.04-arm', 'macos-26']) {
+    targets[0].hostedRunner = runner; write();
+    assert.throws(() => plan(root, true), /native standard runner/);
+  }
+  targets[0].hostedRunner = 'ubuntu-24.04';
+  targets[1].hostedRunner = 'macos-26-xlarge'; write();
+  assert.throws(() => plan(root, true), /native standard runner/);
+  targets[1].hostedRunner = 'macos-26';
+  for (const runner of ['windows-latest', 'windows-11-arm', 'windows-2025-16core']) {
+    targets[2].hostedRunner = runner; write();
+    assert.throws(() => plan(root, true), /native standard runner/);
+  }
+  targets[2].hostedRunner = 'windows-2025';
+  delete targets[0].runnerMigration; write();
+  assert.throws(() => plan(root, true), /version-scoped migration/);
+});

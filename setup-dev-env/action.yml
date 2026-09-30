@@ -197,6 +197,18 @@ inputs:
       Set to a SHA for fully reproducible runs.
     required: false
     default: "dev"
+  repro-runquota-pin:
+    description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon.
+    required: false
+    default: "dev"
+  repro-posix-io-mon-pin:
+    description: Optional full io-mon source SHA for the Linux/macOS Reprobuild bootstrap; empty retains its flake lock.
+    required: false
+    default: ""
+  repro-io-mon-pin:
+    description: io-mon source ref for the source-built Windows Reprobuild monitor.
+    required: false
+    default: "dev"
   repro-publish-key:
     description: >
       ECDSA-P256 signing private key (PEM) for publishing `repro build`
@@ -647,14 +659,16 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@2c92c1fb562bce220e7cb0151ea8ce58e306f140
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c70882ae9281edba7a87ad245cb4b30592331f2c
       with:
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
+        runquota-ref: ${{ inputs.repro-runquota-pin }}
+        io-mon-ref: ${{ inputs.repro-io-mon-pin }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@2c92c1fb562bce220e7cb0151ea8ce58e306f140
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@58da84d5af27408ca598ce69caa83b133e054592
       with:
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
@@ -664,6 +678,7 @@ runs:
         attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
         from-source: ${{ inputs.repro-from-source }}
+        io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}
 
     # ------------------------------------------------------------------
     # sibling-strategy: repro-lock — the consumer half

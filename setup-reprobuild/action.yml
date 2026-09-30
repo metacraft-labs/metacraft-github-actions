@@ -77,6 +77,10 @@ inputs:
       true, or when a `repro` is already on PATH.
     required: false
     default: "latest"
+  io-mon-pin:
+    description: Optional full io-mon source SHA for a Linux/macOS source build; empty retains the Reprobuild flake lock.
+    required: false
+    default: ""
   from-source:
     description: >
       Build the CLI from source, overriding a CLI already on PATH. For
@@ -299,13 +303,25 @@ runs:
     - name: Build repro CLI (Linux/macOS)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' }}
       shell: bash
+      env:
+        IO_MON_PIN: ${{ inputs.io-mon-pin }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/.reprobuild-src"
+        # Bash 3.2 treats an empty array as unset under nounset. Keep the
+        # command itself in the array so the default path is nonempty too.
+        nix_develop_args=(develop)
+        if [ -n "${IO_MON_PIN}" ]; then
+          if [[ ! "${IO_MON_PIN}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::io-mon-pin must be a full lowercase source SHA"
+            exit 1
+          fi
+          nix_develop_args+=(--override-input io-mon-src "github:metacraft-labs/io-mon/${IO_MON_PIN}")
+        fi
         # Use the dev shell's just target — the same path reprobuild's own CI
         # exercises — overriding the private flake inputs to the local clones
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
-        nix develop \
+        nix "${nix_develop_args[@]}" \
           --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
           --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
           --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
@@ -329,6 +345,31 @@ runs:
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
             echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
+            # macOS provider compilation needs the source shell compiler and
+            # its SDK closure and a non-SIP executable. Linux keeps its host
+            # compiler: a Nix-linked helper outside that shell can mix the
+            # Nix loader with host glibc (source-bootstrap issue, 2026-09-29).
+            if [ "$(uname -s)" = Darwin ]; then
+              bootstrap_cc="$(command -v "${CC:-cc}")"
+              test -x "${bootstrap_cc}"
+              case "${bootstrap_cc}" in
+                /nix/store/*/bin/*) ;;
+                *) echo "Source bootstrap requires a Nix C compiler" >&2; exit 1 ;;
+              esac
+              echo "REPRO_BOOTSTRAP_CC=${bootstrap_cc}" >> "${GITHUB_ENV}"
+            fi
+            # Monitored launches on macOS cannot use SIP-protected /bin shells.
+            # Keep its rooted Bash available in subsequent steps.
+            bootstrap_bash="$(command -v bash)"
+            test -x "${bootstrap_bash}"
+            if [ "$(uname -s)" = Darwin ]; then
+              case "${bootstrap_bash}" in
+                /nix/store/*/bin/bash) ;;
+                *) echo "Source bootstrap requires Nix Bash on macOS" >&2; exit 1 ;;
+              esac
+            fi
+            echo "${bootstrap_bash%/*}" >> "${GITHUB_PATH}"
+            echo "REPRO_FOREIGN_ENV_BASH=${bootstrap_bash}" >> "${GITHUB_ENV}"
             # The source shell already provides its pinned RunQuota package.
             # Later repro commands run outside that shell and still need the
             # daemon for lease admission, including when building RunQuota itself.
