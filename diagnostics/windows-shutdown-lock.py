@@ -12,7 +12,7 @@ import time
 
 folder, variant = Path(sys.argv[1]).resolve(), sys.argv[2]
 base = folder.parent
-observer = base / "observer.exe"
+observer = base / "windows-process-phase.exe"
 results = []
 for mode, repeat in (("ordinary", 0), ("scheduled", 1), ("scheduled", 2)):
     case = folder / f"{mode}-{repeat}"

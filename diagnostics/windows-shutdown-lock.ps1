@@ -16,13 +16,14 @@ foreach ($repo in $pins.Keys) {
     if ($LASTEXITCODE -or $actual -ne $pins[$repo]) { throw "Unexpected source for $repo" }
 }
 $pins | ConvertTo-Json | Set-Content "$evidence/source-pins.json"
-foreach ($pair in @(@('windows-process-phase.c', 'observer'), @('windows-shutdown-lock-child.c', 'child'))) {
+# The observer locates its real control module by this executable name.
+foreach ($pair in @(@('windows-process-phase.c', 'windows-process-phase'), @('windows-shutdown-lock-child.c', 'child'))) {
     & gcc -Wall -Wextra -Werror "$PSScriptRoot/$($pair[0])" -o "$evidence/$($pair[1]).exe" *> "$evidence/$($pair[1])-build.log"
     if ($LASTEXITCODE) { throw "Could not build $($pair[1])" }
 }
-& "$evidence/observer.exe" --control *> "$evidence/observer-control.log"
+& "$evidence/windows-process-phase.exe" --control *> "$evidence/observer-control.log"
 if ($LASTEXITCODE) { throw 'Real observer control failed' }
-& "$evidence/observer.exe" --control-negative *> "$evidence/observer-negative.log"
+& "$evidence/windows-process-phase.exe" --control-negative *> "$evidence/observer-negative.log"
 if ($LASTEXITCODE -ne 13 -or (Get-Content -Raw "$evidence/observer-negative.log") -notmatch 'phase=322') {
     throw 'Wrong-phase control did not observe and reject phase 322'
 }
