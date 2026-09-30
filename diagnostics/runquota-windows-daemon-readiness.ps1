@@ -7,6 +7,7 @@ $evidence = Join-Path $PWD 'build/windows-readiness'
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $originals = @{}
 $results = @()
+$originalTailLines = $env:REPRO_DIAGNOSTIC_TAIL_LINES
 function Edit-Diagnostic([string]$Path, [string]$Before, [string]$After) {
     $raw = [IO.File]::ReadAllText((Join-Path $PWD $Path))
     # Windows checkouts can use CRLF. Normalize the disposable transform and
@@ -19,6 +20,9 @@ function Edit-Diagnostic([string]$Path, [string]$Before, [string]$After) {
     [IO.File]::WriteAllText((Join-Path $PWD $Path), $text.Replace($beforeText, $afterText))
 }
 try {
+    # Full logs remain artifacts. Streaming thousands of lines through the
+    # Windows console exhausted the diagnostic step after all pairs passed.
+    $env:REPRO_DIAGNOSTIC_TAIL_LINES = '12'
   if ($env:RUNQUOTA_READINESS_FULL_GRAPH -ne 'true') {
     Edit-Diagnostic 'repro.nim' '    testSources.sort()' @'
     testSources.sort()
@@ -188,6 +192,7 @@ if helperMode.len > 0:
     }
     $results = @(Get-Content "$evidence/results.json" -Raw | ConvertFrom-Json)
 } finally {
+    $env:REPRO_DIAGNOSTIC_TAIL_LINES = $originalTailLines
     if (-not (Test-Path "$evidence/results.json")) {
         $results | ConvertTo-Json -Depth 4 | Set-Content "$evidence/results.json"
     }

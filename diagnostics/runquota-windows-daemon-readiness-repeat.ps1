@@ -23,7 +23,6 @@ foreach ($round in 1..8) {
         if ((Get-FileHash $binary).Hash -ne $fixtureHash -or (Get-FileHash $daemon).Hash -ne $daemonHash) {
             throw 'A comparison binary changed'
         }
-        Get-Content "$prefix.log" -Tail 35
     }
 }
 if (@($results | Where-Object { $_.exitCode -ne 0 }).Count) {
