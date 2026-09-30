@@ -53,10 +53,68 @@ proc diagnosticDaemonOutput(process: Process): string =
       for index in 0 ..< count:
         result.add(buffer[index])
   else:
-    result = process.outputStream.readAll()
+    let fd = cint(process.outputHandle)
+    let flags = fcntl(fd, F_GETFL)
+    if flags < 0 or fcntl(fd, F_SETFL, flags or O_NONBLOCK) < 0:
+      return "diagnostic pipe unavailable"
+    defer: discard fcntl(fd, F_SETFL, flags)
+    var buffer: array[4096, char]
+    while result.len < 65536:
+      let count = posix.read(fd, addr buffer[0],
+        min(buffer.len, 65536 - result.len))
+      if count <= 0:
+        break
+      for index in 0 ..< count:
+        result.add(buffer[index])
+
+proc diagnosticHelperWait(process: Process; timeoutMillis: int): int =
+  let started = getMonoTime()
+  result = process.waitForExit(timeoutMillis)
+  echo "DIAGNOSTIC helper pid=", process.processID, " exit=", result,
+    " running=", process.running,
+    " wait_ms=", (getMonoTime() - started).inMilliseconds,
+    " output: ", diagnosticDaemonOutput(process)
 
 const HelperModeEnv = "RUNQUOTA_E2E_CRASH_MODE"
+
+template diagnosticHelperPhase(label: string) =
+  if getEnv(HelperModeEnv).len > 0:
+    echo "DIAGNOSTIC helper pid=", getCurrentProcessId(),
+      " tick_ns=", getMonoTime().ticks, " phase=", label
+    flushFile(stdout)
 '@
+    Edit-Diagnostic $fixture '  var child = startProcess(' @'
+  diagnosticHelperPhase("begin sleep child spawn")
+  var child = startProcess(
+'@
+    Edit-Diagnostic $fixture '  writeFile(pidPath, $child.processID)' @'
+  diagnosticHelperPhase("end sleep child spawn")
+  writeFile(pidPath, $child.processID)
+'@
+    Edit-Diagnostic $fixture 'helper.waitForExit(3000)' 'diagnosticHelperWait(helper, 3000)'
+    Edit-Diagnostic $fixture 'if helperMode.len > 0:' @'
+if helperMode.len > 0:
+  diagnosticHelperPhase("entered helper dispatcher")
+'@
+    # Only two-space helper-procedure statements are selected. Preserve each
+    # call and its arguments; log around it without changing control flow.
+    $helperText = [IO.File]::ReadAllText((Join-Path $PWD $fixture))
+    foreach ($phase in @(
+        @{name='connect'; pattern='(?m)^  var client = connectDefault\(\)$'},
+        @{name='register'; pattern='(?m)^  var session = client\.registerSession\([^\r\n]+$'},
+        @{name='request lease'; pattern='(?m)^  var lease = session\.requestLease\([^\r\n]+$'},
+        @{name='mark starting'; pattern='(?m)^  lease\.markStarting\(\)$'},
+        @{name='mark running'; pattern='(?m)^  lease\.markRunning\([^\r\n]+$'}
+    )) {
+        if (-not [regex]::IsMatch($helperText, $phase.pattern)) {
+            throw "Missing helper phase $($phase.name)"
+        }
+        $before = "  diagnosticHelperPhase(`"begin $($phase.name)`")"
+        $after = "  diagnosticHelperPhase(`"end $($phase.name)`")"
+        $replacement = $before + "`n" + '$0' + "`n" + $after
+        $helperText = [regex]::Replace($helperText, $phase.pattern, $replacement)
+    }
+    [IO.File]::WriteAllText((Join-Path $PWD $fixture), $helperText)
     Edit-Diagnostic $fixture '  let process = startProcess(' @'
   let diagnosticStart = getMonoTime()
   let process = startProcess(
