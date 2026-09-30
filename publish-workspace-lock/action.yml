@@ -114,6 +114,16 @@ inputs:
       record would make the record unreadable by the tool that owns it.
     required: false
     default: ""
+  lock-store:
+    description: >
+      `committed` (the default): the project's sibling revisions live in its
+      committed `repro.lock`, which the merged commit carries, so this action
+      publishes nothing and succeeds. `record-store`: the per-project opt-in to
+      a team record store — the PR head's record is re-anchored onto the
+      mainline commit exactly as described above. See
+      reprobuild-specs/Unified-Locking-And-Hooks.md §14.6.
+    required: false
+    default: "committed"
   manifests-repo:
     description: owner/name of the PUBLIC (base) manifest repo holding the locks.
     required: false
@@ -172,4 +182,5 @@ runs:
         COMMITTER_EMAIL: ${{ inputs.committer-email }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         ANCHOR: ${{ github.action_path }}/anchor-workspace-lock.sh
+        LOCK_STORE: ${{ inputs.lock-store }}
       run: bash "${GITHUB_ACTION_PATH}/publish-workspace-lock.sh"

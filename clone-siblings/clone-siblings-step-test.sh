@@ -150,7 +150,7 @@ done <"$ACTION"
 for _v in GH_TOKEN SIBLINGS_INPUT SIBLING_OWNER JOB_TOKEN_OWNERS \
 	MANIFESTS_REPO INPUT_MANIFESTS_REF PRIVATE_MANIFESTS_REPO \
 	INPUT_PRIVATE_MANIFESTS_REF ON_LOCK_OVERRIDE GIT_AUTH_DIR \
-	PR_BASE_SHA EVENT_BEFORE; do
+	PR_BASE_SHA EVENT_BEFORE LOCK_STORE; do
 	case "$ACTION_TEXT" in
 	*"        ${_v}: "*) ;;
 	*)
@@ -286,6 +286,12 @@ run_step() { # <siblings-input> [<on-lock-override>]
 	# `$GITHUB_WORKSPACE`. One file is enough to tell "still here" from
 	# "`rm -rf`'d by a sibling clone aimed at this very directory" (section 11).
 	printf 'the commit under test\n' >"$WS_PARENT/codetracer/PRIMARY-CHECKOUT"
+	# The commit under test's own committed lock, when a section supplies one
+	# (section 12). Sections 4-11 exercise the record-store opt-in and leave it
+	# unset, so their checkout carries no repro.lock — as before.
+	if [[ -n ${COMMITTED_LOCK:-} ]]; then
+		cp "$COMMITTED_LOCK" "$WS_PARENT/codetracer/repro.lock"
+	fi
 	rm -rf "$TMPROOT/runner-temp"
 	mkdir -p "$TMPROOT/runner-temp"
 	: >"$TMPROOT/github-env"
@@ -301,6 +307,7 @@ run_step() { # <siblings-input> [<on-lock-override>]
 			PRIVATE_MANIFESTS_REPO="" \
 			INPUT_PRIVATE_MANIFESTS_REF="" \
 			ON_LOCK_OVERRIDE="${2:-warn}" \
+			LOCK_STORE="${LOCK_STORE_UNDER_TEST-record-store}" \
 			GIT_AUTH_DIR="$ROOT/git-auth" \
 			GITHUB_ACTION_PATH="$HERE" \
 			GITHUB_WORKSPACE="$WS_PARENT/codetracer" \
@@ -902,6 +909,139 @@ others_cloned "  ..."
 check "  ...codetracer-launcher is on disk" \
 	"$([[ -d "$WS_PARENT/codetracer-launcher/.git" ]] && echo yes || echo no)" "yes"
 lacks "  ...and was not mistaken for the trigger" "$OUT" "${SELF_SKIP_LINE} 'codetracer-launcher"
+
+# ===========================================================================
+# 12. THE DEFAULT IS THE TRIGGERING COMMIT'S OWN COMMITTED `repro.lock`.
+#
+# reprobuild-specs/Unified-Locking-And-Hooks.md §14.5: a repo's committed
+# `repro.lock` records the commit (and integrity) of every develop-set sibling
+# it was built against, and CI resolves siblings FROM IT unless the project
+# opted into a record store. Before this, a bare entry resolved only from
+# `metacraft-manifests`, so a repo with no record there could not run CI at all
+# ("No workspace lock for ... in metacraft-labs/metacraft-manifests@latest"),
+# however complete its own committed lock was.
+#
+# To prove "without contacting the record store", the manifests repo is DELETED
+# from the fake GitHub for this whole section: any attempt to clone it fails,
+# and the step must not even try.
+#
+# The pinned revision is deliberately NOT the branch tip (each repo gets a
+# second commit after the pin is taken), so a clone that silently took the tip
+# fails the revision check rather than passing by coincidence.
+# ===========================================================================
+rm -rf "$SRV/metacraft-labs/metacraft-manifests.git"
+
+advance_repo() { # <name> -> new tip SHA; the old SHA stays reachable
+	local name="$1" work="$TMPROOT/build/$1"
+	printf 'advanced %s\n' "$name" >>"$work/README"
+	git_q -C "$work" add README
+	git_q -C "$work" -c user.name=CI -c user.email=ci@local commit --no-gpg-sign -m "advance $name"
+	git_q -C "$work" push "$SRV/metacraft-labs/$name.git" dev
+	"$REAL_GIT" -C "$work" rev-parse HEAD
+}
+ACP_PIN="$(sha_of nim-acp)"
+AGENTS_PIN="$(sha_of nim-agents)"
+ACP_TIP="$(advance_repo nim-acp)"
+AGENTS_TIP="$(advance_repo nim-agents)"
+check "fixture: the nim-acp tip moved past its pin" "$([[ $ACP_TIP != "$ACP_PIN" ]] && echo moved)" "moved"
+check "fixture: the nim-agents tip moved past its pin" "$([[ $AGENTS_TIP != "$AGENTS_PIN" ]] && echo moved)" "moved"
+
+# `mk_committed_lock <file> <dep-entry>...` — a committed lock as
+# `repro lock refresh` writes it: the root entry plus one inline table per dep.
+dep_entry() { # <name> <path> <revision> [<integrity>]
+	local integ="${4-git-sha1:$3}"
+	printf '{ name = "%s", path = "%s", coord_kind = "vcs", url = "https://github.com/metacraft-labs/%s", ref = "dev", revision = "%s", integrity = "%s", version = "", visibility = "public", participation = "", depends = "", groups = "" }' \
+		"$1" "$2" "$1" "$3" "$integ"
+}
+mk_committed_lock() { # <file> <entry>...
+	local f="$1" e
+	shift
+	{
+		printf 'schema = "reprobuild.solved-graph-lock.v2"\n\n[lock]\nplatform = "amd64-linux"\noptimal = false\ninputs_digest = "fnv1a64:0"\nvariants = []\npackages = []\n'
+		printf 'deps = [%s' "$(dep_entry codetracer . "$SELF_SHA")"
+		for e in "$@"; do printf ', %s' "$e"; done
+		printf ']\n'
+	} >"$f"
+}
+CL_OK="$TMPROOT/committed-ok.lock"
+mk_committed_lock "$CL_OK" \
+	"$(dep_entry nim-acp ../nim-acp "$ACP_PIN")" \
+	"$(dep_entry nim-agents ../nim-agents "$AGENTS_PIN")"
+
+# 12a. Default (lock-store unset): bare entries resolve from the committed lock.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp
+nim-agents"
+check "12a: bare siblings resolve from the committed repro.lock" "$RC" "0"
+check "12a: nim-acp is at the committed pin, not the tip" \
+	"$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$ACP_PIN"
+check "12a: nim-agents is at the committed pin, not the tip" \
+	"$("$REAL_GIT" -C "$WS_PARENT/nim-agents" rev-parse HEAD 2>/dev/null)" "$AGENTS_PIN"
+lacks "12a: the record store was not contacted" "$OUT" "Cloning manifests repo"
+lacks "12a: and no record-store diagnostic appears" "$OUT" "metacraft-manifests"
+contains "12a: the resolution table names the committed lock" "$OUT" "committed repro.lock"
+
+# 12b. A sibling the committed lock does not pin is a NAMED refusal, raised
+#      before anything is cloned, naming the remedy — never a tip, never a
+#      silent detour through a record store the project did not opt into.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp
+isonim"
+check "12b: an unpinned sibling is refused" "$RC" "1"
+contains "12b: the refusal names the sibling" "$OUT" "isonim"
+contains "12b: and the remedy" "$OUT" "repro lock refresh"
+check "12b: nothing was cloned" "$([[ -d $WS_PARENT/nim-acp ]] && echo cloned || echo none)" "none"
+lacks "12b: the record store was not contacted" "$OUT" "Cloning manifests repo"
+
+# 12c. No committed lock at all, with a bare entry: refused, naming the file.
+COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "12c: no committed lock + a bare entry is refused" "$RC" "1"
+contains "12c: the refusal names repro.lock" "$OUT" "repro.lock"
+lacks "12c: and does not fall back to the record store" "$OUT" "Cloning manifests repo"
+
+# 12d. A committed pin that is a BRANCH NAME is not a pin.
+CL_BRANCH="$TMPROOT/committed-branch.lock"
+mk_committed_lock "$CL_BRANCH" "$(dep_entry nim-acp ../nim-acp main "")"
+COMMITTED_LOCK="$CL_BRANCH" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "12d: a branch-name revision in the committed lock is refused" "$RC" "1"
+contains "12d: ...naming the sibling" "$OUT" "nim-acp"
+check "12d: nothing was cloned" "$([[ -d $WS_PARENT/nim-acp ]] && echo cloned || echo none)" "none"
+
+# 12e. An integrity that names a DIFFERENT commit than the revision is a
+#      self-contradictory record, and a contradiction is not resolved by
+#      picking one side.
+CL_CONTRA="$TMPROOT/committed-contra.lock"
+mk_committed_lock "$CL_CONTRA" "$(dep_entry nim-acp ../nim-acp "$ACP_PIN" "git-sha1:$ACP_TIP")"
+COMMITTED_LOCK="$CL_CONTRA" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "12e: revision/integrity disagreement is refused" "$RC" "1"
+contains "12e: ...saying so" "$OUT" "integrity"
+
+# 12f. The override protection survives the move: `=ref` replacing a committed
+#      pin is reported, and refused under `on-lock-override: error`.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp=dev"
+check "12f: an override of a committed pin still clones under warn" "$RC" "0"
+contains "12f: ...and is reported as an override" "$OUT" "override a revision the workspace lock already pins"
+contains "12f: ...naming the committed pin" "$OUT" "$ACP_PIN"
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp=dev" "error"
+check "12f: ...and is refused under on-lock-override: error" "$RC" "1"
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp=$ACP_PIN" "error"
+check "12f: an explicit ref equal to the committed pin is not an override" "$RC" "0"
+
+# 12g. All-explicit list with no committed lock: the lock is advisory, as it
+#      is for the record store — warned, not failed.
+COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" run_step "nim-acp=$ACP_PIN"
+check "12g: an all-explicit list proceeds without a committed lock" "$RC" "0"
+contains "12g: ...with a warning that overrides could not be checked" "$OUT" "::warning::"
+
+# 12h. The opt-in still means the record store. With the store gone, the
+#      record-store path must try it and fail loudly — it must not quietly
+#      read the committed lock the project opted out of.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="record-store" run_step "nim-acp"
+check "12h: lock-store: record-store consults the record store" "$RC" "1"
+contains "12h: ...and says it could not reach it" "$OUT" "Failed to clone manifests repo"
+
+# 12i. An unknown lock-store is a configuration error, not a default.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="records" run_step "nim-acp"
+check "12i: an unknown lock-store value is refused" "$RC" "1"
+contains "12i: ...naming the accepted values" "$OUT" "record-store"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
