@@ -1,0 +1,64 @@
+name: Compare RunQuota retention batching on Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-runquota-retention-batching.yml
+      - diagnostics/runquota-retention-batching.ps1
+      - diagnostics/runquota-retention-batching.py
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 110
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+      REPRO_TOOL_PROVISIONING: tarball
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: f93855c8ef2a3979f888c2abeaef153b283f4a1e
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-stackable-hooks-pin: def2464b2d282c7c1a982689a25953e1d4501f93
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Build and compare the original and batched retention
+        timeout-minutes: 85
+        shell: pwsh
+        run: repro exec -- pwsh -NoProfile -File ./.diagnostic-tools/diagnostics/runquota-retention-batching.ps1
+      - name: Retain real test results and monitored streams
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-retention-batching-${{ matrix.runner }}
+          path: build/retention-batching/
+          if-no-files-found: error
+          retention-days: 14
