@@ -1,0 +1,45 @@
+name: Diagnose Windows entry-park TLS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/reprobuild
+          ref: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          path: .toolchain
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 72f578249e9d8bbca8e3705c8a41ed5085c05bf9
+          path: nim-stackable-hooks
+          persist-credentials: false
+      - name: Compare the real TLS fixture and preserve compiler evidence
+        shell: pwsh
+        run: ./diagnostics/windows-entry-park-tls.ps1
+      - name: Preserve both outcomes and TLS implementations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-entry-park-tls-${{ matrix.runner }}
+          path: build/windows-entry-park-tls/
+          retention-days: 14
+          if-no-files-found: error
