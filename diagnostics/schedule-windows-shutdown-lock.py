@@ -12,9 +12,14 @@ text = writer.read_text()
 anchor = "proc registerFragmentSlot() {.raises: [].} =\n"
 assert text.count(anchor) == 1
 text = text.replace(anchor, '''{.emit: "#include <windows.h>".}
-proc diagnosticHoldWriterRegistry(held: pointer)
+proc diagnosticHoldWriterRegistry(requested, held, ready: pointer)
     {.exportc: "repro_diagnostic_hold_writer_registry", dynlib, cdecl.} =
   ensureRegistryLock()
+  # Establish the worker's real DLL/TLS/lock entry before ExitProcess can
+  # serialize new thread initialization behind the loader's exit lock.
+  acquire(registryLock)
+  release(registryLock)
+  {.emit: "SetEvent((HANDLE)`ready`); WaitForSingleObject((HANDLE)`requested`, INFINITE);".}
   acquire(registryLock)
   # This explicitly controlled worker is terminated by real ExitProcess.
   {.emit: "SetEvent((HANDLE)`held`); Sleep(INFINITE);".}
@@ -28,16 +33,18 @@ anchor = "var terminateFlushDone {.global.}: Atomic[bool]\n"
 assert text.count(anchor) == 1
 text = text.replace(anchor, '''{.emit: """
 #include <windows.h>
-static HANDLE diagnostic_exit_request, diagnostic_exit_held;
-__declspec(dllexport) void repro_diagnostic_schedule_exit(HANDLE request, HANDLE held) {
+static HANDLE diagnostic_exit_request, diagnostic_exit_held, diagnostic_exit_worker;
+__declspec(dllexport) void repro_diagnostic_schedule_exit(HANDLE request, HANDLE held, HANDLE worker) {
   diagnostic_exit_request = request;
   diagnostic_exit_held = held;
+  diagnostic_exit_worker = worker;
 }
 static void diagnostic_wait_for_exit_lock(void) {
   if (diagnostic_exit_request) {
     if (!SetEvent(diagnostic_exit_request) ||
         WaitForSingleObject(diagnostic_exit_held, 5000) != WAIT_OBJECT_0)
-      TerminateProcess(GetCurrentProcess(), 81);
+      TerminateProcess(GetCurrentProcess(),
+        WaitForSingleObject(diagnostic_exit_worker, 0) == WAIT_OBJECT_0 ? 82 : 81);
   }
 }
 """.}

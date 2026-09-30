@@ -8,15 +8,14 @@
 #include <string.h>
 
 typedef int (__cdecl *init_fn)(const char *);
-typedef void (__cdecl *schedule_fn)(HANDLE, HANDLE);
-typedef void (__cdecl *hold_fn)(HANDLE);
-static HANDLE requested, held;
+typedef void (__cdecl *schedule_fn)(HANDLE, HANDLE, HANDLE);
+typedef void (__cdecl *hold_fn)(HANDLE, HANDLE, HANDLE);
+static HANDLE requested, held, ready;
 static hold_fn hold_registry;
 
 static DWORD WINAPI worker(LPVOID unused) {
     (void)unused;
-    if (WaitForSingleObject(requested, INFINITE) != WAIT_OBJECT_0) return 82;
-    hold_registry(held);
+    hold_registry(requested, held, ready);
     return 83;
 }
 
@@ -31,10 +30,12 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[2], "scheduled")) {
         requested = CreateEventA(NULL, TRUE, FALSE, NULL);
         held = CreateEventA(NULL, TRUE, FALSE, NULL);
-        if (!requested || !held) return 67;
+        ready = CreateEventA(NULL, TRUE, FALSE, NULL);
+        if (!requested || !held || !ready) return 67;
         HANDLE thread = CreateThread(NULL, 0, worker, NULL, 0, NULL);
         if (!thread) return 68;
-        schedule(requested, held);
+        if (WaitForSingleObject(ready, 5000) != WAIT_OBJECT_0) return 72;
+        schedule(requested, held, thread);
         /* Retain the worker handle through exit; no destructor runs here. */
     } else if (strcmp(argv[2], "ordinary")) return 69;
     HANDLE probe = CreateFileA(argv[3], GENERIC_READ, FILE_SHARE_READ, NULL,
