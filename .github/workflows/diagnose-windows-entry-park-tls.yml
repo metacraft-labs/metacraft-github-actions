@@ -2,6 +2,11 @@ name: Diagnose Windows entry-park TLS
 
 on:
   workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/diagnose-windows-entry-park-tls.yml
+      - diagnostics/windows-entry-park-tls.ps1
 
 permissions:
   contents: read
