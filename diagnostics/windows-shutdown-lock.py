@@ -5,10 +5,21 @@ The phase observer never suspends target threads. No product timeout changes.
 """
 import json
 import os
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 import subprocess
 import sys
 import time
+import uuid
+
+kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel.CreateEventW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR)
+kernel.CreateEventW.restype = wintypes.HANDLE
+kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+kernel.WaitForSingleObject.restype = wintypes.DWORD
+kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+kernel.CloseHandle.restype = wintypes.BOOL
 
 folder, variant = Path(sys.argv[1]).resolve(), sys.argv[2]
 base = folder.parent
@@ -24,10 +35,16 @@ for mode, repeat in (("ordinary", 0), ("scheduled", 1), ("scheduled", 2)):
     started = time.monotonic()
     timed_out = False
     samples = []
+    # The parent retains this real event after child exit. A successful exit
+    # cannot masquerade as a repair if the scheduled lock owner never ran.
+    held_name = "Local\\io-mon-shutdown-held-" + uuid.uuid4().hex
+    held_event = kernel.CreateEventW(None, True, False, held_name)
+    if not held_event:
+        raise ctypes.WinError(ctypes.get_last_error())
     with (case / "child.log").open("wb") as output:
         child = subprocess.Popen([str(base / "child.exe"),
                                   str(folder / "librepro_monitor_shim.dll"),
-                                  mode, str(marker)], stdout=output,
+                                  mode, str(marker), held_name], stdout=output,
                                  stderr=subprocess.STDOUT, env=env)
         try:
             birth = subprocess.run([str(observer), "--creation", str(child.pid)],
@@ -52,9 +69,12 @@ for mode, repeat in (("ordinary", 0), ("scheduled", 1), ("scheduled", 2)):
                 child.kill()
                 child.wait(timeout=10)
     log = (case / "child.log").read_text(errors="replace")
+    held_observed = kernel.WaitForSingleObject(held_event, 0) == 0
+    kernel.CloseHandle(held_event)
     saw_late_flush = any("last_repro_diagnostic_exit_phase=211" in s for s in samples)
     expected_stall = variant == "original" and mode == "scheduled"
     passed = ("SHUTDOWN-CONTROL application complete" in log and
+              (held_observed if mode == "scheduled" else not held_observed) and
               (timed_out and saw_late_flush if expected_stall else
                not timed_out and child.returncode == 17))
     capture = subprocess.run([str(base / "capture.exe"), str(fragments)],
@@ -63,6 +83,7 @@ for mode, repeat in (("ordinary", 0), ("scheduled", 1), ("scheduled", 2)):
     passed = passed and capture.returncode == 0
     result = dict(variant=variant, mode=mode, repeat=repeat, passed=passed,
                   exitCode=child.returncode, timedOut=timed_out,
+                  heldObserved=held_observed,
                   sawLateFlush=saw_late_flush, captureExit=capture.returncode,
                   elapsed=time.monotonic()-started)
     results.append(result)

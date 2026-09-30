@@ -20,7 +20,7 @@ static DWORD WINAPI worker(LPVOID unused) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) return 64;
+    if (argc != 5) return 64;
     HMODULE shim = LoadLibraryA(argv[1]);
     if (!shim) return 65;
     init_fn init = (init_fn)(uintptr_t)GetProcAddress(shim, "repro_monitor_shim_init");
@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     if (!init || !schedule || !hold_registry || init(NULL)) return 66;
     if (!strcmp(argv[2], "scheduled")) {
         requested = CreateEventA(NULL, TRUE, FALSE, NULL);
-        held = CreateEventA(NULL, TRUE, FALSE, NULL);
+        held = CreateEventA(NULL, TRUE, FALSE, argv[4]);
         ready = CreateEventA(NULL, TRUE, FALSE, NULL);
         if (!requested || !held || !ready) return 67;
         HANDLE thread = CreateThread(NULL, 0, worker, NULL, 0, NULL);
