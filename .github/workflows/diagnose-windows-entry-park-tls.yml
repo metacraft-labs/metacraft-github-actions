@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/nim-stackable-hooks
-          ref: 72f578249e9d8bbca8e3705c8a41ed5085c05bf9
+          ref: db9e21a4ff26185fcd815a10148957c982c4a664
           path: nim-stackable-hooks
           persist-credentials: false
       - name: Compare the real TLS fixture and preserve compiler evidence
