@@ -100,6 +100,15 @@ int main(int argc, char **argv) {
     if (!mapping) return 20;
     observation = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, 4 * sizeof(LONG));
     if (!observation) return 21;
+    if (first) {
+        /* Match io-mon 5e71adf's forceLoadObservedModules before suspension.
+         * Loading these images can add runtime peers absent in a bare probe. */
+        const wchar_t *modules[] = {L"ws2_32.dll", L"bcrypt.dll", L"advapi32.dll",
+            L"bcryptprimitives.dll", L"ucrtbase.dll", L"msvcrt.dll"};
+        for (unsigned i = 0; i < sizeof(modules) / sizeof(modules[0]); i++) {
+            if (!LoadLibraryW(modules[i])) return 29;
+        }
+    }
     HMODULE module = image ? LoadLibraryA("protection-target.dll") :
         system ? GetModuleHandleA("kernel32.dll") : NULL;
     unsigned char *page = image ? (unsigned char *)GetProcAddress(module, "repro_probe_code") :
