@@ -17,12 +17,18 @@ $originalLauncher = [IO.File]::ReadAllText((Join-Path $PWD $launcher))
 try {
     $baseline = & git show "70364629d5214bf4be9ac760d63e572fc257b111:$fixture"
     if ($LASTEXITCODE) { throw 'Exact baseline source is absent' }
+    # Mainline renamed the isolation option. Translate that call only, keeping
+    # the original baseline's declaration and every assertion unchanged.
+    $baselineText = ($baseline -join "`n") + "`n"
+    $oldCall = 'isolateEnvironment = isolate))'
+    if ([regex]::Matches($baselineText, [regex]::Escape($oldCall)).Count -ne 1) { throw 'Baseline API anchor changed' }
+    $baselineText = $baselineText.Replace($oldCall, 'inheritEnv = not isolate))')
     foreach ($variant in @('baseline', 'repaired', 'inherited-control')) {
-        $text = if ($variant -eq 'baseline') { ($baseline -join "`n") + "`n" } else { $originalFixture }
+        $text = if ($variant -eq 'baseline') { $baselineText } else { $originalFixture }
         [IO.File]::WriteAllText((Join-Path $PWD $fixture), $text)
         $text = $originalLauncher
         if ($variant -eq 'inherited-control') {
-            $anchor = 'if not spec.isolateEnvironment:'
+            $anchor = 'if spec.inheritEnv:'
             if ([regex]::Matches($text, [regex]::Escape($anchor)).Count -ne 1) { throw 'Leak control anchor changed' }
             $text = $text.Replace($anchor, 'if true: # Deliberate real inheritance regression')
         }

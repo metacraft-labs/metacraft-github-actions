@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 48bb701c4d628ae206e9ed07fec0126b2ba9f6d3
+          ref: 33add18739814c3886da1f69f8a4e18ab1e36faa
           path: .runquota
           fetch-depth: 32
           persist-credentials: false
