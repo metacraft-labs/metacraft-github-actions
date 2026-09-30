@@ -6,7 +6,6 @@ $evidence = Join-Path $PWD 'build/windows-arm-test-contention'
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $recipe = Join-Path $PWD 'repro.nim'
 $original = [IO.File]::ReadAllText($recipe)
-$results = @()
 try {
     $anchor = '    testSources.sort()'
     if ([regex]::Matches($original, [regex]::Escape($anchor)).Count -ne 1) { throw 'Test selection anchor changed' }
@@ -36,29 +35,12 @@ try {
     $env:REPROBUILD_MAX_PARALLELISM = '8'
     & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/build.log" repro build --daemon=off --tool-provisioning=tarball "--write-report=$evidence/build.json"
     if ($LASTEXITCODE) { throw 'Monitored compilation failed; no test scheduling comparison is valid' }
-    $hashes = @{}
-    foreach ($file in @(Get-ChildItem build/bin/*.exe) + @(Get-ChildItem build/test-bin/*.exe)) {
-        $hashes[$file.FullName] = (Get-FileHash $file.FullName).Hash
-    }
-    $hashes | ConvertTo-Json | Set-Content "$evidence/binary-sha256.json"
-    foreach ($mode in @('parallel-first', 'serial', 'parallel-second')) {
-        $env:REPROBUILD_MAX_PARALLELISM = if ($mode -eq 'serial') { '1' } else { '8' }
-        & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/$mode.log" repro test --daemon=off --tool-provisioning=tarball "--write-report=$evidence/$mode.json"
-        $code = $LASTEXITCODE
-        $report = Get-Content "$evidence/$mode.json" -Raw | ConvertFrom-Json
-        $actions = @($report.actions | Where-Object { $_.id -like 'runquota.test_execute.*' })
-        $results += @{mode=$mode; parallelism=$env:REPROBUILD_MAX_PARALLELISM; exitCode=$code; actions=@($actions | Select-Object id,status,exitCode,launched,cacheDecision)}
-        $results | ConvertTo-Json -Depth 6 | Set-Content "$evidence/results.json"
-        if ($actions.Count -ne 7 -or @($actions | Where-Object { -not $_.launched -or $_.cacheDecision -ne 'cdNotCacheable' }).Count) {
-            throw 'A comparison did not execute all seven real programs'
-        }
-        foreach ($path in $hashes.Keys) {
-            if ((Get-FileHash $path).Hash -ne $hashes[$path]) { throw "Comparison binary changed: $path" }
-        }
-    }
+    # A second graph evaluation can rebuild a binary on a legitimate cache
+    # miss. Enter the environment once and run the fixed images directly under
+    # the production monitor; the comparison must never invoke a compiler.
+    $env:REPRO_TOOL_PROVISIONING = 'tarball'
+    & bash "$PSScriptRoot/capture-ci-command.sh" "$evidence/comparison.log" repro exec -- python "$PSScriptRoot/runquota-windows-arm-test-contention.py"
+    if ($LASTEXITCODE) { throw 'Real scheduling comparison failed; retain all outcomes' }
 } finally {
     [IO.File]::WriteAllText($recipe, $original)
-}
-if (@($results | Where-Object { $_.exitCode -ne 0 }).Count) {
-    throw 'A real scheduling comparison failed; retain the complete results'
 }

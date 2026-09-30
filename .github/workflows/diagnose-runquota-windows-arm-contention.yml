@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/diagnose-runquota-windows-arm-contention.yml
       - diagnostics/runquota-windows-arm-test-contention.ps1
+      - diagnostics/runquota-windows-arm-test-contention.py
 
 permissions:
   contents: read
