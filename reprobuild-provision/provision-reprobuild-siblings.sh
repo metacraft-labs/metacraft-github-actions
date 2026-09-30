@@ -95,6 +95,12 @@ WS="${GITHUB_WORKSPACE//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
 RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 IO_MON_REF="${IO_MON_REF:-dev}"
+STACKABLE_HOOKS_PIN="${STACKABLE_HOOKS_PIN:-}"
+if [[ -n "$STACKABLE_HOOKS_PIN" && ! "$STACKABLE_HOOKS_PIN" =~ ^[0-9a-f]{40}$ ]]; then
+	echo "::error::stackable-hooks-pin must be a full lowercase source SHA" >&2
+	exit 2
+fi
+STACKABLE_HOOKS_REF="${STACKABLE_HOOKS_PIN:-dev}"
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
 # commands below to run from. See the long note in `preflight`: inside the
@@ -272,7 +278,7 @@ else
 	# -----------------------------------------------------------------------
 	check_pins \
 		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
-		"${SIBLING_OWNER}/nim-stackable-hooks:dev" \
+		"${SIBLING_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
 		"${SIBLING_OWNER}/io-mon:${IO_MON_REF}" \
 		"${SIBLING_OWNER}/codetracer:dev" \
 		"${SIBLING_OWNER}/nim-shm-lease:dev" \
@@ -283,7 +289,13 @@ else
 		"${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
 
 	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
-	clone "${SIBLING_OWNER}/nim-stackable-hooks" dev --submodules
+	clone "${SIBLING_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
+	hooks_sha=$(git -C "${WS}/nim-stackable-hooks" rev-parse HEAD) || exit 1
+	if [[ -n "$STACKABLE_HOOKS_PIN" && "$hooks_sha" != "$STACKABLE_HOOKS_PIN" ]]; then
+		echo "::error::Windows hook bootstrap checkout does not match stackable-hooks-pin" >&2
+		exit 1
+	fi
+	echo "reprobuild-provision: Windows hook source ${hooks_sha}"
 	clone "${SIBLING_OWNER}/io-mon" "$IO_MON_REF" --submodules
 	clone "${SIBLING_OWNER}/nim-shm-lease" dev
 	clone "${SIBLING_OWNER}/nim-shm-queue" dev
