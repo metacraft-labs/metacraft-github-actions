@@ -15,7 +15,7 @@ if ($env:RUNQUOTA_BALANCED_CONTEXT -eq 'true') {
     $savedChild = $env:STACKABLE_HOOKS_CONTROL_CHILD
     try {
         $child = Join-Path $evidence 'borrowed-call-child.exe'
-        & nim c --cpu:amd64 --threads:on "--out:$child" "$PSScriptRoot/windows-borrowed-call-child.nim" *> "$evidence/child-build.log"
+        & nim c --cpu:amd64 --threads:on "--out:$child" "$PSScriptRoot/windows_borrowed_call_child.nim" *> "$evidence/child-build.log"
         if ($LASTEXITCODE) { throw 'Could not build the real x64 borrowed-call child' }
         $env:STACKABLE_HOOKS_CONTROL_CHILD = $child
         foreach ($test in @('test_windows_entry_park_slow_call', 'test_windows_entry_park_thread_locals')) {
