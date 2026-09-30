@@ -3,9 +3,6 @@ name: Validate pinned Windows hook bootstrap
 # Real source checkouts, compiler children and file I/O; no mocks.
 # Supplemental bootstrap validation; complete product CI remains mandatory.
 on:
-  # Register and validate this new manual workflow before its first dev merge.
-  push:
-    branches: [fix/windows-bootstrap-hook-pin]
   workflow_dispatch:
     inputs:
       hook-pin:

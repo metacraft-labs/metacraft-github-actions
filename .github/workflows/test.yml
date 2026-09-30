@@ -79,6 +79,9 @@ jobs:
       - name: RunQuota bootstrap revision with real Git repositories
         run: python3 reprobuild-provision/test-runquota-ref.py
 
+      - name: Windows hook source stays pinned as mainline advances
+        run: python3 reprobuild-provision/test-windows-hooks-pin.py
+
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
