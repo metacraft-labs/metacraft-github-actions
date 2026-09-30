@@ -82,3 +82,28 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
     for future in futures:
         future.result()
 print('Private fixtures pass normal, partial-file, and concurrent-build controls; the old layout fails.', flush=True)
+
+# The later observation-identity fixture owns its transport too. Exercise the
+# exact released fixture and repaired fixture against the same partial file.
+identity_source = root / 'tests/posix/test_io_mon_dep_identity_scope.nim'
+identity = compile_test('identity-private', identity_source)
+old_identity_source = root / 'tests/posix/identity_before.nim'
+old_identity_source.write_bytes(subprocess.check_output(['git', 'show',
+    '53994c0ca76f263ff04f046b2f99d98a038d41f3:tests/posix/test_io_mon_dep_identity_scope.nim']))
+try:
+    old_identity = compile_test('identity-before', old_identity_source)
+finally:
+    old_identity_source.unlink()
+run('identity-before-normal', [old_identity])
+run('identity-private-normal', [identity])
+identity_wrapper = out / 'identity_controlled_cc'
+identity_wrapper.write_text(wrapper.read_text().replace(
+    'dh1_relative_reader.c', 'da1b_child_a.c'))
+identity_wrapper.chmod(0o755)
+identity_env = {**env, 'CC': str(identity_wrapper)}
+run('identity-private-partial-shared-library', [identity], identity_env)
+code, log = run('identity-shared-negative', [old_identity], identity_env, success=False)
+assert code != 0 and 'file too short' in log and '[FAILED]' in log, log[-12000:]
+(root / 'build/lib/librepro_monitor_shim.so').unlink(missing_ok=True)
+run('identity-restore-shipping-shim', ['bash', 'scripts/build_shim.sh'])
+print('Observation identity passes with private shims; released shared layout fails the same loader control.', flush=True)
