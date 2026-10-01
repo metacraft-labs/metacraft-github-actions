@@ -8,6 +8,13 @@ proc ExitProcess(code: uint32) {.stdcall, importc, dynlib: "kernel32", noreturn.
 let args = commandLineParams()
 if args == @["--exit-code-control"]:
   ExitProcess(0xC0000005'u32)
+if args == @["--capture-control"]:
+  stdout.write("first\n")
+  stdout.flushFile()
+  sleep(100)
+  stdout.write("second\n")
+  stdout.flushFile()
+  quit 17
 doAssert args.len >= 4
 let mode = args[0]
 let target = absolutePath(args[1])
@@ -21,7 +28,15 @@ if mode == "native":
   let child = startProcess(target, args = targetArgs,
     options = {poStdErrToStdOut})
   pid = uint64(child.processID)
-  writeFile(folder / "target.log", child.outputStream.readAll())
+  # readAll stops after a short pipe read. These children have no descendants,
+  # so drain until real EOF to retain output emitted after the suite heading.
+  let capture = open(folder / "target.log", fmWrite)
+  var buffer: array[8192, char]
+  while true:
+    let count = child.outputStream.readData(addr buffer[0], buffer.len)
+    if count == 0: break
+    discard capture.writeBuffer(addr buffer[0], count)
+  capture.close()
   rawCode = uint32(int64(child.waitForExit()) and 0xFFFFFFFF'i64)
   child.close()
 else:

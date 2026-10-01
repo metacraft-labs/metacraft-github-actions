@@ -57,16 +57,17 @@ def main():
     results = []
     for variant, binary in binaries.items():
         for mode in ("native", "monitored"):
-            for index in range(13):
+            for index in range(-1, 13):
                 if hashes() != initial:
                     raise RuntimeError("An input changed")
                 folder = evidence / f"{variant}-{mode}-{index}"
                 folder.mkdir()
-                control = index == 0
+                control = index <= 0
                 command = [str(driver), mode, str(driver if control else binary),
                            str(shim), str(folder)]
                 if control:
-                    command.append("--exit-code-control")
+                    command.append("--capture-control" if index == -1
+                                   else "--exit-code-control")
                 start = time.monotonic()
                 expired = False
                 with (folder / "parent.log").open("wb") as output:
@@ -83,9 +84,14 @@ def main():
                 root = json.loads(path.read_text()) if path.exists() else {}
                 log = folder / "target.log"
                 text = log.read_text(errors="replace") if log.exists() else ""
-                expected = (code == 1 and root.get("rawExitCode") == 0xC0000005
-                            if control else code == 0 and root.get("rawExitCode") == 0
-                            and text.count("[OK]") == 2)
+                if index == -1:
+                    expected = (code == 1 and root.get("rawExitCode") == 17
+                                and text.splitlines() == ["first", "second"])
+                elif control:
+                    expected = code == 1 and root.get("rawExitCode") == 0xC0000005
+                else:
+                    expected = (code == 0 and root.get("rawExitCode") == 0
+                                and text.count("[OK]") == 2)
                 result = dict(variant=variant, mode=mode, index=index, control=control,
                               driverExitCode=code, expected=expected, outerExpired=expired,
                               elapsedSeconds=time.monotonic() - start, rootResult=root)
@@ -93,7 +99,7 @@ def main():
                 print(json.dumps(result), flush=True)
                 (evidence / "results.json").write_text(json.dumps(results, indent=2))
                 if control and not expected:
-                    raise RuntimeError("The real DWORD exit-code control failed")
+                    raise RuntimeError("A real output/status control failed")
                 if expired:
                     # Retain a timed-out sample, then exercise the other mode
                     # and candidate instead of repeating a known long wait.

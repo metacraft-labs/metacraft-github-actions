@@ -38,17 +38,18 @@ def main():
     initial = hashes()
     (evidence / "input-sha256.json").write_text(json.dumps(initial, indent=2))
     results = []
-    for round_number in range(13):
+    for round_number in range(-1, 13):
         for mode in ("native", "monitored"):
             if hashes() != initial:
                 raise RuntimeError("An input changed")
             folder = evidence / (mode + "-" + str(round_number))
             folder.mkdir()
-            control = round_number == 0
+            control = round_number <= 0
             command = [str(driver), mode, str(driver if control else target),
                        str(shim), str(folder)]
             if control:
-                command.append("--exit-code-control")
+                command.append("--capture-control" if round_number == -1
+                               else "--exit-code-control")
             start = time.monotonic()
             expired = False
             with (folder / "parent.log").open("wb") as output:
@@ -65,9 +66,14 @@ def main():
             record = json.loads(record_path.read_text()) if record_path.exists() else {}
             log = folder / "target.log"
             text = log.read_text(errors="replace") if log.exists() else ""
-            expected = (code == 1 and record.get("rawExitCode") == 0xC0000005
-                        if control else code == 0 and record.get("rawExitCode") == 0
-                        and text.count("[OK]") == 2)
+            if round_number == -1:
+                expected = (code == 1 and record.get("rawExitCode") == 17
+                            and text.splitlines() == ["first", "second"])
+            elif control:
+                expected = code == 1 and record.get("rawExitCode") == 0xC0000005
+            else:
+                expected = (code == 0 and record.get("rawExitCode") == 0
+                            and text.count("[OK]") == 2)
             result = dict(mode=mode, round=round_number, control=control,
                           driverExitCode=code, expected=expected, outerExpired=expired,
                           elapsedSeconds=time.monotonic() - start, rootResult=record)
@@ -75,7 +81,7 @@ def main():
             print(json.dumps(result), flush=True)
             (evidence / "results.json").write_text(json.dumps(results, indent=2))
             if control and not expected:
-                raise RuntimeError("The real DWORD exit-code control failed")
+                raise RuntimeError("A real output/status control failed")
     if hashes() != initial:
         raise RuntimeError("An input changed during execution")
     return int(any(not r["expected"] or r["outerExpired"] for r in results))

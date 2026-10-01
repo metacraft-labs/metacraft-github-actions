@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/verify-windows-injection-lock.yml
       - diagnostics/windows-injection-lock-pair.py
+      - diagnostics/windows_injection_stress_driver.nim
 permissions:
   contents: read
 jobs:
