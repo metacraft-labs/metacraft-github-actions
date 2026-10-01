@@ -1,0 +1,65 @@
+name: Verify RunQuota cache residency setup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/macos-worker-diagnostics]
+    paths:
+      - .github/workflows/verify-runquota-cache-residency.yml
+      - diagnostics/runquota-cache-residency.py
+      - diagnostics/runquota_cache_sqlite_delay_proxy.nim
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 110
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+      REPRO_TOOL_PROVISIONING: tarball
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: a2676aac7d6d7ff1bfb57313dc78a0acb9d9e0d3
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-stackable-hooks-pin: 43b1835128331fef09ecf64a614dbf46880dbe9f
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Compare cache residency with real delayed execution inserts
+        timeout-minutes: 85
+        shell: pwsh
+        run: repro exec -- python ./.diagnostic-tools/diagnostics/runquota-cache-residency.py
+      - name: Retain source, binary and runtime evidence
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-cache-residency-${{ matrix.runner }}
+          path: build/cache-residency/
+          if-no-files-found: error
+          retention-days: 14
