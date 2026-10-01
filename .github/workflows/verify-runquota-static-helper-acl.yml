@@ -24,6 +24,9 @@ jobs:
       WINDOWS_DIY_ARCH_OVERRIDE: x64
       REPRO_TOOL_PROVISIONING: tarball
     steps:
+      - name: Preserve committed line endings for the Bash gate
+        shell: pwsh
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota

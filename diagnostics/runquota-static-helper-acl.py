@@ -40,11 +40,19 @@ def main():
     path = Path(SCRIPT)
     fixed_bytes = path.read_bytes()
     fixed = fixed_bytes.decode()
+    committed = subprocess.check_output(["git", "show", "HEAD:" + SCRIPT])
+    guard_path = "scripts/static_helper_gate_toolstore.nim"
+    guard_bytes = Path(guard_path).read_bytes()
+    committed_guard = subprocess.check_output(["git", "show", "HEAD:" + guard_path])
     (evidence / "source-hashes.json").write_text(json.dumps({
         "original": hashlib.sha256(original.encode()).hexdigest(),
         "fixed": hashlib.sha256(fixed_bytes).hexdigest(),
-        "guard": hashlib.sha256(Path("scripts/static_helper_gate_toolstore.nim").read_bytes()).hexdigest(),
+        "committedFixed": hashlib.sha256(committed).hexdigest(),
+        "guard": hashlib.sha256(guard_bytes).hexdigest(),
+        "committedGuard": hashlib.sha256(committed_guard).hexdigest(),
     }, indent=2))
+    assert fixed_bytes == committed, "Checkout must preserve the committed Bash bytes"
+    assert guard_bytes == committed_guard, "Checkout must preserve the committed guard bytes"
     bash = shutil.which("bash")
     if not bash or "GNU bash" not in subprocess.check_output([bash, "--version"], text=True):
         raise RuntimeError("Missing activated GNU Bash")
