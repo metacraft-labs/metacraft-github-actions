@@ -39,8 +39,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trace_root=$(nix build --no-link --print-out-paths --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.strace')
+          trace_root=$(nix build --no-link --print-out-paths --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux.strace.out')
           export HOOKS_SIGNAL_STRACE="$trace_root/bin/strace"
+          test -x "$HOOKS_SIGNAL_STRACE"
           export HOOKS_SIGNAL_REPRO
           HOOKS_SIGNAL_REPRO=$(command -v repro)
           signal_python=$(command -v python3)
