@@ -54,9 +54,19 @@ def main():
         "handshake_work_delay": delayed(fixed, gate),
         "handshake": fixed,
     }
+    # Windows CreateProcess searches system directories before PATH for a bare
+    # name. Resolve the activated tool first so WSL's bash.exe cannot win.
+    bash = shutil.which("bash")
+    if not bash:
+        raise RuntimeError("Missing activated Bash")
+    bash_version = subprocess.check_output([bash, "--version"], text=True)
+    if "GNU bash" not in bash_version:
+        raise RuntimeError("The activated Bash is not GNU Bash")
+    (evidence / "bash.json").write_text(json.dumps(
+        {"path": bash, "version": bash_version}, indent=2))
     with (evidence / "apps.build.log").open("wb") as output:
         subprocess.run(
-            ["bash", "scripts/build_apps.sh"], stdout=output,
+            [bash, "scripts/build_apps.sh"], stdout=output,
             stderr=subprocess.STDOUT, check=True,
         )
     binaries = {}
