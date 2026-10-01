@@ -15,7 +15,7 @@ import time
 
 
 SOURCE = "libs/runquota_observation_store/tests/t_sqlite_cli_concurrent_spawn.nim"
-REVISION = "15e4debcbeae1701d14bfd437149a3850c94875d"
+REVISION = "2d3897c89f1a74c9fd8d7b9e3143d2eecda3b833"
 
 
 def instrument(text):

@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 15e4debcbeae1701d14bfd437149a3850c94875d
+          ref: 2d3897c89f1a74c9fd8d7b9e3143d2eecda3b833
           fetch-depth: 2
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -47,14 +47,30 @@ jobs:
           repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
           repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
-          repro-stackable-hooks-pin: d36cab880711c2f50f57079623a1ce89ba4a83dc
+          repro-stackable-hooks-pin: 43b1835128331fef09ecf64a614dbf46880dbe9f
           gh-token: ${{ steps.token.outputs.token }}
       - name: Observe unchanged SQLite deadlines and per-worker progress
         timeout-minutes: 85
         shell: pwsh
         run: repro exec -- python ./.diagnostic-tools/diagnostics/runquota-sqlite-progress.py
+      - name: Retain small progress and outcome evidence
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-sqlite-progress-summary-${{ matrix.runner }}
+          path: |
+            build/sqlite-progress/*.json
+            build/sqlite-progress/*.nim
+            build/sqlite-progress/*.build.log
+            build/sqlite-progress/**/progress.json
+            build/sqlite-progress/**/progress/worker-*
+            build/sqlite-progress/**/target.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Retain source, binary and runtime evidence
         if: always()
+        timeout-minutes: 10
         uses: actions/upload-artifact@v4
         with:
           name: runquota-sqlite-progress-${{ matrix.runner }}
