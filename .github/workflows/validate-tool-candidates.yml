@@ -486,6 +486,7 @@ jobs:
             build/windows-process-timing/*.log
             build/windows-process-timing/*.json
             build/windows-process-timing/*.txt
+            build/windows-process-timing/*.patch
             build/windows-process-timing/*.iomon
           retention-days: 14
           if-no-files-found: error
