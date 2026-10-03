@@ -555,13 +555,17 @@ jobs:
 
   gosti-repro-process-timing:
     if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-process-timing'
-    runs-on: windows-2025
-    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/gosti
-          ref: c7cd6fa1f3002ae39baf542d2f5578e6e4bbf9dc
+          ref: d23d90175493ae7ad78f585a8581e4c7bce848f8
           persist-credentials: false
       - name: Mint installation token
         id: ci-token
@@ -631,7 +635,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gosti-repro-process-timing
+          name: gosti-repro-process-timing-${{ matrix.runner }}
           path: test-logs/
           retention-days: 14
 
