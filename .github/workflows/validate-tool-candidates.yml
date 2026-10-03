@@ -30,6 +30,7 @@ on:
           - io-mon-repro-cleanup
           - io-mon-windows-unlink
           - io-mon-dlopen-elf
+          - io-mon-repro-dlopen
           - io-mon-propagation
           - runquota-macos-authority
           - reprobuild-windows-exit
@@ -42,7 +43,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -779,6 +780,83 @@ jobs:
             test-logs/repro-cleanup/
             .repro/build/*/build-failure-report.json
             .repro/build/*/build-engine-cache/actions/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+
+  io-mon-repro-dlopen:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-repro-dlopen'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: db2f11cd767fa489ccf5bf1265ded7373b5c2501
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Set up the complete product CI environment
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@ad0535e1305cf59fa2f52dddb1b0cdc6787a0e21
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-posix-io-mon-pin: 10249629cc97f01aa5bafe9dff8fa3c00cc82749
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Run the unchanged ELF regression under the repaired enclosing monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs/repro-dlopen
+          git log -1 --format='%H %s' > test-logs/repro-dlopen/source.txt
+          python3 - <<'ALIAS'
+          from pathlib import Path
+          p = Path('repro.nim')
+          s = p.read_text()
+          anchor = '    discard collect("test", testExecuteActions)'
+          assert s.count(anchor) == 1
+          alias = '\n'.join([
+              anchor,
+              '    var diagnosticDlopen: seq[BuildActionDef] = @[]',
+              '    for action in testExecuteActions:',
+              '      if action.id == "io-mon.test_execute.test_io_mon_dlopen_caller_runpath":',
+              '        diagnosticDlopen.add(action)',
+              '    doAssert diagnosticDlopen.len == 1',
+              '    discard collect("diagnostic-dlopen", diagnosticDlopen)',
+          ])
+          p.write_text(s.replace(anchor, alias))
+          ALIAS
+          git diff -- repro.nim > test-logs/repro-dlopen/recipe-alias.patch
+          dev-exec repro build .#diagnostic-dlopen --tool-provisioning=nix \
+            --write-report=test-logs/repro-dlopen/report.json \
+            2>&1 | tee test-logs/repro-dlopen/execution.log
+          python3 - <<'VERIFY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('test-logs/repro-dlopen/report.json').read_text())
+          actions = [a for a in report['actions'] if a['id'].startswith('io-mon.test_execute.')]
+          assert len(actions) == 1, actions
+          action = actions[0]
+          assert action['id'] == 'io-mon.test_execute.test_io_mon_dlopen_caller_runpath', action
+          assert action['launched'] and action['status'] == 'asSucceeded' and action['exitCode'] == 0, action
+          assert action['stdout'].count('[OK]') == 6, action
+          VERIFY
+      - name: Preserve enclosing-monitor evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-repro-dlopen-linux-x64
+          path: |
+            test-logs/repro-dlopen/
+            .repro/build/*/build-failure-report.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
