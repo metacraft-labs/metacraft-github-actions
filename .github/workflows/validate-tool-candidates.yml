@@ -26,6 +26,7 @@ on:
           - gosti-repro-process-timing
           - runquota-windows-handles
           - io-mon-windows-cleanup
+          - io-mon-windows-debug-cleanup
           - io-mon-windows-unlink
           - io-mon-dlopen-elf
           - io-mon-propagation
@@ -40,7 +41,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -660,5 +661,53 @@ jobs:
         with:
           name: windows-image-unlink-${{ matrix.runner }}
           path: unlink-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+  io-mon-windows-debug-cleanup:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-debug-cleanup'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: b464ce17cdf2196e61ccf4ab3e61ed0ee1a70ed2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Provision the CI bootstrap dependencies
+        uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c2b603a08e9ad68096761074951395d1875bb289
+        with:
+          gh-token: ${{ steps.ci-token.outputs.token }}
+          io-mon-ref: d3826a368e0ca8c2760bf5e3270cc3577811af47
+      - name: Build the same Reprobuild bootstrap as the full suite
+        uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@58da84d5af27408ca598ce69caa83b133e054592
+        with:
+          gh-token: ${{ steps.ci-token.outputs.token }}
+          from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+      - name: Run unchanged debug fixtures with no concurrent compilation
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/io-mon-debug-cleanup.ps1
+      - name: Preserve source, compiler and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-debug-cleanup-${{ matrix.runner }}
+          path: test-logs/debug-cleanup/
           if-no-files-found: error
           retention-days: 14
