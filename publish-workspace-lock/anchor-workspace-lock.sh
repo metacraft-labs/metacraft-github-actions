@@ -7,9 +7,8 @@
 # ---------------
 # Workspace lock records are published by the LOCAL pre-push gate: every commit
 # that leaves a developer's workspace gets a
-# `locks/<project>/<repo>/<sha>.toml` (or a legacy repo-workspaces
-# `<sha>.xml`) in the manifests repo. That gate is the only publisher, and it
-# runs on a machine that has the workspace.
+# `locks/<project>/<repo>/<sha>.toml` in the manifests repo. That gate is the
+# only publisher, and it runs on a machine that has the workspace.
 #
 # A PR-based repo's mainline commits are not born on such a machine. GitHub
 # creates them server-side — a merge commit, a squash, or a rebase replay —
@@ -56,9 +55,12 @@
 #                     component). Must be a plain GitHub repo name.
 #   --source-sha SHA  the commit the record was published for (the PR head).
 #   --target-sha SHA  the commit to re-anchor onto (the mainline commit).
-#   --in FILE         the published record. `.toml` (reprobuild) or `.xml`
-#                     (legacy repo-workspaces); the format is taken from the
-#                     extension, because that is what the resolver keys on too.
+#   --in FILE         the published record, a reprobuild `.toml`. A legacy
+#                     repo-workspaces `.xml` is REFUSED (exit 2): XML lock
+#                     records were dropped on 2026-09-29, the resolver no
+#                     longer reads them, and re-filing one under a new commit
+#                     is exactly how a stale 2026-09-09 XML composition kept
+#                     reappearing on fresh commits.
 #   --out FILE        where to write the re-anchored record. Default: stdout.
 #
 # Exit codes:
@@ -182,12 +184,14 @@ fi
 	exit 2
 }
 
-FORMAT=""
 case "$IN_FILE" in
-*.toml) FORMAT=toml ;;
-*.xml) FORMAT=xml ;;
+*.toml) ;;
+*.xml)
+	echo "$ME: $IN_FILE is a legacy repo-workspaces XML lock record. XML lock records are not supported (removed 2026-09-29): the resolver does not read them and they must not be re-filed under another commit. Publish a reprobuild record for the target commit with 'repro workspace lock' instead." >&2
+	exit 2
+	;;
 *)
-	echo "$ME: --in must name a .toml (reprobuild) or .xml (repo-workspaces) lock record; got '$IN_FILE'" >&2
+	echo "$ME: --in must name a .toml (reprobuild) lock record; got '$IN_FILE'" >&2
 	exit 2
 	;;
 esac
@@ -350,71 +354,7 @@ anchor_toml() {
 	LINES[$hit_line]="${raw/$SRC_SHA/$DST_SHA}"
 }
 
-anchor_xml() {
-	local i n raw line hits=0 hit_line=-1 has_manifest=0
-
-	n=${#LINES[@]}
-	i=0
-	while [ $i -lt $n ]; do
-		raw="${LINES[$i]}"
-		line="${raw%$'\r'}"
-		case "$line" in
-		*"<manifest"*) has_manifest=1 ;;
-		esac
-		# `name` may or may not be the first attribute, and an attribute whose
-		# NAME merely ends in `name` (a hypothetical `dest-name=`) must not
-		# count — hence the required `<project ` prefix or leading space.
-		case "$line" in
-		*"<project"*)
-			case "$line" in
-			*"<project name=\"$REPO\""* | *" name=\"$REPO\""*)
-				hits=$((hits + 1))
-				case "$line" in
-				*"revision=\"$SRC_SHA\""*) hit_line=$i ;;
-				esac
-				;;
-			esac
-			;;
-		esac
-		i=$((i + 1))
-	done
-
-	if [ $has_manifest -eq 0 ]; then
-		echo "$ME: $IN_FILE carries no <manifest> element, so it is not a repo-workspaces lock snapshot and must not be re-filed under another commit." >&2
-		exit 5
-	fi
-	if [ $hits -gt 1 ]; then
-		echo "$ME: $IN_FILE carries $hits <project name=\"$REPO\"> elements. A lock snapshot anchors its own repo exactly once; which of them is the record's coordinate is not decidable here." >&2
-		exit 5
-	fi
-	if [ $hits -eq 0 ]; then
-		echo "$ME: $IN_FILE carries no <project name=\"$REPO\"> element, so it does not anchor itself and cannot be re-anchored onto $DST_SHA." >&2
-		exit 4
-	fi
-	if [ $hit_line -lt 0 ]; then
-		echo "$ME: $IN_FILE anchors '$REPO' at a different commit than --source-sha $SRC_SHA. This record is not the record for that commit; re-filing it under $DST_SHA would publish someone else's sibling set." >&2
-		exit 4
-	fi
-
-	raw="${LINES[$hit_line]}"
-	# Only this element's own revision moves. A second `revision="..."` on the
-	# same line would make "this element's own" ambiguous, and a lock snapshot
-	# that spells one element across several lines is outside what this
-	# line-oriented rewrite can claim to have done correctly.
-	line="${raw#*revision=\"}"
-	case "$line" in
-	*"revision=\""*)
-		echo "$ME: the <project name=\"$REPO\"> element in $IN_FILE carries more than one revision= attribute on its line; refusing to guess which one is its coordinate." >&2
-		exit 5
-		;;
-	esac
-	LINES[$hit_line]="${raw/revision=\"$SRC_SHA\"/revision=\"$DST_SHA\"}"
-}
-
-case "$FORMAT" in
-toml) anchor_toml ;;
-xml) anchor_xml ;;
-esac
+anchor_toml
 
 if [ -n "$OUT_FILE" ]; then
 	emit >"$OUT_FILE"

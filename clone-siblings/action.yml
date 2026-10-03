@@ -78,11 +78,11 @@ description: >
   other, and neither falls back to a branch tip: a sibling the chosen lock does
   not pin is a named refusal. reprobuild-specs/Unified-Locking-And-Hooks.md §14.
 
-  Under `record-store`, both lock layouts are read, so projects on either
-  workspace tool are served:
-  reprobuild's locks/<project>/<repo>/<sha>.toml
-  ("reprobuild.workspace.lock.v1") and repo-workspaces'
-  locks/<project>/<repo>/<sha>.xml (a `repo manifest -r` snapshot). The set of
+  Under `record-store`, the lock is reprobuild's
+  locks/<project>/<repo>/<sha>.toml ("reprobuild.workspace.lock.v1"). Legacy
+  repo-workspaces locks/<project>/<repo>/<sha>.xml records are NOT read
+  (support removed 2026-09-29): a commit whose only record is an .xml has no
+  lock. The set of
   siblings comes from the `siblings` input or, when empty, the calling repo's
   `.github/sibling-repos` file (one repo name per line). Each sibling is cloned
   adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
