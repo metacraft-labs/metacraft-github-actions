@@ -25,6 +25,7 @@ on:
           - gosti-windows-process-timing
           - gosti-repro-process-timing
           - gosti-repro-shutdown
+          - gosti-repro-concurrency
           - runquota-windows-handles
           - runquota-linux-arm-bootstrap
           - io-mon-windows-cleanup
@@ -45,7 +46,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -992,3 +993,70 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
+
+
+  gosti-repro-concurrency:
+    if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-concurrency'
+    runs-on: windows-11-arm
+    timeout-minutes: 120
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/gosti
+          ref: 6129ea89f80731c1ec9087e78d9058270f0affb2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Install the CI image tools
+        id: qemu-msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-qemu-image-util
+          location: ${{ runner.temp }}/gosti-qemu
+      - name: Expose QEMU
+        shell: pwsh
+        env:
+          GOSTI_MSYS2_DIR: ${{ steps.qemu-msys2.outputs.msys2-location }}
+        run: |
+          Join-Path $env:GOSTI_MSYS2_DIR 'ucrt64/bin' | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Set up the same CI bootstrap
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@93de03f82560d545ea345b9810123135ca875674
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          # RunQuota dev at the start of the failed full job, before PR 37 merged.
+          repro-runquota-pin: 052e7fe8fa49be3109fe4687c26dd8ae8f3f8a03
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Refresh authentication before compilation
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Compare monitored and direct dispatch without relaxing assertions
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/gosti-arm-concurrency.ps1
+      - name: Preserve timing evidence and exact diagnostic patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosti-6129-arm-concurrency
+          path: test-logs/arm-concurrency/
+          retention-days: 14
+          if-no-files-found: warn
