@@ -414,7 +414,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/runquota
-          ref: 7ba894d880bb665e499155892937452a9e2f5155
+          ref: f5623f9ad4fed076f58835813a12617ecf7e33b3
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
