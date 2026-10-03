@@ -56,7 +56,9 @@ static int snapshot(DWORD pid, const char *phase, const wchar_t *control, int *f
         entry.ObjectNameLength >= wcslen(control) * sizeof(wchar_t)) {
       size_t n = entry.ObjectNameLength / sizeof(wchar_t);
       size_t wanted = wcslen(control);
-      if (wmemcmp(entry.ObjectName + n - wanted, control, wanted) == 0) ++*found;
+      /* The length may include a terminator. Stay within the returned span. */
+      while (n && entry.ObjectName[n - 1] == L'\0') --n;
+      if (n >= wanted && wmemcmp(entry.ObjectName + n - wanted, control, wanted) == 0) ++*found;
     }
     ++walked;
     ZeroMemory(&entry, sizeof(entry));
