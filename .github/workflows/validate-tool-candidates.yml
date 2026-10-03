@@ -26,6 +26,7 @@ on:
           - gosti-repro-process-timing
           - runquota-windows-handles
           - io-mon-windows-cleanup
+          - io-mon-windows-unlink
           - io-mon-dlopen-elf
           - io-mon-propagation
           - runquota-macos-authority
@@ -39,7 +40,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -632,4 +633,28 @@ jobs:
         with:
           name: gosti-repro-process-timing
           path: test-logs/
+          retention-days: 14
+
+  io-mon-windows-unlink:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-windows-unlink'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Measure real Windows image removal semantics
+        shell: pwsh
+        run: ./diagnostics/windows-image-unlink.ps1
+      - name: Preserve native API controls and measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-image-unlink-${{ matrix.runner }}
+          path: unlink-evidence/
+          if-no-files-found: error
           retention-days: 14
