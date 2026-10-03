@@ -28,16 +28,21 @@ try {
     & git diff -- repro.nim > "$evidence/recipe-aliases.patch"
     if ($PrepareOnly) { return }
     & git log -1 --format='%H %s' > "$evidence/source.txt"
-    & dev-exec nim --version > "$evidence/compiler.txt"
+    # Version probes identify the bootstrap binaries directly. dev-exec routes
+    # non-build commands through `repro exec`, which would resolve an environment
+    # just to log its version (and strips a leading `repro` command name).
+    & nim --version > "$evidence/bootstrap-compiler.txt"
     if ($LASTEXITCODE -ne 0) { throw 'Could not identify compiler' }
-    & dev-exec repro --version > "$evidence/repro-version.txt"
+    & repro --version > "$evidence/repro-version.txt"
     if ($LASTEXITCODE -ne 0) { throw 'Could not identify Reprobuild' }
     $results = @()
     foreach ($fixture in @('test_io_mon_cli_exit_status', 'test_io_mon_windows_host_session_scope')) {
         foreach ($round in 1..3) {
             $report = "$evidence/$fixture-$round.json"
             # dev-exec is the same command wrapper used by the full CI lane.
-            & dev-exec repro build ".#diagnostic-$fixture" --tool-provisioning=tarball "--write-report=$report" *> "$evidence/$fixture-$round.log"
+            # Bash owns the log file. PowerShell must not wait for EOF from
+            # any inherited native stdout handle after the foreground exits.
+            & bash -c 'log=$1; shift; dev-exec "$@" >"$log" 2>&1' -- "$evidence/$fixture-$round.log" repro build ".#diagnostic-$fixture" --tool-provisioning=tarball "--write-report=$report"
             $code = $LASTEXITCODE
             $results += @{fixture=$fixture; round=$round; exitCode=$code}
             $results | ConvertTo-Json | Set-Content "$evidence/results.json"
