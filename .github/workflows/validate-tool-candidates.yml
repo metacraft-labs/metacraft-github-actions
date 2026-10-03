@@ -26,6 +26,7 @@ on:
           - gosti-repro-process-timing
           - gosti-repro-shutdown
           - runquota-windows-handles
+          - runquota-linux-arm-bootstrap
           - io-mon-windows-cleanup
           - io-mon-windows-debug-cleanup
           - io-mon-repro-cleanup
@@ -44,7 +45,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -925,4 +926,69 @@ jobs:
             .repro/build/*/build-failure-report.json
           include-hidden-files: true
           if-no-files-found: error
+          retention-days: 14
+
+
+  runquota-linux-arm-bootstrap:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-arm-bootstrap'
+    # Supplemental diagnosis of the source-closure issue. Normal CI stays required.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: f369c3429c83be2403b8dd91d25e137207b30575
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Set up the exact ordinary CI bootstrap
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          repro-posix-io-mon-pin: 3df08c24ee91900b950ed20a3827923d213f2a9c
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-stackable-hooks-pin: 43b1835128331fef09ecf64a614dbf46880dbe9f
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Retain compiler cores locally on this disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gdb >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y gdb
+          fi
+          mkdir -p "$RUNNER_TEMP/repro-arm-cores"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/repro-arm-cores/core.%E.%p"
+      - name: Refresh authentication before the ordinary build
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Repeat monitored providers and capture any failed compiler
+        shell: bash
+        run: '"$REPROBUILD_BOOTSTRAP_PYTHON" .diagnostic-tools/diagnostics/runquota-arm-provider.py'
+      - name: Preserve compiler evidence without raw cores
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-f369-arm-provider
+          path: build/arm-provider-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 14
