@@ -608,7 +608,10 @@ jobs:
           Get-FileHash reprobuild/build/lib/librepro_monitor_shim.dll | Format-List > "$evidence/shim.txt"
           $results = @()
           foreach ($name in @('t_vmharness_serve_concurrency', 't_tart_backend')) {
-            & repro build ".#test-$name" --tool-provisioning=path "--write-report=$evidence/$name-repro.json" *> "$evidence/$name-repro.log"
+            # Match full CI: a shared daemon may inherit stdout. Bash redirects
+            # the foreground command to a file and returns its actual status;
+            # PowerShell's native-output pipe would wait for daemon EOF.
+            & bash scripts/capture-ci-command.sh "$evidence/$name-repro.log" repro build ".#test-$name" --tool-provisioning=path "--write-report=$evidence/$name-repro.json"
             $results += @{fixture=$name; mode='repro'; exitCode=$LASTEXITCODE}
             Get-Content "$evidence/$name-repro.log" -Tail 45
             $binary = "build/test-bin/$name.exe"
