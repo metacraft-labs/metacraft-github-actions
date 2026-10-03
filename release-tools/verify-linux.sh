@@ -23,6 +23,17 @@ curl --fail --location --retry 3 "https://nodejs.org/dist/v22.16.0/node-v22.16.0
 printf '%s  %s\n' "$node_hash" "$work/node.tar.gz" | sha256sum -c -
 tar -xzf "$work/node.tar.gz" -C "$work" --strip-components=2 "node-v22.16.0-linux-$node_arch/bin/node"
 cp scripts/release/smoke.cjs "$work/checks/smoke.cjs"
+cp "$RELEASE_TOOLS/verify-configuration.cjs" "$work/checks/verify-configuration.cjs"
+"$RELEASE_NODE" - "$work/checks/configuration.json" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const {configurationFiles} = require(path.join(process.env.RELEASE_TOOLS, 'payload.cjs'));
+const spec = JSON.parse(fs.readFileSync('.github/release.json'));
+const metadata = spec.distributionMetadata ? JSON.parse(fs.readFileSync(spec.distributionMetadata)) : {};
+fs.writeFileSync(process.argv[2], JSON.stringify(configurationFiles(metadata).map(entry => ({
+  destination: entry.destination, bytes: fs.readFileSync(entry.source).toString('base64'),
+}))));
+NODE
 cp dist/*.deb dist/*.rpm "$work/packages/"
 if [ "$product" = io-mon ]; then cp build/release-probe "$work/checks/probe"; fi
 images=(debian:11 ubuntu:24.04 almalinux:9)
@@ -41,6 +52,14 @@ for image in "${images[@]}"; do
       else
         dnf install -y libstdc++ /payload/packages/*.rpm
       fi
+      /payload/node /payload/checks/verify-configuration.cjs /payload/checks/configuration.json check
+      /payload/node /payload/checks/verify-configuration.cjs /payload/checks/configuration.json mark
+      if command -v apt-get >/dev/null; then
+        dpkg -i /payload/packages/*.deb
+      else
+        dnf reinstall -y /payload/packages/*.rpm
+      fi
+      /payload/node /payload/checks/verify-configuration.cjs /payload/checks/configuration.json preserved
       mkdir -p /tmp/smoke
       cd /tmp/smoke
       /payload/node /payload/checks/smoke.cjs "/payload/archives/$ARCHIVE_NAME" "$TARGET" /payload/checks/probe

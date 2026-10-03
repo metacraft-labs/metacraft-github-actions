@@ -13,6 +13,20 @@ function fixture(t) {
   return dir;
 }
 const expected = ['linux.tar.gz', 'windows.zip'];
+test('configuration inputs reject escaped, duplicate and non-file destinations', t => {
+  const {configurationFiles} = require('./payload.cjs');
+  const root = fixture(t);
+  const source = path.join(root, expected[0]);
+  const entry = {source, destination: '/etc/example/config.toml'};
+  assert.deepEqual(configurationFiles({configurationFiles: [entry]}), [entry]);
+  assert.deepEqual(configurationFiles({}), []);
+  for (const destination of ['/usr/example', '/etc/../tmp/config', '/etc//example', '/etc/example/', '/etc/%macro', '/etc/a b']) {
+    assert.throws(() => configurationFiles({configurationFiles: [{source, destination}]}));
+  }
+  assert.throws(() => configurationFiles({configurationFiles: [entry, entry]}), /duplicate/);
+  assert.throws(() => configurationFiles({configurationFiles: [{...entry, source: root}]}), /regular file/);
+  assert.throws(() => configurationFiles({configurationFiles: [{...entry, source: path.join(root, 'missing')}]}));
+});
 test('a shim providing GLIBC_2.34 does not require GLIBC_2.34', () => {
   const {glibcRequirements} = require('./payload.cjs');
   assert.deepEqual(glibcRequirements(`
