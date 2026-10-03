@@ -24,6 +24,7 @@ on:
           - complete
           - gosti-windows-process-timing
           - gosti-repro-process-timing
+          - gosti-repro-shutdown
           - runquota-windows-handles
           - io-mon-windows-cleanup
           - io-mon-windows-debug-cleanup
@@ -43,7 +44,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -852,6 +853,75 @@ jobs:
           name: io-mon-repro-dlopen-linux-x64
           path: |
             test-logs/repro-dlopen/
+            .repro/build/*/build-failure-report.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+
+  gosti-repro-shutdown:
+    if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-shutdown'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/gosti
+          ref: 9a6f128a3c025bfb154048ad76abc576d7f17f9c
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Set up the same product CI environment
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@93de03f82560d545ea345b9810123135ca875674
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Capture the bounded daemon teardown status
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs/shutdown
+          git log -1 --format='%H %s' > test-logs/shutdown/source.txt
+          status=0
+          dev-exec repro build .#test-t_vmharness_serve_sequential_crud --tool-provisioning=nix \
+            --write-report=test-logs/shutdown/report.json \
+            2>&1 | tee test-logs/shutdown/execution.log || status=$?
+          # Preserve the direct comparison even when the monitored run fails.
+          native_status=0
+          for round in 1 2 3; do
+            build/test-bin/t_vmharness_serve_sequential_crud > "test-logs/shutdown/native-$round.log" 2>&1 || native_status=$?
+            tail -n 8 "test-logs/shutdown/native-$round.log"
+          done
+          test "$status" = 0
+          test "$native_status" = 0
+          python3 - <<'VERIFY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('test-logs/shutdown/report.json').read_text())
+          actions = [a for a in report['actions'] if a['id'].startswith('vm_harness.test_execute.')]
+          assert len(actions) == 1, [a['id'] for a in actions]
+          action = actions[0]
+          assert action['id'] == 'vm_harness.test_execute.t_vmharness_serve_sequential_crud'
+          assert action['launched'] and action['status'] == 'asSucceeded' and action['exitCode'] == 0
+          assert action['stdout'].count('[OK]') == 4
+          for round in range(1, 4):
+              output = Path(f'test-logs/shutdown/native-{round}.log').read_text()
+              assert output.count('[OK]') == 4, output
+          VERIFY
+      - name: Preserve daemon shutdown evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosti-repro-shutdown-linux-arm64
+          path: |
+            test-logs/shutdown/
             .repro/build/*/build-failure-report.json
           include-hidden-files: true
           if-no-files-found: error
