@@ -25,6 +25,7 @@ on:
           - gosti-windows-process-timing
           - runquota-windows-handles
           - io-mon-windows-cleanup
+          - io-mon-dlopen-elf
           - io-mon-propagation
           - runquota-macos-authority
           - reprobuild-windows-exit
@@ -37,7 +38,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-dlopen-elf' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -490,3 +491,62 @@ jobs:
             build/windows-process-timing/*.iomon
           retention-days: 14
           if-no-files-found: error
+
+  io-mon-dlopen-elf:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-dlopen-elf'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 10249629cc97f01aa5bafe9dff8fa3c00cc82749
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ steps.ci-token.outputs.token }}
+      - name: Verify real loader fallback and the existence-only negative control
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-logs
+          git log -1 --format='%H %s' | tee test-logs/source.txt
+          nix develop --profile "$RUNNER_TEMP/dlopen-shell" --command \
+            nim c -r --hints:off tests/linux/test_io_mon_dlopen_caller_runpath.nim \
+            2>&1 | tee test-logs/loader.log
+          source=src/io_mon/hooks/linux_preload_runtime.nim
+          cp "$source" "$RUNNER_TEMP/preload-before-control.nim"
+          trap 'cp "$RUNNER_TEMP/preload-before-control.nim" "$source"' EXIT
+          python3 - <<'CONTROL'
+          from pathlib import Path
+          p = Path('src/io_mon/hooks/linux_preload_runtime.nim')
+          s = p.read_text()
+          old = '        !ct_dlopen_has_other_elf_class(out))'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '        1)'))
+          CONTROL
+          git diff -- "$source" > test-logs/existence-only.patch
+          status=0
+          nix develop --command nim c -r --hints:off \
+            tests/linux/test_io_mon_dlopen_caller_runpath.nim \
+            > test-logs/existence-only.log 2>&1 || status=$?
+          cat test-logs/existence-only.log
+          if [[ "$status" == 0 ]] || ! grep -Fq '[FAILED] both RPATH tags skip an incompatible ELF class' test-logs/existence-only.log; then
+            echo 'Existence-only negative control did not detect the incompatible candidate'
+            exit 1
+          fi
+      - name: Preserve loader evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-dlopen-elf
+          path: test-logs/
+          retention-days: 14
