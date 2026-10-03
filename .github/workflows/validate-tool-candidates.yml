@@ -22,6 +22,7 @@ on:
         default: complete
         options:
           - complete
+          - runquota-windows-handles
           - io-mon-windows-cleanup
           - io-mon-propagation
           - runquota-macos-authority
@@ -35,7 +36,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.product != 'reprobuild' && inputs.checks != 'io-mon-windows-cleanup' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.product != 'reprobuild' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'io-mon-windows-cleanup' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -397,5 +398,46 @@ jobs:
             build/windows-cleanup-evidence/*.json
             build/windows-cleanup-evidence/*.txt
             build/windows-cleanup-evidence/*.patch
+          retention-days: 14
+          if-no-files-found: error
+
+  runquota-windows-handles:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-windows-handles'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      RELEASE_TARGET: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 7ba894d880bb665e499155892937452a9e2f5155
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: .diagnostic-tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: 96ac63b99d8d6c3a06ca43a9214abbc00f4ac01e
+          path: .release-tools
+          persist-credentials: false
+      - name: Install pinned release compiler
+        shell: pwsh
+        run: ./.release-tools/release-tools/setup-windows.ps1
+      - name: Capture native connection handle evidence
+        shell: pwsh
+        run: ./.diagnostic-tools/diagnostics/runquota-windows-handles.ps1
+      - name: Preserve handle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-windows-handles
+          path: |
+            build/windows-handle-evidence/*.log
+            build/windows-handle-evidence/*.json
+            build/windows-handle-evidence/*.patch
+            build/windows-handle-evidence/*.txt
           retention-days: 14
           if-no-files-found: error
