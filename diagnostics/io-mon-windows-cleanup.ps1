@@ -14,8 +14,9 @@ $helper = Join-Path $PWD 'tests/helpers/fixture_cleanup.nim'
 $config = Join-Path $PWD 'config.nims'
 $originalHelper = [IO.File]::ReadAllText($helper)
 $originalConfig = [IO.File]::ReadAllText($config)
+$diagnosticHelper = $originalHelper.Replace("`r`n", "`n")
 $needle = "        if getMonoTime() >= deadline:`n          raise"
-if (-not $originalHelper.Contains($needle)) { throw 'Cleanup diagnostic anchor changed' }
+if (-not $diagnosticHelper.Contains($needle)) { throw 'Cleanup diagnostic anchor changed' }
 $replacement = @'
         if getMonoTime() >= deadline:
           echo "DIAGNOSTIC original cleanup error: ", getCurrentExceptionMsg()
@@ -29,7 +30,7 @@ $owners = [IO.File]::ReadAllText("$PSScriptRoot/windows_file_owners.nim")
 $results = @()
 $failed = $false
 try {
-    [IO.File]::WriteAllText($helper, $owners + "`n" + $originalHelper.Replace($needle, $replacement))
+    [IO.File]::WriteAllText($helper, $owners + "`n" + $diagnosticHelper.Replace($needle, $replacement))
     # The fixtures build private children themselves. Give those real compiles
     # the same pinned compiler as their parent; retain their private paths.
     $compiler = $env:RELEASE_CC.Replace('\', '/')
