@@ -104,7 +104,29 @@ function verifyWindows(tree, target) {
     }
   }
 }
+function configurationFiles(spec) {
+  const entries = spec.configurationFiles ?? [];
+  if (!Array.isArray(entries)) fail('configurationFiles must be an array');
+  const destinations = new Set();
+  return entries.map(entry => {
+    const dest = entry.destination;
+    // These names also enter package metadata. Require a canonical /etc path
+    // without whitespace, traversal or RPM macro characters.
+    if (typeof dest !== 'string' || !/^\/etc\/[A-Za-z0-9._/-]+$/.test(dest) ||
+        dest.endsWith('/') || path.posix.normalize(dest) !== dest ||
+        dest.split('/').some(part => part === '.' || part === '..')) {
+      fail(`invalid configuration destination: ${dest}`);
+    }
+    if (destinations.has(dest)) fail(`duplicate configuration destination: ${dest}`);
+    destinations.add(dest);
+    if (typeof entry.source !== 'string' || !fs.lstatSync(entry.source).isFile()) {
+      fail(`configuration source is not a regular file: ${entry.source}`);
+    }
+    return {source: entry.source, destination: dest};
+  });
+}
 function nativePackages(tree, target, spec, p, dist) {
+  const configs = configurationFiles(spec);
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-packages-'));
   try {
     const root = path.join(temp, 'root');
@@ -122,6 +144,17 @@ function nativePackages(tree, target, spec, p, dist) {
       fs.mkdirSync(dest, {recursive: true});
       fs.copyFileSync(spec.systemdUnit, path.join(dest, `${spec.serviceName}.service`));
     }
+    for (const config of configs) {
+      const dest = path.join(root, config.destination);
+      let directory = root;
+      for (const part of config.destination.split('/').slice(1, -1)) {
+        directory = path.join(directory, part);
+        fs.mkdirSync(directory, {recursive: true, mode: 0o755});
+        fs.chmodSync(directory, 0o755);
+      }
+      fs.copyFileSync(config.source, dest);
+      fs.chmodSync(dest, 0o644);
+    }
     const debArch = target.endsWith('aarch64') ? 'arm64' : 'amd64';
     const rpmArch = target.endsWith('aarch64') ? 'aarch64' : 'x86_64';
     const deb = p.matrix.find(t => t.id === target).assets.find(a => a.endsWith('.deb'));
@@ -132,6 +165,8 @@ function nativePackages(tree, target, spec, p, dist) {
         `Package: ${spec.packageName}\nVersion: ${p.version}-1\nArchitecture: ${debArch}\nMaintainer: Metacraft Labs <info@metacraft-labs.com>\nDepends: libc6 (>= 2.28)\n` +
         (spec.recommends?.length ? `Recommends: ${spec.recommends.join(', ')}\n` : '') +
         `Description: ${spec.summary}\n`);
+      if (configs.length) fs.writeFileSync(path.join(root, 'DEBIAN/conffiles'),
+        configs.map(c => c.destination).join('\n') + '\n');
       run('dpkg-deb', ['--root-owner-group', '--build', root, path.join(dist, deb)]);
       if (run('dpkg-deb', ['-f', path.join(dist, deb), 'Architecture']) !== debArch) fail('deb architecture mismatch');
       fs.rmSync(path.join(root, 'DEBIAN'), {recursive: true});
@@ -142,8 +177,9 @@ function nativePackages(tree, target, spec, p, dist) {
       const specfile = path.join(temp, 'package.spec');
       fs.writeFileSync(specfile,
         `Name: ${spec.packageName}\nVersion: ${p.version}\nRelease: 1\nSummary: ${spec.summary}\nLicense: ${spec.license}\nBuildArch: ${rpmArch}\nRequires: glibc >= 2.28\nAutoReqProv: no\n` +
-        `%description\n${spec.summary}\n%install\nmkdir -p %{buildroot}\ncp -a '${root}/.' %{buildroot}/\n%files\n/usr/bin/*\n${prefix}\n` +
-        (spec.systemdUnit ? `/usr/lib/systemd/system/${spec.serviceName}.service\n` : ''));
+        `%description\n${spec.summary}\n%install\nmkdir -p %{buildroot}\ncp -a '${root}/.' %{buildroot}/\n%files\n%defattr(-,root,root,-)\n/usr/bin/*\n${prefix}\n` +
+        (spec.systemdUnit ? `/usr/lib/systemd/system/${spec.serviceName}.service\n` : '') +
+        configs.map(c => `%config(noreplace) ${c.destination}\n`).join(''));
       run('rpmbuild', ['-bb', '--target', rpmArch, '--define', `_topdir ${rpmdir}`,
         '--define', '__os_install_post %{nil}', '--define', '_build_id_links none', specfile]);
       const built = files(rpmdir).filter(f => f.endsWith('.rpm'));
@@ -157,13 +193,20 @@ function nativePackages(tree, target, spec, p, dist) {
       const size = files(root).reduce((n, f) => n + fs.statSync(f).size, 0);
       const info = fs.readFileSync(spec.archMetadata, 'utf8').replace('@INSTALLED_SIZE@', String(size));
       if (!info.includes(`arch = ${rpmArch}\n`) || !info.includes(`pkgver = ${p.version}-1\n`)) fail('Arch metadata differs');
+      for (const config of configs) {
+        if (!info.split('\n').includes(`backup = ${config.destination.slice(1)}`)) {
+          fail(`Arch metadata lacks configuration preservation: ${config.destination}`);
+        }
+      }
       fs.writeFileSync(path.join(root, '.PKGINFO'), info);
-      const mtree = cp.execFileSync('bsdtar', ['-c', '--format=mtree',
+      const mtree = cp.execFileSync('bsdtar', ['--uid', '0', '--gid', '0', '-c', '--format=mtree',
         '--options=!all,type,uid,gid,mode,time,size,sha256,link', '-f', '-', '-C', root, '.']);
       fs.writeFileSync(path.join(root, '.MTREE'), require('node:zlib').gzipSync(mtree));
-      run('bsdtar', ['-czf', path.join(dist, arch), '-C', root, '.PKGINFO', '.MTREE', 'usr']);
+      run('bsdtar', ['--uid', '0', '--gid', '0', '-czf', path.join(dist, arch),
+        '-C', root, '.PKGINFO', '.MTREE', 'usr', ...(configs.length ? ['etc'] : [])]);
       const members = run('bsdtar', ['-tf', path.join(dist, arch)]);
-      for (const member of ['.PKGINFO', '.MTREE', 'usr/bin/runquota', 'usr/bin/runquotad']) {
+      for (const member of ['.PKGINFO', '.MTREE', 'usr/bin/runquota', 'usr/bin/runquotad',
+        ...configs.map(c => c.destination.slice(1))]) {
         if (!members.split('\n').includes(member)) fail(`Arch package lacks ${member}`);
       }
     }
@@ -177,6 +220,7 @@ function packagePayload(tree, target) {
     if (metadata.name !== spec.packageName || metadata.version !== p.version) fail('distribution and release metadata differ');
     spec.summary = metadata.summary;
     spec.license = metadata.license;
+    spec.configurationFiles = metadata.configurationFiles;
   }
   const t = p.matrix.find(t => t.id === target);
   if (!t) fail(`unknown target ${target}`);
@@ -231,5 +275,5 @@ function packagePayload(tree, target) {
   fs.writeFileSync(path.join(dist, name + '.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(`Verified ${name} at ${evidence.sourceCommit}`);
 }
-module.exports = {architecture, packagePayload, glibcRequirements};
+module.exports = {architecture, packagePayload, glibcRequirements, configurationFiles, nativePackages};
 if (require.main === module) packagePayload(path.resolve(process.argv[2]), process.argv[3]);

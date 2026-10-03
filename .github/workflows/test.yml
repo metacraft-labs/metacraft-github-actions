@@ -63,6 +63,21 @@ jobs:
             require('child_process').execFileSync(process.execPath,
               ['--test', 'release-tools/release.test.cjs'], {stdio: 'inherit'});
 
+  release-package-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install real package tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev rpm libarchive-tools
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            require('child_process').execFileSync(process.execPath,
+              ['--test', 'release-tools/configuration-packages.test.cjs'], {stdio: 'inherit'});
+
   resolve-sibling-rev:
     runs-on: ubuntu-latest
     steps:
