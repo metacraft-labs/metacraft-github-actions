@@ -1,0 +1,108 @@
+name: Validate pinned Windows hook bootstrap
+
+# Real source checkouts, compiler children and file I/O; no mocks.
+# Supplemental bootstrap validation; complete product CI remains mandatory.
+on:
+  workflow_dispatch:
+    inputs:
+      hook-pin:
+        description: Exact hook-library source SHA to compile into Reprobuild
+        type: string
+        default: 72f578249e9d8bbca8e3705c8a41ed5085c05bf9
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
+      REQUESTED_HOOK_PIN: ${{ inputs.hook-pin || '72f578249e9d8bbca8e3705c8a41ed5085c05bf9' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 33add18739814c3886da1f69f8a4e18ab1e36faa
+          persist-credentials: false
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: metacraft-labs/metacraft-github-actions/setup-dev-env@161b9734de736db6ce02c87666edde09843b803f
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: c14b1e618d7c4b64476d89792e80b8e8f10b8a52
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-stackable-hooks-pin: ${{ env.REQUESTED_HOOK_PIN }}
+          gh-token: ${{ steps.token.outputs.token }}
+      - name: Check source identity and run real compiler children
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          if (-not $env:STACKABLE_HOOKS_SRC) { throw 'Missing hook source path' }
+          $source = Split-Path $env:STACKABLE_HOOKS_SRC -Parent
+          $actual = (& git -C $source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:REQUESTED_HOOK_PIN) {
+            throw 'The compiled bootstrap hook source differs from the requested pin'
+          }
+          $dir = Join-Path $PWD 'build/hook-bootstrap'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          @{
+            requested = $env:REQUESTED_HOOK_PIN
+            actual = $actual
+            source = $source
+            hostArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          } | ConvertTo-Json | Set-Content "$dir/source.json"
+          @'
+          /* Real compiler/process/file boundary; no mocks. */
+          #include <stdio.h>
+          #include <string.h>
+          int main(int argc, char **argv) {
+            char input[64];
+            if (argc != 3) return 2;
+            FILE *in = fopen(argv[1], "rb");
+            if (!in || !fgets(input, sizeof(input), in)) return 3;
+            fclose(in);
+            if (strcmp(input, "hook-pin-probe\n") != 0) return 4;
+            FILE *out = fopen(argv[2], "wb");
+            if (!out) return 5;
+            if (fputs("observed input\n", out) < 0 || fclose(out)) return 6;
+            return 7;
+          }
+          '@ | Set-Content "$dir/probe.c"
+          [IO.File]::WriteAllText("$dir/input.txt", "hook-pin-probe`n")
+          $cc = $env:REPRO_BOOTSTRAP_CC
+          if (-not $cc -or -not (Test-Path $cc)) { throw 'Missing bootstrap compiler' }
+          & repro internal io monitor --depfile "$dir/compile.iomon" -- $cc "$dir/probe.c" -o "$dir/probe.exe"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$dir/probe.exe")) {
+            throw 'The monitored real compiler failed'
+          }
+          & repro internal io monitor --depfile "$dir/execute.iomon" -- "$dir/probe.exe" "$dir/input.txt" "$dir/output.txt"
+          if ($LASTEXITCODE -ne 7) { throw 'The monitored child exit code was not preserved' }
+          if ([IO.File]::ReadAllText("$dir/output.txt") -cne "observed input`n") {
+            throw 'The monitored program did not read and write its real fixture'
+          }
+          foreach ($trace in @('compile.iomon', 'execute.iomon')) {
+            if ((Get-Item "$dir/$trace").Length -eq 0) { throw "Missing trace: $trace" }
+          }
+          Write-Host "Pinned hook source $actual compiles and executes through the real monitor."
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-hook-bootstrap-${{ matrix.runner }}
+          path: build/hook-bootstrap/
+          retention-days: 14
+          if-no-files-found: warn

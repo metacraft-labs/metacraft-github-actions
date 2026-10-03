@@ -68,11 +68,21 @@
 name: Clone cross-repo siblings
 description: >
   Clone the cross-repo sibling repositories a repo's CI needs, each at the
-  revision pinned by the per-commit workspace lock for the commit under test.
-  The lock is reprobuild's locks/<project>/<repo>/<sha>.toml
-  ("reprobuild.workspace.lock.v1"). Legacy repo-workspaces
-  locks/<project>/<repo>/<sha>.xml records are NOT read (support removed
-  2026-09-29): a commit whose only record is an .xml has no lock. The set of
+  revision pinned for the commit under test.
+
+  WHICH LOCK (`lock-store`). By default (`committed`) the pin is the sibling's
+  `deps` entry in the triggering commit's own committed `repro.lock` — the
+  commit and integrity `repro lock refresh` recorded for the repo's develop
+  set — and no manifests repo is contacted. `record-store` is the per-project
+  opt-in to a team record store, described below. Neither falls back to the
+  other, and neither falls back to a branch tip: a sibling the chosen lock does
+  not pin is a named refusal. reprobuild-specs/Unified-Locking-And-Hooks.md §14.
+
+  Under `record-store`, the lock is reprobuild's
+  locks/<project>/<repo>/<sha>.toml ("reprobuild.workspace.lock.v1"). Legacy
+  repo-workspaces locks/<project>/<repo>/<sha>.xml records are NOT read
+  (support removed 2026-09-29): a commit whose only record is an .xml has no
+  lock. The set of
   siblings comes from the `siblings` input or, when empty, the calling repo's
   `.github/sibling-repos` file (one repo name per line). Each sibling is cloned
   adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
@@ -195,6 +205,21 @@ inputs:
       `setup-nix`).
     required: false
     default: "metacraft-labs"
+  lock-store:
+    description: >
+      WHERE sibling revisions come from. `committed` (the default) reads the
+      TRIGGERING COMMIT's own committed `repro.lock` — the `deps` entry naming
+      each sibling, a commit id plus its integrity, written by `repro lock
+      refresh` from the repo's develop set — and contacts no manifests repo at
+      all. `record-store` is the per-project opt-in to a team record store:
+      the revision comes from `locks/<project>/<repo>/<sha>.toml` in
+      `manifests-repo` (and `private-manifests-repo`), exactly as before, and
+      the committed lock is not consulted. A sibling the chosen lock does not
+      pin is a named refusal; there is no fallback from one to the other and
+      none to a branch tip. See reprobuild-specs/Unified-Locking-And-Hooks.md
+      §14.5.
+    required: false
+    default: "committed"
   manifests-repo:
     description: >
       owner/name of the PUBLIC (base) manifest repo holding the workspace
@@ -269,6 +294,7 @@ runs:
         PRIVATE_MANIFESTS_REPO: ${{ inputs.private-manifests-repo }}
         INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
         ON_LOCK_OVERRIDE: ${{ inputs.on-lock-override }}
+        LOCK_STORE: ${{ inputs.lock-store }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         # The two context values the runner exposes no environment variable
         # for. Everything else the body needs — $GITHUB_ACTION_PATH,

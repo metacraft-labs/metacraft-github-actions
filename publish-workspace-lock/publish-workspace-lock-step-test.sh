@@ -315,6 +315,7 @@ run_step() { # [VAR=VALUE ...] overrides via the environment below
 			ANCHOR="$HERE/anchor-workspace-lock.sh" \
 			RUNNER_TEMP="$TMPROOT/runner-temp" \
 			RACE_TRIGGER="${RACE_TRIGGER:-}" \
+			LOCK_STORE="${LOCK_STORE_IN-record-store}" \
 			bash "$STEP" 2>&1
 	)"
 	RC=$?
@@ -869,6 +870,27 @@ run_step
 check "observed: a carried set that DISAGREES at the same path is still a hard failure" "$RC" "1"
 contains "observed: ...named as immutability" "$OUT" "Published records are immutable and this one is not rewritten"
 check "observed: ...and nothing is pushed" "$(remote_tip)" "$BEFORE_TIP"
+
+# ===========================================================================
+# 9. WITHOUT THE RECORD-STORE OPT-IN THERE IS NOTHING TO PUBLISH.
+#
+# reprobuild-specs/Unified-Locking-And-Hooks.md §14.6: by default a repo's
+# sibling revisions live in its committed `repro.lock`, which the merge commit
+# carries, so there is no record to re-anchor. This workflow used to run for
+# every repo and fail ("nothing to re-anchor") for every one that never had a
+# record-store lock — i.e. for most of them. It must now succeed without
+# touching the manifests repo; only `lock-store: record-store` publishes.
+# ===========================================================================
+mk_manifests
+BEFORE_TIP="$(remote_tip)"
+LOCK_STORE_IN="" run_step
+check "default: the step succeeds without the opt-in" "$RC" "0"
+contains "default: ...and says why nothing was published" "$OUT" "lock-store: committed"
+lacks "default: ...having cloned no manifests repo" "$OUT" "metacraft-manifests@"
+check "default: ...and pushed nothing" "$(remote_tip)" "$BEFORE_TIP"
+LOCK_STORE_IN="bogus" run_step
+check "an unknown lock-store is refused" "$RC" "1"
+contains "...naming the accepted values" "$OUT" "record-store"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

@@ -20,6 +20,25 @@
 # the runner run the same bytes.
 
 set -euo pipefail
+
+# ONLY A PROJECT THAT OPTED INTO A RECORD STORE HAS ANYTHING TO PUBLISH HERE.
+# reprobuild-specs/Unified-Locking-And-Hooks.md §14.6: by default a repo's
+# sibling revisions are recorded in its committed `repro.lock`, which the merge
+# commit carries like any other file, so there is no record to re-anchor and no
+# manifests repo to write. Running the re-anchor anyway failed every such repo
+# with "nothing to re-anchor"; it is a no-op that says so.
+case "${LOCK_STORE:=committed}" in
+committed)
+  echo "publish-workspace-lock: lock-store: committed -- this project's sibling revisions live in its committed repro.lock, which the merged commit carries; there is no record-store lock to re-anchor, so nothing is published. (Set lock-store: record-store only for a project that keeps its locks in a team record store.)"
+  exit 0
+  ;;
+record-store) ;;
+*)
+  echo "::error::publish-workspace-lock: 'lock-store' must be 'committed' (the default) or 'record-store'; got '${LOCK_STORE}'."
+  exit 1
+  ;;
+esac
+
 MANIFESTS_REF="${INPUT_MANIFESTS_REF:-latest}"
 PRIVATE_MANIFESTS_REF="${INPUT_PRIVATE_MANIFESTS_REF:-${MANIFESTS_REF}}"
 SELF_SLUG="${INPUT_REPO:-${DEFAULT_REPO}}"

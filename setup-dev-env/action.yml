@@ -10,13 +10,14 @@ description: >
   This is a thin orchestrator over composable sub-actions:
     - cross-repo siblings come from one of two mechanisms, chosen by
       `sibling-strategy` (default `auto`) and reported on one line every run:
-      `clone-siblings` (the workspace-PROJECT lock in `metacraft-manifests`,
-      via `metacraft-labs/metacraft-github-actions/clone-siblings`, reading the
-      repo's `.github/sibling-repos` or the `siblings` input; the lock is
-      reprobuild's `<sha>.toml`, and legacy repo-workspaces `<sha>.xml`
-      records are not read since 2026-09-29), or `repro-lock` (the consuming
-      repo's own committed
-      `repro.lock`, via `repro develop --all`);
+      `clone-siblings` (via
+      `metacraft-labs/metacraft-github-actions/clone-siblings`, reading the
+      repo's `.github/sibling-repos` or the `siblings` input, and resolving
+      each revision from the triggering commit's committed `repro.lock` — or,
+      under `lock-store: record-store`, from the team record store's
+      reprobuild `<sha>.toml`; legacy repo-workspaces `<sha>.xml` records are
+      not read since 2026-09-29), or `repro-lock` (the consuming repo's own
+      committed `repro.lock`, via `repro develop --all`);
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
     - the `reprobuild` flavor uses
@@ -53,11 +54,11 @@ inputs:
       two, they answer different questions, and until this input existed a
       caller picked between them by hand:
 
-        - "clone-siblings" — resolve each sibling from the WORKSPACE-PROJECT
-              lock in `metacraft-manifests`. Those project manifests describe a
-              repo SET convenient for a human setting up a workspace: typically
-              a superset of what any one build needs, and not that build's
-              source of truth.
+        - "clone-siblings" — clone each LISTED sibling with plain git at the
+              revision the triggering commit's committed `repro.lock` records
+              for it (`lock-store: committed`, the default), or at the revision
+              a team record store records (`lock-store: record-store`). Needs
+              no `repro` CLI, so it serves every flavor.
         - "repro-lock"     — resolve each sibling from the consuming repo's own
               committed `repro.lock` (the solved dependency graph of the build
               itself, pinned to exact commit SHAs) via `repro develop --all`.
@@ -209,6 +210,10 @@ inputs:
     description: io-mon source ref for the source-built Windows Reprobuild monitor.
     required: false
     default: "dev"
+  repro-stackable-hooks-pin:
+    description: Optional full lowercase hook-library source SHA for the Windows Reprobuild bootstrap; empty retains dev.
+    required: false
+    default: ""
   repro-publish-key:
     description: >
       ECDSA-P256 signing private key (PEM) for publishing `repro build`
@@ -246,9 +251,20 @@ inputs:
       requires it.
     required: false
     default: ""
+  lock-store:
+    description: >
+      Passed straight through to `clone-siblings`. `committed` (the default)
+      resolves each sibling from the triggering commit's own committed
+      `repro.lock`; `record-store` is the per-project opt-in to a team record
+      store (`locks/<project>/<repo>/<sha>.toml` in the manifests repo), and is
+      the only setting under which `manifests-ref` / `private-manifests-*` are
+      read. See reprobuild-specs/Unified-Locking-And-Hooks.md §14.5.
+    required: false
+    default: "committed"
   manifests-ref:
     description: >
-      Optional branch/ref of the manifest repository to fetch workspace locks from.
+      Optional branch/ref of the manifest repository to fetch workspace locks from
+      (read only under `lock-store: record-store`).
       If not provided, falls back to MANIFESTS_REF environment variable, then to 'latest'.
     required: false
     default: ""
@@ -417,6 +433,7 @@ runs:
         # documented.
         sibling-owner: ${{ inputs.token-owner }}
         token-owner: ${{ inputs.token-owner }}
+        lock-store: ${{ inputs.lock-store }}
         manifests-ref: ${{ inputs.manifests-ref }}
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
@@ -659,12 +676,13 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c70882ae9281edba7a87ad245cb4b30592331f2c
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c2b603a08e9ad68096761074951395d1875bb289
       with:
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
         runquota-ref: ${{ inputs.repro-runquota-pin }}
         io-mon-ref: ${{ inputs.repro-io-mon-pin }}
+        stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
@@ -721,6 +739,7 @@ runs:
         siblings: ${{ steps.repro-siblings.outputs.late-siblings }}
         sibling-owner: ${{ inputs.token-owner }}
         token-owner: ${{ inputs.token-owner }}
+        lock-store: ${{ inputs.lock-store }}
         manifests-ref: ${{ inputs.manifests-ref }}
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
