@@ -58,7 +58,7 @@ try {
 
     $denied = Join-Path $root 'deny-delete.txt'
     [IO.File]::WriteAllText($denied, 'unlink-denial-control')
-    $held = [ImageUnlinkProbe]::CreateFileW($denied, 0x80000000, 1,
+    $held = [ImageUnlinkProbe]::CreateFileW($denied, 2147483648, 1,
         [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
     if ($held -eq [IntPtr](-1)) { throw 'Cannot open denial control' }
     try {
@@ -74,7 +74,7 @@ try {
     # a loaded image, without running or terminating a process.
     $image = Join-Path $root 'private-image.exe'
     Copy-Item $env:ComSpec $image
-    $imageFile = [ImageUnlinkProbe]::CreateFileW($image, 0x80000000, 7,
+    $imageFile = [ImageUnlinkProbe]::CreateFileW($image, 2147483648, 7,
         [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
     if ($imageFile -eq [IntPtr](-1)) { throw 'Cannot open private image' }
     $mapping = [IntPtr]::Zero
