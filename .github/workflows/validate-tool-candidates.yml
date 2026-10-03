@@ -559,9 +559,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [windows-2025, windows-11-arm]
+        # x64 passed at the preceding product pins. This supplemental
+        # follow-up measures the remaining emulated ARM host only.
+        runner: [windows-11-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      # Match the production ARM lane's existing x64-emulation toolchain.
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -669,9 +674,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [windows-2025, windows-11-arm]
+        # x64 passed at the preceding product pins. This supplemental
+        # follow-up measures the remaining emulated ARM host only.
+        runner: [windows-11-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      # Match the production ARM lane's existing x64-emulation toolchain.
+      WINDOWS_DIY_ARCH_OVERRIDE: x64
     steps:
       - uses: actions/checkout@v4
         with:
