@@ -9,6 +9,8 @@ $recipe = Join-Path $PWD 'repro.nim'
 $original = [IO.File]::ReadAllBytes($recipe)
 $server = Join-Path $PWD 'src/vm_harness/serve/server.nim'
 $originalServer = [IO.File]::ReadAllBytes($server)
+$shimSource = Join-Path $PWD 'io-mon/src/io_mon/shim/windows_interpose.nim'
+$originalShimSource = [IO.File]::ReadAllBytes($shimSource)
 $originalShimPin = $env:REPRO_MONITOR_SHIM_LIB
 $source = [Text.Encoding]::UTF8.GetString($original)
 $anchor = 'const timingTests = ["t_tart_backend", "t_vmharness_serve_concurrency"]'
@@ -35,16 +37,23 @@ try {
     [IO.File]::WriteAllText($recipe, $selected, (New-Object Text.UTF8Encoding($false)))
     & "$PSScriptRoot/gosti-serve-profile.ps1" -Server $server
     & git diff -- repro.nim src/vm_harness/serve/server.nim > "$evidence/diagnostic.patch"
-    # Optimize only machine code. No release/danger defines or disabled checks.
+    & python "$PSScriptRoot/gosti-monitor-profile.py" $shimSource
+    if ($LASTEXITCODE -ne 0) { throw 'Monitor phase anchors changed' }
+    & git -C io-mon diff -- src/io_mon/shim/windows_interpose.nim > "$evidence/monitor-profile.patch"
+    # Both variants have the same diagnostic timestamps. Optimize only machine
+    # code; no release/danger defines, changed hooks or disabled checks.
     $env:IO_MON_BUILD_MODE = 'debug'
-    $env:IO_MON_SHIM_OUT_DIR = (Join-Path $PWD 'build/profile-optimized/lib').Replace('\', '/')
-    $env:IO_MON_SHIM_NIMCACHE_DIR = (Join-Path $PWD 'build/profile-optimized/nimcache').Replace('\', '/')
-    & bash io-mon/scripts/build_shim.sh --opt:speed *> "$evidence/optimized-monitor-build.log"
-    if ($LASTEXITCODE -ne 0) { throw 'The optimized monitor did not build' }
-    $baselineShim = (Resolve-Path 'reprobuild/build/lib/librepro_monitor_shim.dll').Path
-    $optimizedShim = (Resolve-Path "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll").Path
+    $shims = @{}
     foreach ($name in @('baseline', 'optimized')) {
-        $env:REPRO_MONITOR_SHIM_LIB = if ($name -eq 'baseline') { $baselineShim } else { $optimizedShim }
+        $env:IO_MON_SHIM_OUT_DIR = (Join-Path $PWD "build/profile-$name/lib").Replace('\', '/')
+        $env:IO_MON_SHIM_NIMCACHE_DIR = (Join-Path $PWD "build/profile-$name/nimcache").Replace('\', '/')
+        $optimization = if ($name -eq 'baseline') { '--opt:none' } else { '--opt:speed' }
+        & bash io-mon/scripts/build_shim.sh $optimization *> "$evidence/$name-monitor-build.log"
+        if ($LASTEXITCODE -ne 0) { throw "The $name monitor did not build" }
+        $shims[$name] = (Resolve-Path "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll").Path
+    }
+    foreach ($name in @('baseline', 'optimized')) {
+        $env:REPRO_MONITOR_SHIM_LIB = $shims[$name]
         Get-FileHash $env:REPRO_MONITOR_SHIM_LIB -Algorithm SHA256 |
             Format-List > "$evidence/$name-monitor-sha256.txt"
         # Explicit forced validation requires actual execution; cacheability and
@@ -58,6 +67,13 @@ try {
         $actions = @($report.actions | Where-Object {$_.id -like 'vm_harness.test_execute.*'})
         if ($actions.Count -ne 1 -or $actions[0].id -ne 'vm_harness.test_execute.t_vmharness_serve_concurrency' -or -not $actions[0].launched) {
             throw 'The selected real concurrency action did not execute'
+        }
+        $actionOutput = $actions[0].stdout + $actions[0].stderr
+        if (-not $actionOutput.Contains('monitor-profile') -or
+            -not $actionOutput.Contains("profile-$name") -or
+            -not $actionOutput.Contains('phase=inject-end') -or
+            -not $actionOutput.Contains('phase=uninstall-hooks-end')) {
+            throw 'The test did not prove the selected monitor image and phase coverage'
         }
         if ($actions[0].status -ne 'asSucceeded' -or $actions[0].exitCode -ne 0 -or ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -ne 2) {
             $failed = $true
@@ -88,6 +104,7 @@ try {
 } finally {
     [IO.File]::WriteAllBytes($recipe, $original)
     [IO.File]::WriteAllBytes($server, $originalServer)
+    [IO.File]::WriteAllBytes($shimSource, $originalShimSource)
     $env:REPRO_MONITOR_SHIM_LIB = $originalShimPin
     Remove-Item Env:IO_MON_BUILD_MODE, Env:IO_MON_SHIM_OUT_DIR, Env:IO_MON_SHIM_NIMCACHE_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:VMH_CONC_TEST_THREADS -ErrorAction SilentlyContinue
