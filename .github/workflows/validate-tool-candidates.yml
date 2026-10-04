@@ -1076,7 +1076,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 19ea53ce4593c6a7fe2281cda30b584c5ffff3cc
+          ref: d344703967f9538ca5fda5a40508e4753039c4e8
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1098,11 +1098,11 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/io-runtime-cores"
           sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/io-runtime-cores/core.%E.%p"
-      - name: Compare real vfork and host-handler regressions
+      - name: Compare original and local binding with real Linux regressions
         shell: bash
         run: |
           set -euo pipefail
-          nix develop --command python3 .diagnostic-tools/diagnostics/io-mon-linux-runtime.py
+          nix develop --command python3 .diagnostic-tools/diagnostics/io-mon-distinct-preloads.py
       - name: Preserve runtime comparison evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1120,7 +1120,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 87bc824d99fbd0c58ac6714310213ed7227bf78e
+          ref: d344703967f9538ca5fda5a40508e4753039c4e8
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -1172,7 +1172,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: io-mon-87bc-repro-frame
+          name: io-mon-d344-repro-frame
           path: test-logs/repro-frame/
           if-no-files-found: warn
           retention-days: 14

@@ -10,7 +10,7 @@ import subprocess
 root = Path.cwd()
 evidence = root / "test-logs/repro-frame"
 evidence.mkdir(parents=True, exist_ok=True)
-assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == "87bc824d99fbd0c58ac6714310213ed7227bf78e"
+assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == "d344703967f9538ca5fda5a40508e4753039c4e8"
 resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 cores = Path(os.environ["RUNNER_TEMP"]) / "io-frame-cores"
 recipe = root / "repro.nim"
@@ -89,11 +89,14 @@ try:
     # The SAME ELF and shim, now outside the enclosing action. The completed
     # outer session is not recreated; this is an explicit diagnostic control.
     direct = dict(os.environ, LD_PRELOAD=str(shim), REPRO_MONITOR_SHIM_LIB=str(shim))
-    run("direct-same-probe", [str(probe)], env=direct, timeout=60)
+    direct_code = run("direct-same-probe", [str(probe)], env=direct, timeout=60)
     backtraces()
     for p in (probe, shim):
         assert hashlib.sha256(p.read_bytes()).hexdigest() == identity[str(p)]
     print((evidence / "action-output.log").read_text()[-2500:])
+    assert direct_code == 0, results
+    assert action["status"] == "asSucceeded" and action["exitCode"] == 0, action
+    assert "vfork frame state: before-null=1 after-null=1" in action["stdout"], action
 finally:
     for p, contents in originals.items():
         p.write_bytes(contents)
