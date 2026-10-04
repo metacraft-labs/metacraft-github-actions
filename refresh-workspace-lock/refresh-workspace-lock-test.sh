@@ -44,12 +44,12 @@ SCRIPT="$HERE/refresh-workspace-lock.sh"
 ACTION="$HERE/action.yml"
 
 [ -f "$SCRIPT" ] || {
-	echo "refresh-workspace-lock-test: cannot find $SCRIPT" >&2
-	exit 2
+  echo "refresh-workspace-lock-test: cannot find $SCRIPT" >&2
+  exit 2
 }
 bash -n "$SCRIPT" || {
-	echo "refresh-workspace-lock-test: $SCRIPT is not valid bash (see above)." >&2
-	exit 2
+  echo "refresh-workspace-lock-test: $SCRIPT is not valid bash (see above)." >&2
+  exit 2
 }
 
 EXPECTED_ASSERTIONS=47
@@ -58,30 +58,30 @@ FAIL=0
 ASSERTIONS=0
 
 ok() {
-	ASSERTIONS=$((ASSERTIONS + 1))
-	PASS=$((PASS + 1))
-	printf 'ok   %s\n' "$1"
+  ASSERTIONS=$((ASSERTIONS + 1))
+  PASS=$((PASS + 1))
+  printf 'ok   %s\n' "$1"
 }
 bad() {
-	ASSERTIONS=$((ASSERTIONS + 1))
-	FAIL=$((FAIL + 1))
-	printf 'FAIL %s\n' "$1"
-	[ -n "${2:-}" ] && printf '       %s\n' "$2"
+  ASSERTIONS=$((ASSERTIONS + 1))
+  FAIL=$((FAIL + 1))
+  printf 'FAIL %s\n' "$1"
+  [ -n "${2:-}" ] && printf '       %s\n' "$2"
 }
 check() { # <desc> <actual> <expected>
-	if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
+  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
 }
 contains() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) ok "$1" ;;
-	*) bad "$1" "did not contain [$3]" ;;
-	esac
+  case "$2" in
+  *"$3"*) ok "$1" ;;
+  *) bad "$1" "did not contain [$3]" ;;
+  esac
 }
 lacks() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
-	*) ok "$1" ;;
-	esac
+  case "$2" in
+  *"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
+  *) ok "$1" ;;
+  esac
 }
 
 TMPROOT="$(mktemp -d)"
@@ -95,7 +95,7 @@ sha_of() { sha256sum "$1" | cut -d' ' -f1; }
 # A lock document in the shape reprobuild writes.
 # ---------------------------------------------------------------------------
 mk_lock() { # <path> <created_at> <codetracer-rev>
-	cat >"$1" <<EOF
+  cat >"$1" <<EOF
 schema = "reprobuild.workspace.lock.v1"
 
 [lock]
@@ -129,18 +129,18 @@ NEW_REV="dd971ae300000000000000000000000000000000"
 # exactly what the generator does.
 # ---------------------------------------------------------------------------
 mk_ws() { # <name> <shim-body>
-	local body="$2" root="$TMPROOT/$1"
-	mkdir -p "$root/.repro" "$root/codetracer-js-recorder/.git" "$root/bin"
-	mk_lock "$root/codetracer-js-recorder/repro.lock" "2026-06-01T09:00:00Z" "$OLD_REV"
-	{
-		printf '%s\n' '#!/usr/bin/env bash'
-		printf '%s\n' "ROOT=\"$root\""
-		printf '%s\n' "OLD_REV=\"$OLD_REV\""
-		printf '%s\n' "NEW_REV=\"$NEW_REV\""
-		printf '%s\n' "$body"
-	} >"$root/bin/repro"
-	chmod +x "$root/bin/repro"
-	printf '%s' "$root"
+  local body="$2" root="$TMPROOT/$1"
+  mkdir -p "$root/.repro" "$root/codetracer-js-recorder/.git" "$root/bin"
+  mk_lock "$root/codetracer-js-recorder/repro.lock" "2026-06-01T09:00:00Z" "$OLD_REV"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' "ROOT=\"$root\""
+    printf '%s\n' "OLD_REV=\"$OLD_REV\""
+    printf '%s\n' "NEW_REV=\"$NEW_REV\""
+    printf '%s\n' "$body"
+  } >"$root/bin/repro"
+  chmod +x "$root/bin/repro"
+  printf '%s' "$root"
 }
 
 # A shim that regenerates the lock with a fresh timestamp and a moved pin: the
@@ -173,26 +173,26 @@ exit 0
 '
 
 run_script() { # <workspace-root> [env assignments...]
-	local root="$1"
-	shift
-	SUMMARY="$TMPROOT/summary.md"
-	OUTPUTS="$TMPROOT/outputs.txt"
-	: >"$SUMMARY"
-	: >"$OUTPUTS"
-	OUT="$(
-		env PATH="$root/bin:$PATH" \
-			WORKSPACE_ROOT="$root" \
-			REPO_NAME="codetracer-js-recorder" \
-			DRY_RUN="true" \
-			SUMMARY_FILE="$SUMMARY" \
-			OUTPUT_FILE="$OUTPUTS" \
-			NOW_EPOCH="$NOW" \
-			"$@" \
-			bash "$SCRIPT" 2>&1
-	)"
-	RC=$?
-	SUMMARY_TEXT="$(cat "$SUMMARY")"
-	OUTPUT_TEXT="$(cat "$OUTPUTS")"
+  local root="$1"
+  shift
+  SUMMARY="$TMPROOT/summary.md"
+  OUTPUTS="$TMPROOT/outputs.txt"
+  : >"$SUMMARY"
+  : >"$OUTPUTS"
+  OUT="$(
+    env PATH="$root/bin:$PATH" \
+      WORKSPACE_ROOT="$root" \
+      REPO_NAME="codetracer-js-recorder" \
+      DRY_RUN="true" \
+      SUMMARY_FILE="$SUMMARY" \
+      OUTPUT_FILE="$OUTPUTS" \
+      NOW_EPOCH="$NOW" \
+      "$@" \
+      bash "$SCRIPT" 2>&1
+  )"
+  RC=$?
+  SUMMARY_TEXT="$(cat "$SUMMARY")"
+  OUTPUT_TEXT="$(cat "$OUTPUTS")"
 }
 
 # ===========================================================================
@@ -208,7 +208,7 @@ contains "...and reports changed=true" "$OUTPUT_TEXT" "changed=true"
 contains "...and the step summary states the composition change" "$SUMMARY_TEXT" "Pins that moved"
 contains "...and says no pull request was opened" "$SUMMARY_TEXT" "no pull request was opened"
 check "...and the checkout is restored byte-for-byte" \
-	"$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
+  "$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
 lacks "...and no branch was created" "$OUT" "opening a pull request"
 
 # ===========================================================================
@@ -225,7 +225,7 @@ check "an unchanged lock is a success" "$RC" "0"
 contains "...reported as unchanged" "$OUTPUT_TEXT" "status=unchanged"
 contains "...and changed=false" "$OUTPUT_TEXT" "changed=false"
 check "...with the file untouched" \
-	"$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
+  "$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
 
 # ===========================================================================
 # 3. THE ANTI-FABRICATION GUARD.
@@ -311,7 +311,7 @@ check "a failing generator is exit 4" "$RC" "4"
 contains "...naming the exit status it got" "$OUT" "exited 7"
 contains "...and its output is shown, not swallowed" "$OUT" "the workspace is inconsistent"
 check "...and the lock is untouched" \
-	"$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
+  "$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
 
 # 4b. The generator succeeding and deleting the lock is exit 5, not a rewrite.
 SHIM_DELETES='rm -f "$ROOT/codetracer-js-recorder/repro.lock"; exit 0'
@@ -351,7 +351,7 @@ run_script "$WS" DRY_RUN="yes"
 check "an unrecognised dry-run value is exit 2" "$RC" "2"
 contains "...and says a typo is not permission" "$OUT" "must not be read as permission"
 check "...and nothing was generated" \
-	"$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
+  "$(sha_of "$WS/codetracer-js-recorder/repro.lock")" "$BEFORE"
 
 # ===========================================================================
 # 7. THE ACTION STILL RUNS THIS SCRIPT, and still defaults to a dry run.
@@ -362,13 +362,13 @@ check "...and nothing was generated" \
 # ===========================================================================
 ACTION_TEXT="$(cat "$ACTION")"
 contains "the action runs the script this suite tests" "$ACTION_TEXT" \
-	'run: bash "${GITHUB_ACTION_PATH}/refresh-workspace-lock.sh"'
+  'run: bash "${GITHUB_ACTION_PATH}/refresh-workspace-lock.sh"'
 contains "the action's dry-run input still defaults to true" "$ACTION_TEXT" \
-	'dry-run:'
+  'dry-run:'
 DRYDEF="$(awk '/^  dry-run:/{f=1} f && /^    default:/{print $2; exit}' "$ACTION")"
 check "...and that default is \"true\"" "$DRYDEF" '"true"'
 for v in WORKSPACE_ROOT REPO_NAME REPRO DRY_RUN BRANCH_PREFIX; do
-	contains "the action passes $v in the step's env:" "$ACTION_TEXT" "        ${v}: "
+  contains "the action passes $v in the step's env:" "$ACTION_TEXT" "        ${v}: "
 done
 
 # ===========================================================================
@@ -390,43 +390,43 @@ done
 REAL_LOCK="$HERE/testdata/real-published-lock.toml"
 REAL_LOCK_SHA256="745e7fb54d06d88de96a343eb98c347892ac3bcfc72eb98f778726f455e261ac"
 if [ -f "$REAL_LOCK" ]; then
-	ok "a real published lock record is checked in as testdata"
-	check "...and it is still the published bytes (sha256)" \
-		"$(sha_of "$REAL_LOCK")" "$REAL_LOCK_SHA256"
-	EXTRACTED="$(
-		awk '
-			/^[[:space:]]*\[/ { in_lock = ($0 ~ /^[[:space:]]*\[lock\][[:space:]]*$/); next }
-			in_lock && /^[[:space:]]*created_at[[:space:]]*=/ {
-				line = $0
-				sub(/^[^=]*=[[:space:]]*/, "", line)
-				gsub(/^["'"'"']|["'"'"']$/, "", line)
-				print line
-				exit
-			}
-		' "$REAL_LOCK"
-	)"
-	case "$EXTRACTED" in
-	20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z) ok "...and its [lock] created_at reads as an ISO-8601 instant ($EXTRACTED)" ;;
-	*) bad "...and its [lock] created_at reads as an ISO-8601 instant" "got [$EXTRACTED]" ;;
-	esac
-	if date -u -d "$EXTRACTED" +%s >/dev/null 2>&1 ||
-		date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$EXTRACTED" +%s >/dev/null 2>&1; then
-		ok "...and the guard's own date parsing accepts it"
-	else
-		bad "...and the guard's own date parsing accepts it" "neither date flavour parsed [$EXTRACTED]"
-	fi
+  ok "a real published lock record is checked in as testdata"
+  check "...and it is still the published bytes (sha256)" \
+    "$(sha_of "$REAL_LOCK")" "$REAL_LOCK_SHA256"
+  EXTRACTED="$(
+    awk '
+      /^[[:space:]]*\[/ { in_lock = ($0 ~ /^[[:space:]]*\[lock\][[:space:]]*$/); next }
+      in_lock && /^[[:space:]]*created_at[[:space:]]*=/ {
+        line = $0
+        sub(/^[^=]*=[[:space:]]*/, "", line)
+        gsub(/^["'"'"']|["'"'"']$/, "", line)
+        print line
+        exit
+      }
+    ' "$REAL_LOCK"
+  )"
+  case "$EXTRACTED" in
+  20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z) ok "...and its [lock] created_at reads as an ISO-8601 instant ($EXTRACTED)" ;;
+  *) bad "...and its [lock] created_at reads as an ISO-8601 instant" "got [$EXTRACTED]" ;;
+  esac
+  if date -u -d "$EXTRACTED" +%s >/dev/null 2>&1 ||
+    date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$EXTRACTED" +%s >/dev/null 2>&1; then
+    ok "...and the guard's own date parsing accepts it"
+  else
+    bad "...and the guard's own date parsing accepts it" "neither date flavour parsed [$EXTRACTED]"
+  fi
 else
-	bad "a real published lock record is checked in as testdata" \
-		"missing $REAL_LOCK; the format contract would be asserted only against this suite's own fixtures"
+  bad "a real published lock record is checked in as testdata" \
+    "missing $REAL_LOCK; the format contract would be asserted only against this suite's own fixtures"
 fi
 
 # ===========================================================================
 
 printf '\n%s\n' "assertions: $ASSERTIONS  pass: $PASS  fail: $FAIL"
 if [ "$ASSERTIONS" -ne "$EXPECTED_ASSERTIONS" ]; then
-	printf '%s\n' "refresh-workspace-lock-test: expected $EXPECTED_ASSERTIONS assertions, ran $ASSERTIONS." >&2
-	printf '%s\n' "  A contract was deleted or short-circuited; update EXPECTED_ASSERTIONS deliberately." >&2
-	exit 3
+  printf '%s\n' "refresh-workspace-lock-test: expected $EXPECTED_ASSERTIONS assertions, ran $ASSERTIONS." >&2
+  printf '%s\n' "  A contract was deleted or short-circuited; update EXPECTED_ASSERTIONS deliberately." >&2
+  exit 3
 fi
 [ "$FAIL" -eq 0 ] || exit 1
 printf '%s\n' "refresh-workspace-lock: all contracts hold."

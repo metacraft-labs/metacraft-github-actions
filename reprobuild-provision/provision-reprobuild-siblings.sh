@@ -97,8 +97,8 @@ RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 IO_MON_REF="${IO_MON_REF:-dev}"
 STACKABLE_HOOKS_PIN="${STACKABLE_HOOKS_PIN:-}"
 if [[ -n "$STACKABLE_HOOKS_PIN" && ! "$STACKABLE_HOOKS_PIN" =~ ^[0-9a-f]{40}$ ]]; then
-	echo "::error::stackable-hooks-pin must be a full lowercase source SHA" >&2
-	exit 2
+  echo "::error::stackable-hooks-pin must be a full lowercase source SHA" >&2
+  exit 2
 fi
 STACKABLE_HOOKS_REF="${STACKABLE_HOOKS_PIN:-dev}"
 
@@ -117,11 +117,11 @@ NEUTRAL_DIR="${NEUTRAL_DIR//\\//}"
 # false, and discovering it by printing the token into a public Actions log is
 # not an acceptable way to find out.
 scrub_token() {
-	local text="$1"
-	if [ -n "${GH_TOKEN:-}" ]; then
-		text="${text//${GH_TOKEN}/\*\*\*}"
-	fi
-	printf '%s' "${text}"
+  local text="$1"
+  if [ -n "${GH_TOKEN:-}" ]; then
+    text="${text//${GH_TOKEN}/\*\*\*}"
+  fi
+  printf '%s' "${text}"
 }
 
 # ---------------------------------------------------------------------------
@@ -143,36 +143,36 @@ scoped_git_auth_export
 scoped_git_auth_report
 
 if [ -z "${GH_TOKEN:-}" ]; then
-	# Not fatal: `codetracer-native-recorder` is the only private entry, so a
-	# tokenless run can still get some way in. It will however be cloning
-	# anonymously, which is the exact condition this file exists to remove, so
-	# it must not pass in silence.
-	echo "::warning::reprobuild-provision: no 'gh-token' was supplied. Every clone below will be anonymous and subject to GitHub's per-IP unauthenticated download limit -- the failure mode this step was rewritten to eliminate. Private siblings will fail outright."
+  # Not fatal: `codetracer-native-recorder` is the only private entry, so a
+  # tokenless run can still get some way in. It will however be cloning
+  # anonymously, which is the exact condition this file exists to remove, so
+  # it must not pass in silence.
+  echo "::warning::reprobuild-provision: no 'gh-token' was supplied. Every clone below will be anonymous and subject to GitHub's per-IP unauthenticated download limit -- the failure mode this step was rewritten to eliminate. Private siblings will fail outright."
 fi
 
 # ---------------------------------------------------------------------------
 # `clone <owner/name> <rev> [extra authenticated-clone.sh flags...]`
 # ---------------------------------------------------------------------------
 clone() {
-	local repo="$1" rev="$2"
-	shift 2
-	local name="${repo##*/}"
-	echo "reprobuild-provision: ${repo} @ ${rev} -> ${WS}/${name}"
-	bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
-		--repo "${repo}" --dest "${WS}/${name}" --rev "${rev}" \
-		--shallow "$@" || exit 1
+  local repo="$1" rev="$2"
+  shift 2
+  local name="${repo##*/}"
+  echo "reprobuild-provision: ${repo} @ ${rev} -> ${WS}/${name}"
+  bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
+    --repo "${repo}" --dest "${WS}/${name}" --rev "${rev}" \
+    --shallow "$@" || exit 1
 
-	local parent_ws
-	parent_ws="$(dirname "${WS}")"
-	if [ "${parent_ws}" != "${WS}" ] && [ -d "${parent_ws}" ] && [ ! -e "${parent_ws}/${name}" ]; then
-		if command -v powershell.exe >/dev/null 2>&1; then
-			powershell.exe -NoProfile -Command "New-Item -ItemType Junction -Path '$(cygpath -w "${parent_ws}/${name}")' -Target '$(cygpath -w "${WS}/${name}")' -Force" >/dev/null 2>&1 || true
-		elif command -v cmd.exe >/dev/null 2>&1; then
-			MSYS_NO_PATHCONV=1 cmd.exe /c "mklink /J \"$(cygpath -w "${parent_ws}/${name}")\" \"$(cygpath -w "${WS}/${name}")\"" < /dev/null >/dev/null 2>&1 || true
-		else
-			ln -s "${WS}/${name}" "${parent_ws}/${name}" 2>/dev/null || true
-		fi
-	fi
+  local parent_ws
+  parent_ws="$(dirname "${WS}")"
+  if [ "${parent_ws}" != "${WS}" ] && [ -d "${parent_ws}" ] && [ ! -e "${parent_ws}/${name}" ]; then
+    if command -v powershell.exe >/dev/null 2>&1; then
+      powershell.exe -NoProfile -Command "New-Item -ItemType Junction -Path '$(cygpath -w "${parent_ws}/${name}")' -Target '$(cygpath -w "${WS}/${name}")' -Force" >/dev/null 2>&1 || true
+    elif command -v cmd.exe >/dev/null 2>&1; then
+      MSYS_NO_PATHCONV=1 cmd.exe /c "mklink /J \"$(cygpath -w "${parent_ws}/${name}")\" \"$(cygpath -w "${WS}/${name}")\"" < /dev/null >/dev/null 2>&1 || true
+    else
+      ln -s "${WS}/${name}" "${parent_ws}/${name}" 2>/dev/null || true
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -187,181 +187,181 @@ clone() {
 # travels the same scoped credential as the clones, so a preflight that passes
 # is independent evidence that the credential is reaching github.com at all.
 preflight() { # <owner/name> <rev>
-	local repo="$1" rev="$2"
-	# A separate `local`: a variable assigned earlier in the SAME `local` is not
-	# yet visible to the ones after it (shellcheck SC2318), so folding this into
-	# the line above would build the URL from an empty ${repo} and preflight the
-	# wrong remote -- which, being a `ls-remote` of "https://github.com/.git",
-	# would fail every pin and look exactly like the defect this script fixes.
-	local url="https://github.com/${repo}.git"
-	local out rc=0
-	# `git -C "${NEUTRAL_DIR}"` -- RUN THIS FROM OUTSIDE THE CHECKOUT, and this
-	# is not a stylistic preference.
-	#
-	# `actions/checkout` defaults to `persist-credentials: true`, which writes
-	#
-	#     http.https://github.com/.extraheader = AUTHORIZATION: basic <token>
-	#
-	# into the LOCAL `.git/config` of the consumer's checkout. A composite step
-	# runs with its working directory set to that checkout, so a repo-aware git
-	# command there reads that catch-all header AND the owner-scoped header this
-	# script exports. `http.<url>.extraHeader` is MULTI-VALUED and both entries
-	# match a `https://github.com/metacraft-labs/...` URL, so git sends TWO
-	# `Authorization` headers and GitHub rejects the request:
-	#
-	#     remote: Duplicate header: "Authorization"
-	#     fatal: unable to access '...': The requested URL returned error: 400
-	#
-	# Observed on a real consumer run before this line existed. `git clone` is
-	# NOT affected -- it does not read a surrounding repository's local config,
-	# which is why `clone-siblings` and `authenticated-clone.sh` have never hit
-	# this -- but `ls-remote` is, so the preflight has to step outside.
-	out="$(git -C "${NEUTRAL_DIR}" ls-remote --exit-code "${url}" "refs/heads/${rev}" 2>&1)" || rc=$?
+  local repo="$1" rev="$2"
+  # A separate `local`: a variable assigned earlier in the SAME `local` is not
+  # yet visible to the ones after it (shellcheck SC2318), so folding this into
+  # the line above would build the URL from an empty ${repo} and preflight the
+  # wrong remote -- which, being a `ls-remote` of "https://github.com/.git",
+  # would fail every pin and look exactly like the defect this script fixes.
+  local url="https://github.com/${repo}.git"
+  local out rc=0
+  # `git -C "${NEUTRAL_DIR}"` -- RUN THIS FROM OUTSIDE THE CHECKOUT, and this
+  # is not a stylistic preference.
+  #
+  # `actions/checkout` defaults to `persist-credentials: true`, which writes
+  #
+  #     http.https://github.com/.extraheader = AUTHORIZATION: basic <token>
+  #
+  # into the LOCAL `.git/config` of the consumer's checkout. A composite step
+  # runs with its working directory set to that checkout, so a repo-aware git
+  # command there reads that catch-all header AND the owner-scoped header this
+  # script exports. `http.<url>.extraHeader` is MULTI-VALUED and both entries
+  # match a `https://github.com/metacraft-labs/...` URL, so git sends TWO
+  # `Authorization` headers and GitHub rejects the request:
+  #
+  #     remote: Duplicate header: "Authorization"
+  #     fatal: unable to access '...': The requested URL returned error: 400
+  #
+  # Observed on a real consumer run before this line existed. `git clone` is
+  # NOT affected -- it does not read a surrounding repository's local config,
+  # which is why `clone-siblings` and `authenticated-clone.sh` have never hit
+  # this -- but `ls-remote` is, so the preflight has to step outside.
+  out="$(git -C "${NEUTRAL_DIR}" ls-remote --exit-code "${url}" "refs/heads/${rev}" 2>&1)" || rc=$?
 
-	[ "${rc}" -eq 0 ] && return 0
+  [ "${rc}" -eq 0 ] && return 0
 
-	# A pinned SHA is legitimate and is not a branch ref.
-	case "${rev}" in
-	[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) return 0 ;;
-	esac
+  # A pinned SHA is legitimate and is not a branch ref.
+  case "${rev}" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) return 0 ;;
+  esac
 
-	# EXIT CODE 2 IS THE ONLY ONE THAT MEANS "NO SUCH BRANCH". `--exit-code`
-	# returns 2 when the query succeeded and matched nothing; anything else
-	# (128, typically) means the QUERY failed -- no credential, no network, a
-	# duplicated header -- and reporting that as a missing branch sends the
-	# reader to fix a pin that was never wrong. The first version of this
-	# function did exactly that, and announced "has no branch 'stable'" for a
-	# repository whose `stable` branch is perfectly present.
-	if [ "${rc}" -ne 2 ]; then
-		echo "::error::reprobuild-provision: could not ask ${repo} whether it has '${rev}' (git exit ${rc}). This is a FAILED QUERY, not a missing branch -- the pin may be fine. git said:"
-		printf '%s\n' "$(scrub_token "${out}")" >&2
-		return 1
-	fi
+  # EXIT CODE 2 IS THE ONLY ONE THAT MEANS "NO SUCH BRANCH". `--exit-code`
+  # returns 2 when the query succeeded and matched nothing; anything else
+  # (128, typically) means the QUERY failed -- no credential, no network, a
+  # duplicated header -- and reporting that as a missing branch sends the
+  # reader to fix a pin that was never wrong. The first version of this
+  # function did exactly that, and announced "has no branch 'stable'" for a
+  # repository whose `stable` branch is perfectly present.
+  if [ "${rc}" -ne 2 ]; then
+    echo "::error::reprobuild-provision: could not ask ${repo} whether it has '${rev}' (git exit ${rc}). This is a FAILED QUERY, not a missing branch -- the pin may be fine. git said:"
+    printf '%s\n' "$(scrub_token "${out}")" >&2
+    return 1
+  fi
 
-	echo "::error::reprobuild-provision: ${repo} has no branch '${rev}'. This is a wrong pin in reprobuild-provision/provision-reprobuild-siblings.sh, not a transient failure. Branches that do exist:"
-	git -C "${NEUTRAL_DIR}" ls-remote --heads "${url}" 2>&1 |
-		sed -e 's#^.*refs/heads/#    #' >&2
-	return 1
+  echo "::error::reprobuild-provision: ${repo} has no branch '${rev}'. This is a wrong pin in reprobuild-provision/provision-reprobuild-siblings.sh, not a transient failure. Branches that do exist:"
+  git -C "${NEUTRAL_DIR}" ls-remote --heads "${url}" 2>&1 |
+    sed -e 's#^.*refs/heads/#    #' >&2
+  return 1
 }
 
 PINS_OK=1
 check_pins() { # <owner/name:rev>...
-	local entry
-	for entry in "$@"; do
-		preflight "${entry%%:*}" "${entry##*:}" || PINS_OK=0
-	done
-	[ "${PINS_OK}" = 1 ] || {
-		echo "::error::reprobuild-provision: refusing to clone anything while a pin above is wrong."
-		exit 1
-	}
+  local entry
+  for entry in "$@"; do
+    preflight "${entry%%:*}" "${entry##*:}" || PINS_OK=0
+  done
+  [ "${PINS_OK}" = 1 ] || {
+    echo "::error::reprobuild-provision: refusing to clone anything while a pin above is wrong."
+    exit 1
+  }
 }
 
 if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
-	# -----------------------------------------------------------------------
-	# Linux/macOS: reprobuild's flake.nix references these as flake inputs.
-	# The default repo-scoped token cannot read a sibling private repo through
-	# the tarball URL, so they are cloned adjacent and the flake inputs are
-	# overridden to the local paths.
-	# -----------------------------------------------------------------------
-	check_pins \
-		"${SIBLING_OWNER}/codetracer-native-recorder:stable" \
-		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}"
+  # -----------------------------------------------------------------------
+  # Linux/macOS: reprobuild's flake.nix references these as flake inputs.
+  # The default repo-scoped token cannot read a sibling private repo through
+  # the tarball URL, so they are cloned adjacent and the flake inputs are
+  # overridden to the local paths.
+  # -----------------------------------------------------------------------
+  check_pins \
+    "${SIBLING_OWNER}/codetracer-native-recorder:stable" \
+    "${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}"
 
-	clone "${SIBLING_OWNER}/codetracer-native-recorder" stable
-	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF"
+  clone "${SIBLING_OWNER}/codetracer-native-recorder" stable
+  clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF"
 else
-	# -----------------------------------------------------------------------
-	# Windows: reprobuild's env.ps1 reads sibling repos for source-only Nim deps.
-	# The cold-start toolchain bootstrap (nim + gcc) is self-contained in
-	# reprobuild/windows/bootstrap-toolchain.ps1 and no longer requires
-	# the archived repo-workspaces framework.
-	# -----------------------------------------------------------------------
-	check_pins \
-		"${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
-		"${SIBLING_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
-		"${SIBLING_OWNER}/io-mon:${IO_MON_REF}" \
-		"${SIBLING_OWNER}/codetracer:dev" \
-		"${SIBLING_OWNER}/nim-shm-lease:dev" \
-		"${SIBLING_OWNER}/nim-shm-queue:dev" \
-		"${SIBLING_OWNER}/nim-shm-gset:dev" \
-		"${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
-		"${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
-		"${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
+  # -----------------------------------------------------------------------
+  # Windows: reprobuild's env.ps1 reads sibling repos for source-only Nim deps.
+  # The cold-start toolchain bootstrap (nim + gcc) is self-contained in
+  # reprobuild/windows/bootstrap-toolchain.ps1 and no longer requires
+  # the archived repo-workspaces framework.
+  # -----------------------------------------------------------------------
+  check_pins \
+    "${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
+    "${SIBLING_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
+    "${SIBLING_OWNER}/io-mon:${IO_MON_REF}" \
+    "${SIBLING_OWNER}/codetracer:dev" \
+    "${SIBLING_OWNER}/nim-shm-lease:dev" \
+    "${SIBLING_OWNER}/nim-shm-queue:dev" \
+    "${SIBLING_OWNER}/nim-shm-gset:dev" \
+    "${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
+    "${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
+    "${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
 
-	clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
-	clone "${SIBLING_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
-	hooks_sha=$(git -C "${WS}/nim-stackable-hooks" rev-parse HEAD) || exit 1
-	if [[ -n "$STACKABLE_HOOKS_PIN" && "$hooks_sha" != "$STACKABLE_HOOKS_PIN" ]]; then
-		echo "::error::Windows hook bootstrap checkout does not match stackable-hooks-pin" >&2
-		exit 1
-	fi
-	echo "reprobuild-provision: Windows hook source ${hooks_sha}"
-	clone "${SIBLING_OWNER}/io-mon" "$IO_MON_REF" --submodules
-	clone "${SIBLING_OWNER}/nim-shm-lease" dev
-	clone "${SIBLING_OWNER}/nim-shm-queue" dev
-	clone "${SIBLING_OWNER}/nim-shm-gset" dev
-	clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
-	clone "${SIBLING_OWNER}/reprobuild-ct-test-runner" dev
-	clone "${SIBLING_OWNER}/reprobuild-llm-agent-packages" dev
+  clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
+  clone "${SIBLING_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
+  hooks_sha=$(git -C "${WS}/nim-stackable-hooks" rev-parse HEAD) || exit 1
+  if [[ -n "$STACKABLE_HOOKS_PIN" && "$hooks_sha" != "$STACKABLE_HOOKS_PIN" ]]; then
+    echo "::error::Windows hook bootstrap checkout does not match stackable-hooks-pin" >&2
+    exit 1
+  fi
+  echo "reprobuild-provision: Windows hook source ${hooks_sha}"
+  clone "${SIBLING_OWNER}/io-mon" "$IO_MON_REF" --submodules
+  clone "${SIBLING_OWNER}/nim-shm-lease" dev
+  clone "${SIBLING_OWNER}/nim-shm-queue" dev
+  clone "${SIBLING_OWNER}/nim-shm-gset" dev
+  clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
+  clone "${SIBLING_OWNER}/reprobuild-ct-test-runner" dev
+  clone "${SIBLING_OWNER}/reprobuild-llm-agent-packages" dev
 
-	# `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
-	# tree carries far more submodules than the Windows env.ps1 build reads, and
-	# one of them (`libs/tree-sitter-nim`) is private; pulling all of them
-	# recursively would cost minutes per job for trees nothing here compiles.
-	# The five below are the source-only Nim deps env.ps1 actually resolves.
-	#
-	# The credential travels to these child `git` processes through the
-	# GIT_CONFIG_COUNT/KEY_n/VALUE_n pairs `scoped_git_auth_export` put in this
-	# process's environment -- which is inherited at every submodule depth, and
-	# is why the private submodule resolves without anything being written into
-	# any `.git/config`.
-	clone "${SIBLING_OWNER}/codetracer" dev
-	if ! git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
-		libs/nim-serialization \
-		libs/nim-faststreams \
-		libs/nim-json-serialization \
-		libs/nim-stew \
-		libs/nimcrypto; then
-		echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed. The scoped credential covers '${SIBLING_OWNER}' only; a submodule hosted under another owner cannot be authenticated by it."
-		exit 1
-	fi
+  # `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
+  # tree carries far more submodules than the Windows env.ps1 build reads, and
+  # one of them (`libs/tree-sitter-nim`) is private; pulling all of them
+  # recursively would cost minutes per job for trees nothing here compiles.
+  # The five below are the source-only Nim deps env.ps1 actually resolves.
+  #
+  # The credential travels to these child `git` processes through the
+  # GIT_CONFIG_COUNT/KEY_n/VALUE_n pairs `scoped_git_auth_export` put in this
+  # process's environment -- which is inherited at every submodule depth, and
+  # is why the private submodule resolves without anything being written into
+  # any `.git/config`.
+  clone "${SIBLING_OWNER}/codetracer" dev
+  if ! git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
+    libs/nim-serialization \
+    libs/nim-faststreams \
+    libs/nim-json-serialization \
+    libs/nim-stew \
+    libs/nimcrypto; then
+    echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed. The scoped credential covers '${SIBLING_OWNER}' only; a submodule hosted under another owner cannot be authenticated by it."
+    exit 1
+  fi
 
-	# -----------------------------------------------------------------------
-	# status-im/nim-bearssl -- THE ONE CLONE THIS FIX DOES NOT AUTHENTICATE.
-	# -----------------------------------------------------------------------
-	#
-	# Reprobuild's peer-cache apps import `status-im/nim-bearssl`. The Nix dev
-	# shell supplies it through BEARSSL_SRC; Windows env.ps1 resolves it as a
-	# sibling checkout.
-	#
-	# It is fetched anonymously and there is no honest way to change that from
-	# here. The CI credential is a GitHub App INSTALLATION token for the
-	# `metacraft-labs` org; `status-im` is a different org with no installation
-	# of that app, and the owner-scoped header deliberately does not cover it
-	# (`authenticated-clone-test.sh` asserts that a third-party owner receives
-	# no credential, and that assertion is correct and should stay).
-	#
-	# So this clone remains subject to the same per-IP anonymous limit as
-	# before. It is a PUBLIC third-party repository on the WINDOWS path only,
-	# and closing it needs a credential this org does not currently have -- see
-	# the action manifest for what that would take. It is called out loudly
-	# rather than quietly retried, because an unauthenticated fallback that
-	# usually works is how a hard failure becomes an intermittent one.
-	bearssl_ref="9a4eed052abbded2d94feaf3f5bbd95a30ec4671"
-	bearssl_dest="${WS}/nim-bearssl"
-	echo "reprobuild-provision: status-im/nim-bearssl @ ${bearssl_ref} -> ${bearssl_dest} (ANONYMOUS: the metacraft-labs App token cannot authenticate another org; this clone alone remains exposed to GitHub's per-IP unauthenticated limit)"
-	rm -rf "${bearssl_dest}"
-	if ! git clone --quiet --depth 1 --recurse-submodules \
-		"https://github.com/status-im/nim-bearssl.git" "${bearssl_dest}"; then
-		echo "::error::reprobuild-provision: cloning status-im/nim-bearssl failed. This is the one clone on this path that is unauthenticated by necessity (see the comment above it), so a GitHub 'temporarily limiting some unauthenticated downloads' error here is expected under fleet load and is NOT the same defect as the metacraft-labs clones above."
-		exit 1
-	fi
-	if ! git -C "${bearssl_dest}" fetch --quiet --depth 1 origin "${bearssl_ref}" ||
-		! git -C "${bearssl_dest}" checkout --quiet --detach FETCH_HEAD ||
-		! git -C "${bearssl_dest}" submodule update --init --recursive --depth 1; then
-		echo "::error::reprobuild-provision: pinning status-im/nim-bearssl to ${bearssl_ref} failed."
-		exit 1
-	fi
+  # -----------------------------------------------------------------------
+  # status-im/nim-bearssl -- THE ONE CLONE THIS FIX DOES NOT AUTHENTICATE.
+  # -----------------------------------------------------------------------
+  #
+  # Reprobuild's peer-cache apps import `status-im/nim-bearssl`. The Nix dev
+  # shell supplies it through BEARSSL_SRC; Windows env.ps1 resolves it as a
+  # sibling checkout.
+  #
+  # It is fetched anonymously and there is no honest way to change that from
+  # here. The CI credential is a GitHub App INSTALLATION token for the
+  # `metacraft-labs` org; `status-im` is a different org with no installation
+  # of that app, and the owner-scoped header deliberately does not cover it
+  # (`authenticated-clone-test.sh` asserts that a third-party owner receives
+  # no credential, and that assertion is correct and should stay).
+  #
+  # So this clone remains subject to the same per-IP anonymous limit as
+  # before. It is a PUBLIC third-party repository on the WINDOWS path only,
+  # and closing it needs a credential this org does not currently have -- see
+  # the action manifest for what that would take. It is called out loudly
+  # rather than quietly retried, because an unauthenticated fallback that
+  # usually works is how a hard failure becomes an intermittent one.
+  bearssl_ref="9a4eed052abbded2d94feaf3f5bbd95a30ec4671"
+  bearssl_dest="${WS}/nim-bearssl"
+  echo "reprobuild-provision: status-im/nim-bearssl @ ${bearssl_ref} -> ${bearssl_dest} (ANONYMOUS: the metacraft-labs App token cannot authenticate another org; this clone alone remains exposed to GitHub's per-IP unauthenticated limit)"
+  rm -rf "${bearssl_dest}"
+  if ! git clone --quiet --depth 1 --recurse-submodules \
+    "https://github.com/status-im/nim-bearssl.git" "${bearssl_dest}"; then
+    echo "::error::reprobuild-provision: cloning status-im/nim-bearssl failed. This is the one clone on this path that is unauthenticated by necessity (see the comment above it), so a GitHub 'temporarily limiting some unauthenticated downloads' error here is expected under fleet load and is NOT the same defect as the metacraft-labs clones above."
+    exit 1
+  fi
+  if ! git -C "${bearssl_dest}" fetch --quiet --depth 1 origin "${bearssl_ref}" ||
+    ! git -C "${bearssl_dest}" checkout --quiet --detach FETCH_HEAD ||
+    ! git -C "${bearssl_dest}" submodule update --init --recursive --depth 1; then
+    echo "::error::reprobuild-provision: pinning status-im/nim-bearssl to ${bearssl_ref} failed."
+    exit 1
+  fi
 fi
 
 echo "reprobuild-provision: all siblings provisioned under ${WS}."

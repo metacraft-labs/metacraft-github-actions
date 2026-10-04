@@ -77,11 +77,11 @@ note() { printf '%s\n' "$*" >>"$SUMMARY_FILE"; }
 out() { printf '%s\n' "$1" >>"$OUTPUT_FILE"; }
 
 die() { # <code> <message...>
-	local rc="$1"
-	shift
-	printf '%s: %s\n' "$ME" "$*" >&2
-	out "status=refused"
-	exit "$rc"
+  local rc="$1"
+  shift
+  printf '%s: %s\n' "$ME" "$*" >&2
+  out "status=refused"
+  exit "$rc"
 }
 
 [ -n "$WORKSPACE_ROOT" ] || die 2 "WORKSPACE_ROOT is empty. There is no workspace to generate a lock from, and this action will not derive one from anything else."
@@ -112,21 +112,21 @@ command -v "$REPRO" >/dev/null 2>&1 || die 3 "'$REPRO' is not on PATH. The lock 
 LOCK="$REPO_DIR/repro.lock"
 
 hash_of() { # <path> -> sha256 or the empty string when absent
-	[ -f "$1" ] || return 0
-	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum "$1" | cut -d' ' -f1
-	elif command -v shasum >/dev/null 2>&1; then
-		shasum -a 256 "$1" | cut -d' ' -f1
-	else
-		return 1
-	fi
+  [ -f "$1" ] || return 0
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    return 1
+  fi
 }
 
 BEFORE_HASH="$(hash_of "$LOCK")" || die 3 "no sha256 tool (sha256sum/shasum) is available, so this run cannot tell a lock it generated from one that was already there. That distinction is the whole safety property here."
 BEFORE_COPY=""
 if [ -f "$LOCK" ]; then
-	BEFORE_COPY="$(mktemp)"
-	cp "$LOCK" "$BEFORE_COPY"
+  BEFORE_COPY="$(mktemp)"
+  cp "$LOCK" "$BEFORE_COPY"
 fi
 cleanup() { [ -n "$BEFORE_COPY" ] && rm -f "$BEFORE_COPY"; }
 trap cleanup EXIT
@@ -140,23 +140,23 @@ GEN_RC=0
 (cd "$REPO_DIR" && "$REPRO" ws lock) >"$GEN_LOG" 2>&1 || GEN_RC=$?
 sed 's/^/  | /' "$GEN_LOG"
 if [ "$GEN_RC" -ne 0 ]; then
-	rm -f "$GEN_LOG"
-	die 4 "'$REPRO ws lock' exited $GEN_RC. Nothing was published. The workspace is what has to be fixed; this action has no second way to produce a lock."
+  rm -f "$GEN_LOG"
+  die 4 "'$REPRO ws lock' exited $GEN_RC. Nothing was published. The workspace is what has to be fixed; this action has no second way to produce a lock."
 fi
 rm -f "$GEN_LOG"
 
 AFTER_HASH="$(hash_of "$LOCK")"
 
 if [ ! -f "$LOCK" ]; then
-	die 5 "'$REPRO ws lock' reported success and $LOCK does not exist. Refusing to invent one."
+  die 5 "'$REPRO ws lock' reported success and $LOCK does not exist. Refusing to invent one."
 fi
 
 if [ "$AFTER_HASH" = "$BEFORE_HASH" ]; then
-	say "$ME: the lock is unchanged — the workspace composition already matches what $REPO_NAME records."
-	note "**refresh-workspace-lock**: \`$REPO_NAME\` — nothing to refresh. The generated lock is byte-identical to the committed one (sha256 \`$AFTER_HASH\`)."
-	out "status=unchanged"
-	out "changed=false"
-	exit 0
+  say "$ME: the lock is unchanged — the workspace composition already matches what $REPO_NAME records."
+  note "**refresh-workspace-lock**: \`$REPO_NAME\` — nothing to refresh. The generated lock is byte-identical to the committed one (sha256 \`$AFTER_HASH\`)."
+  out "status=unchanged"
+  out "changed=false"
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -177,23 +177,23 @@ fi
 # fabricated pin in an immutable record, which is the thing that must not happen.
 # ---------------------------------------------------------------------------
 lock_created_at() { # <lock> -> the [lock] created_at value, or empty
-	awk '
-		/^[[:space:]]*\[/ { in_lock = ($0 ~ /^[[:space:]]*\[lock\][[:space:]]*$/); next }
-		in_lock && /^[[:space:]]*created_at[[:space:]]*=/ {
-			line = $0
-			sub(/^[^=]*=[[:space:]]*/, "", line)
-			gsub(/^["'"'"']|["'"'"']$/, "", line)
-			print line
-			exit
-		}
-	' "$1"
+  awk '
+    /^[[:space:]]*\[/ { in_lock = ($0 ~ /^[[:space:]]*\[lock\][[:space:]]*$/); next }
+    in_lock && /^[[:space:]]*created_at[[:space:]]*=/ {
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
+      exit
+    }
+  ' "$1"
 }
 
 to_epoch() { # <iso-8601> -> epoch seconds, or nothing
-	local ts="$1" s=""
-	s=$(date -u -d "$ts" +%s 2>/dev/null) || s=""
-	[ -n "$s" ] || s=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null) || s=""
-	[ -n "$s" ] && printf '%s' "$s"
+  local ts="$1" s=""
+  s=$(date -u -d "$ts" +%s 2>/dev/null) || s=""
+  [ -n "$s" ] || s=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null) || s=""
+  [ -n "$s" ] && printf '%s' "$s"
 }
 
 CREATED_AT="$(lock_created_at "$LOCK")"
@@ -204,7 +204,7 @@ CREATED_EPOCH="$(to_epoch "$CREATED_AT")"
 
 # One minute of slack for a runner clock that is not exactly the lock writer's.
 if [ "$CREATED_EPOCH" -lt "$((NOW_EPOCH - 60))" ]; then
-	die 5 "the regenerated $LOCK says it was created at $CREATED_AT, which is BEFORE this run started. It was already in the tree; this run did not generate it. Refusing to publish a lock whose provenance is not this workspace."
+  die 5 "the regenerated $LOCK says it was created at $CREATED_AT, which is BEFORE this run started. It was already in the tree; this run did not generate it. Refusing to publish a lock whose provenance is not this workspace."
 fi
 
 # ---------------------------------------------------------------------------
@@ -212,27 +212,27 @@ fi
 # whole point of the pull request is that a human and a CI run get to see it.
 # ---------------------------------------------------------------------------
 pins_of() { # <lock> -> "<name> <revision>" per line
-	awk '
-		/^[[:space:]]*\[\[repo\]\][[:space:]]*$/ { if (name != "") print name, rev; name=""; rev=""; next }
-		/^[[:space:]]*\[/ { if (name != "") print name, rev; name=""; rev=""; next }
-		/^[[:space:]]*name[[:space:]]*=/  { v=$0; sub(/^[^=]*=[[:space:]]*/,"",v); gsub(/^["'"'"']|["'"'"']$/,"",v); name=v; next }
-		/^[[:space:]]*revision[[:space:]]*=/ { v=$0; sub(/^[^=]*=[[:space:]]*/,"",v); gsub(/^["'"'"']|["'"'"']$/,"",v); rev=v; next }
-		END { if (name != "") print name, rev }
-	' "$1" | sort
+  awk '
+    /^[[:space:]]*\[\[repo\]\][[:space:]]*$/ { if (name != "") print name, rev; name=""; rev=""; next }
+    /^[[:space:]]*\[/ { if (name != "") print name, rev; name=""; rev=""; next }
+    /^[[:space:]]*name[[:space:]]*=/  { v=$0; sub(/^[^=]*=[[:space:]]*/,"",v); gsub(/^["'"'"']|["'"'"']$/,"",v); name=v; next }
+    /^[[:space:]]*revision[[:space:]]*=/ { v=$0; sub(/^[^=]*=[[:space:]]*/,"",v); gsub(/^["'"'"']|["'"'"']$/,"",v); rev=v; next }
+    END { if (name != "") print name, rev }
+  ' "$1" | sort
 }
 
 MOVED=""
 if [ -n "$BEFORE_COPY" ]; then
-	OLD_PINS="$(pins_of "$BEFORE_COPY")"
-	NEW_PINS="$(pins_of "$LOCK")"
-	while IFS=' ' read -r n r; do
-		[ -n "$n" ] || continue
-		o="$(printf '%s\n' "$OLD_PINS" | awk -v k="$n" '$1==k {print $2; exit}')"
-		if [ "$o" != "$r" ]; then
-			MOVED="${MOVED}- \`${n}\`: ${o:-<not pinned>} -> ${r}
+  OLD_PINS="$(pins_of "$BEFORE_COPY")"
+  NEW_PINS="$(pins_of "$LOCK")"
+  while IFS=' ' read -r n r; do
+    [ -n "$n" ] || continue
+    o="$(printf '%s\n' "$OLD_PINS" | awk -v k="$n" '$1==k {print $2; exit}')"
+    if [ "$o" != "$r" ]; then
+      MOVED="${MOVED}- \`${n}\`: ${o:-<not pinned>} -> ${r}
 "
-		fi
-	done <<EOF
+    fi
+  done <<EOF
 $NEW_PINS
 EOF
 fi
@@ -248,33 +248,33 @@ out "branch=$BRANCH"
 out "created_at=$CREATED_AT"
 
 {
-	printf '%s\n' "### refresh-workspace-lock: \`$REPO_NAME\`"
-	printf '%s\n' ""
-	printf '%s\n' "A workspace was materialised and \`$REPRO ws lock\` regenerated \`repro.lock\` from it."
-	printf '%s\n' "The generated record says it was created at \`$CREATED_AT\`."
-	printf '%s\n' ""
-	printf '%s\n' "Pins that moved:"
-	printf '%s' "$MOVED"
-	printf '%s\n' ""
+  printf '%s\n' "### refresh-workspace-lock: \`$REPO_NAME\`"
+  printf '%s\n' ""
+  printf '%s\n' "A workspace was materialised and \`$REPRO ws lock\` regenerated \`repro.lock\` from it."
+  printf '%s\n' "The generated record says it was created at \`$CREATED_AT\`."
+  printf '%s\n' ""
+  printf '%s\n' "Pins that moved:"
+  printf '%s' "$MOVED"
+  printf '%s\n' ""
 } >>"$SUMMARY_FILE"
 
 if [ "$DRY_RUN" = "true" ]; then
-	# The tree is put back exactly as it was found. A dry run that left a
-	# modified lock behind would be a wet run with extra steps, and the next
-	# thing to read this checkout would find a lock nothing had reviewed.
-	if [ -n "$BEFORE_COPY" ]; then
-		cp "$BEFORE_COPY" "$LOCK"
-	else
-		rm -f "$LOCK"
-	fi
-	RESTORED_HASH="$(hash_of "$LOCK")"
-	if [ "$RESTORED_HASH" != "$BEFORE_HASH" ]; then
-		die 5 "dry run could not restore $LOCK to the bytes it found (sha256 $BEFORE_HASH -> ${RESTORED_HASH:-<absent>})."
-	fi
-	say "$ME: DRY RUN — no branch, no commit, no pull request. The lock was restored to the bytes this run found."
-	note "_Dry run: no pull request was opened, and the checkout was restored._"
-	out "status=would-refresh"
-	exit 0
+  # The tree is put back exactly as it was found. A dry run that left a
+  # modified lock behind would be a wet run with extra steps, and the next
+  # thing to read this checkout would find a lock nothing had reviewed.
+  if [ -n "$BEFORE_COPY" ]; then
+    cp "$BEFORE_COPY" "$LOCK"
+  else
+    rm -f "$LOCK"
+  fi
+  RESTORED_HASH="$(hash_of "$LOCK")"
+  if [ "$RESTORED_HASH" != "$BEFORE_HASH" ]; then
+    die 5 "dry run could not restore $LOCK to the bytes it found (sha256 $BEFORE_HASH -> ${RESTORED_HASH:-<absent>})."
+  fi
+  say "$ME: DRY RUN — no branch, no commit, no pull request. The lock was restored to the bytes this run found."
+  note "_Dry run: no pull request was opened, and the checkout was restored._"
+  out "status=would-refresh"
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -283,11 +283,11 @@ fi
 # ---------------------------------------------------------------------------
 say "$ME: opening a pull request on branch $BRANCH"
 (
-	cd "$REPO_DIR" || exit 1
-	git switch -c "$BRANCH" || exit 1
-	git add -- repro.lock || exit 1
-	git -c user.name="metacraft-ci" -c user.email="ci@metacraft-labs.com" \
-		commit -m "chore: refresh the workspace lock
+  cd "$REPO_DIR" || exit 1
+  git switch -c "$BRANCH" || exit 1
+  git add -- repro.lock || exit 1
+  git -c user.name="metacraft-ci" -c user.email="ci@metacraft-labs.com" \
+    commit -m "chore: refresh the workspace lock
 
 Regenerated by 'refresh-workspace-lock' from a materialised workspace;
 '$REPRO ws lock' wrote the record and this change carries it unmodified.
@@ -296,7 +296,7 @@ built it, which is why it arrives as a pull request and not as a push.
 
 Pins that moved:
 $MOVED" || exit 1
-	git push origin "HEAD:$BRANCH" || exit 1
+  git push origin "HEAD:$BRANCH" || exit 1
 ) || die 4 "could not prepare or push the refresh branch. Nothing was published."
 
 out "status=refreshed"

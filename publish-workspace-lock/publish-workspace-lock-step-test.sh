@@ -60,39 +60,39 @@ ACTION="$HERE/action.yml"
 RESOLVER="$ROOT/clone-siblings/resolve-sibling-rev.sh"
 
 [[ -f $ACTION ]] || {
-	echo "publish-workspace-lock-step-test: cannot find $ACTION" >&2
-	exit 2
+  echo "publish-workspace-lock-step-test: cannot find $ACTION" >&2
+  exit 2
 }
 [[ -f $RESOLVER ]] || {
-	echo "publish-workspace-lock-step-test: cannot find $RESOLVER" >&2
-	exit 2
+  echo "publish-workspace-lock-step-test: cannot find $RESOLVER" >&2
+  exit 2
 }
 
 PASS=0
 FAIL=0
 ok() {
-	PASS=$((PASS + 1))
-	echo "ok   $1"
+  PASS=$((PASS + 1))
+  echo "ok   $1"
 }
 bad() {
-	FAIL=$((FAIL + 1))
-	echo "FAIL $1"
-	[[ -n ${2:-} ]] && echo "     $2"
+  FAIL=$((FAIL + 1))
+  echo "FAIL $1"
+  [[ -n ${2:-} ]] && echo "     $2"
 }
 check() { # <desc> <actual> <expected>
-	if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
+  if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
 }
 contains() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) ok "$1" ;;
-	*) bad "$1" "did not contain [$3]" ;;
-	esac
+  case "$2" in
+  *"$3"*) ok "$1" ;;
+  *) bad "$1" "did not contain [$3]" ;;
+  esac
 }
 lacks() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
-	*) ok "$1" ;;
-	esac
+  case "$2" in
+  *"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
+  *) ok "$1" ;;
+  esac
 }
 
 TMPROOT="$(mktemp -d)"
@@ -109,18 +109,18 @@ trap 'rm -rf "$TMPROOT"' EXIT
 STEP="$HERE/publish-workspace-lock.sh"
 
 [[ -f $STEP ]] || {
-	echo "publish-workspace-lock-step-test: cannot find $STEP" >&2
-	exit 2
+  echo "publish-workspace-lock-step-test: cannot find $STEP" >&2
+  exit 2
 }
 
 WIRING='run: bash "${GITHUB_ACTION_PATH}/publish-workspace-lock.sh"'
 case "$(<"$ACTION")" in
 *"$WIRING"*) : ;;
 *)
-	echo "publish-workspace-lock-step-test: $ACTION no longer invokes the step script." >&2
-	echo "  expected a line containing -> $WIRING" >&2
-	exit 2
-	;;
+  echo "publish-workspace-lock-step-test: $ACTION no longer invokes the step script." >&2
+  echo "  expected a line containing -> $WIRING" >&2
+  exit 2
+  ;;
 esac
 
 # A `run: |` body that came back would be untested by this suite AND would be
@@ -128,15 +128,15 @@ esac
 # place.
 case "$(<"$ACTION")" in
 *$'\n      run: |'*)
-	echo "publish-workspace-lock-step-test: $ACTION has grown an inline run: block again;" >&2
-	echo "  the step body belongs in publish-workspace-lock.sh (see its header)." >&2
-	exit 2
-	;;
+  echo "publish-workspace-lock-step-test: $ACTION has grown an inline run: block again;" >&2
+  echo "  the step body belongs in publish-workspace-lock.sh (see its header)." >&2
+  exit 2
+  ;;
 esac
 
 bash -n "$STEP" || {
-	echo "publish-workspace-lock-step-test: the step script is not valid bash (see above)." >&2
-	exit 2
+  echo "publish-workspace-lock-step-test: the step script is not valid bash (see above)." >&2
+  exit 2
 }
 
 # The `${{ }}` guard. The script carries none -- nothing would expand one, and
@@ -144,12 +144,12 @@ bash -n "$STEP" || {
 # evaluates and this suite sets directly.
 case "$(<"$STEP")" in
 *'${{'*)
-	echo "publish-workspace-lock-step-test: the step script contains a \${{ }} expression, which nothing expands:" >&2
-	while IFS= read -r l; do
-		case "$l" in *'${{'*) echo "  $l" >&2 ;; esac
-	done <"$STEP"
-	exit 2
-	;;
+  echo "publish-workspace-lock-step-test: the step script contains a \${{ }} expression, which nothing expands:" >&2
+  while IFS= read -r l; do
+    case "$l" in *'${{'*) echo "  $l" >&2 ;; esac
+  done <"$STEP"
+  exit 2
+  ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -251,40 +251,40 @@ SIB_A="1111111111111111111111111111111111111111"
 SIB_B="2222222222222222222222222222222222222222"
 
 lock_body() { # <self-revision> [<project>]
-	printf 'schema = "reprobuild.workspace.lock.v1"\n\n'
-	printf '[lock]\nproject = "%s"\ncreated_at = "2026-08-24T21:44:02Z"\ncreated_by = "repro workspace lock"\n\n' "${2:-codetracer}"
-	printf '[[repo]]\nname = "nim-agents"\npath = "nim-agents"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "dev"\n\n' "$SIB_A"
-	printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "feature"\n\n' "$1"
-	printf '[[repo]]\nname = "infra"\npath = "infra"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "live"\n' "$SIB_B"
+  printf 'schema = "reprobuild.workspace.lock.v1"\n\n'
+  printf '[lock]\nproject = "%s"\ncreated_at = "2026-08-24T21:44:02Z"\ncreated_by = "repro workspace lock"\n\n' "${2:-codetracer}"
+  printf '[[repo]]\nname = "nim-agents"\npath = "nim-agents"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "dev"\n\n' "$SIB_A"
+  printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "feature"\n\n' "$1"
+  printf '[[repo]]\nname = "infra"\npath = "infra"\nremote = "metacraft-labs"\nrevision = "%s"\nbranch = "live"\n' "$SIB_B"
 }
 
 MAN_WORK="$TMPROOT/build/manifests"
 mk_manifests() { # [<extra-setup-fn>]
-	rm -rf "$MANIFESTS_BARE" "$MAN_WORK" "$RACE_MARKER"
-	git_q init --bare -b latest "$MANIFESTS_BARE"
-	mkdir -p "$MAN_WORK/locks/codetracer/codetracer"
-	git_q -C "$MAN_WORK" init -b latest .
-	lock_body "$HEAD_SHA" >"$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
-	[[ -n ${1:-} ]] && "$1"
-	git_q -C "$MAN_WORK" add -A
-	gitc -C "$MAN_WORK" commit --quiet --no-gpg-sign -m locks
-	git_q -C "$MAN_WORK" push "$MANIFESTS_BARE" latest
+  rm -rf "$MANIFESTS_BARE" "$MAN_WORK" "$RACE_MARKER"
+  git_q init --bare -b latest "$MANIFESTS_BARE"
+  mkdir -p "$MAN_WORK/locks/codetracer/codetracer"
+  git_q -C "$MAN_WORK" init -b latest .
+  lock_body "$HEAD_SHA" >"$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
+  [[ -n ${1:-} ]] && "$1"
+  git_q -C "$MAN_WORK" add -A
+  gitc -C "$MAN_WORK" commit --quiet --no-gpg-sign -m locks
+  git_q -C "$MAN_WORK" push "$MANIFESTS_BARE" latest
 }
 
 mk_private() { # <populate?>
-	rm -rf "$PRIVATE_BARE" "$TMPROOT/build/private"
-	git_q init --bare -b latest "$PRIVATE_BARE"
-	mkdir -p "$TMPROOT/build/private"
-	git_q -C "$TMPROOT/build/private" init -b latest .
-	if [[ ${1:-} == populate ]]; then
-		mkdir -p "$TMPROOT/build/private/locks/codetracer/codetracer"
-		lock_body "$HEAD_SHA" >"$TMPROOT/build/private/locks/codetracer/codetracer/$HEAD_SHA.toml"
-	else
-		printf 'placeholder\n' >"$TMPROOT/build/private/.keep"
-	fi
-	git_q -C "$TMPROOT/build/private" add -A
-	gitc -C "$TMPROOT/build/private" commit --quiet --no-gpg-sign -m locks
-	git_q -C "$TMPROOT/build/private" push "$PRIVATE_BARE" latest
+  rm -rf "$PRIVATE_BARE" "$TMPROOT/build/private"
+  git_q init --bare -b latest "$PRIVATE_BARE"
+  mkdir -p "$TMPROOT/build/private"
+  git_q -C "$TMPROOT/build/private" init -b latest .
+  if [[ ${1:-} == populate ]]; then
+    mkdir -p "$TMPROOT/build/private/locks/codetracer/codetracer"
+    lock_body "$HEAD_SHA" >"$TMPROOT/build/private/locks/codetracer/codetracer/$HEAD_SHA.toml"
+  else
+    printf 'placeholder\n' >"$TMPROOT/build/private/.keep"
+  fi
+  git_q -C "$TMPROOT/build/private" add -A
+  gitc -C "$TMPROOT/build/private" commit --quiet --no-gpg-sign -m locks
+  git_q -C "$TMPROOT/build/private" push "$PRIVATE_BARE" latest
 }
 
 # ---------------------------------------------------------------------------
@@ -293,37 +293,37 @@ mk_private() { # <populate?>
 OUT=""
 RC=0
 run_step() { # [VAR=VALUE ...] overrides via the environment below
-	rm -rf "$TMPROOT/runner-temp"
-	mkdir -p "$TMPROOT/runner-temp"
-	OUT="$(
-		PATH="$TMPROOT/bin:$PATH" \
-			GH_TOKEN="${GH_TOKEN_IN-ci-token}" \
-			INPUT_REPO="${INPUT_REPO:-}" \
-			DEFAULT_REPO="metacraft-labs/codetracer" \
-			SOURCE_SHA="${SOURCE_SHA:-$HEAD_SHA}" \
-			TARGET_SHA="${TARGET_SHA:-$MERGE_SHA}" \
-			BASE_REF="${BASE_REF:-dev}" \
-			PROVENANCE="${PROVENANCE:-pull request #652}" \
-			MANIFESTS_REPO="metacraft-labs/metacraft-manifests" \
-			INPUT_MANIFESTS_REF="latest" \
-			PRIVATE_MANIFESTS_REPO="${PRIVATE_REPO_IN:-}" \
-			INPUT_PRIVATE_MANIFESTS_REF="" \
-			JOB_TOKEN_OWNERS="${JOB_OWNERS_IN:-metacraft-labs}" \
-			COMMITTER_NAME="metacraft-ci" \
-			COMMITTER_EMAIL="ci@metacraft-labs.com" \
-			GIT_AUTH_DIR="$ROOT/git-auth" \
-			ANCHOR="$HERE/anchor-workspace-lock.sh" \
-			RUNNER_TEMP="$TMPROOT/runner-temp" \
-			RACE_TRIGGER="${RACE_TRIGGER:-}" \
-			LOCK_STORE="${LOCK_STORE_IN-record-store}" \
-			bash "$STEP" 2>&1
-	)"
-	RC=$?
-	if [[ -n ${SHOW_STEP_OUTPUT:-} ]]; then
-		echo "--- step rc=$RC ---"
-		echo "$OUT"
-		echo "--- end ---"
-	fi
+  rm -rf "$TMPROOT/runner-temp"
+  mkdir -p "$TMPROOT/runner-temp"
+  OUT="$(
+    PATH="$TMPROOT/bin:$PATH" \
+      GH_TOKEN="${GH_TOKEN_IN-ci-token}" \
+      INPUT_REPO="${INPUT_REPO:-}" \
+      DEFAULT_REPO="metacraft-labs/codetracer" \
+      SOURCE_SHA="${SOURCE_SHA:-$HEAD_SHA}" \
+      TARGET_SHA="${TARGET_SHA:-$MERGE_SHA}" \
+      BASE_REF="${BASE_REF:-dev}" \
+      PROVENANCE="${PROVENANCE:-pull request #652}" \
+      MANIFESTS_REPO="metacraft-labs/metacraft-manifests" \
+      INPUT_MANIFESTS_REF="latest" \
+      PRIVATE_MANIFESTS_REPO="${PRIVATE_REPO_IN:-}" \
+      INPUT_PRIVATE_MANIFESTS_REF="" \
+      JOB_TOKEN_OWNERS="${JOB_OWNERS_IN:-metacraft-labs}" \
+      COMMITTER_NAME="metacraft-ci" \
+      COMMITTER_EMAIL="ci@metacraft-labs.com" \
+      GIT_AUTH_DIR="$ROOT/git-auth" \
+      ANCHOR="$HERE/anchor-workspace-lock.sh" \
+      RUNNER_TEMP="$TMPROOT/runner-temp" \
+      RACE_TRIGGER="${RACE_TRIGGER:-}" \
+      LOCK_STORE="${LOCK_STORE_IN-record-store}" \
+      bash "$STEP" 2>&1
+  )"
+  RC=$?
+  if [[ -n ${SHOW_STEP_OUTPUT:-} ]]; then
+    echo "--- step rc=$RC ---"
+    echo "$OUT"
+    echo "--- end ---"
+  fi
 }
 
 # A fresh read of what the manifests bare actually holds now. Assertions are
@@ -331,8 +331,8 @@ run_step() { # [VAR=VALUE ...] overrides via the environment below
 # writes a perfect record and never pushes it looks identical from the inside.
 CHECKOUT="$TMPROOT/verify"
 refresh_checkout() { # [<bare>]
-	rm -rf "$CHECKOUT"
-	git_q clone --branch latest "${1:-$MANIFESTS_BARE}" "$CHECKOUT"
+  rm -rf "$CHECKOUT"
+  git_q clone --branch latest "${1:-$MANIFESTS_BARE}" "$CHECKOUT"
 }
 remote_tip() { "$REAL_GIT" -C "$MANIFESTS_BARE" rev-parse latest; }
 remote_commits() { "$REAL_GIT" -C "$MANIFESTS_BARE" rev-list --count latest; }
@@ -343,9 +343,9 @@ remote_commits() { "$REAL_GIT" -C "$MANIFESTS_BARE" rev-list --count latest; }
 RESOLVE_RC=0
 RESOLVE_OUT=""
 resolve() { # <sibling> <sha>
-	RESOLVE_RC=0
-	RESOLVE_OUT="$(bash "$RESOLVER" --repo codetracer --sibling "$1" \
-		--manifest-dir "$CHECKOUT" --sha "$2" --no-walk 2>&1)" || RESOLVE_RC=$?
+  RESOLVE_RC=0
+  RESOLVE_OUT="$(bash "$RESOLVER" --repo codetracer --sibling "$1" \
+    --manifest-dir "$CHECKOUT" --sha "$2" --no-walk 2>&1)" || RESOLVE_RC=$?
 }
 
 # ===========================================================================
@@ -378,9 +378,9 @@ contains "publish: and says what it published, where" "$OUT" "Published locks/co
 
 refresh_checkout
 check "publish: the record is on the SERVER, not merely in the step's checkout" \
-	"$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
+  "$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
 check "publish: exactly one commit was added to the manifests branch" \
-	"$(($(remote_commits) - BEFORE_COMMITS))" "1"
+  "$(($(remote_commits) - BEFORE_COMMITS))" "1"
 
 resolve nim-agents "$MERGE_SHA"
 GOT="$RESOLVE_OUT"
@@ -393,19 +393,19 @@ check "publish: ...for every sibling in the record, not just the first" "$GOT" "
 # The recorded sibling set must be the PR HEAD's, verbatim. The one line that
 # may differ is the record's own coordinate.
 DIFF="$(diff "$CHECKOUT/locks/codetracer/codetracer/$HEAD_SHA.toml" \
-	"$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml")"
+  "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml")"
 check "publish: the published record differs from the PR head's in exactly one line" \
-	"$(printf '%s\n' "$DIFF" | grep -c '^[<>]')" "2"
+  "$(printf '%s\n' "$DIFF" | grep -c '^[<>]')" "2"
 contains "publish: and that line is the repo's own revision, now the mainline commit" \
-	"$DIFF" "> revision = \"$MERGE_SHA\""
+  "$DIFF" "> revision = \"$MERGE_SHA\""
 
 LOG="$("$REAL_GIT" -C "$CHECKOUT" log -1 --format='%s%n%b')"
 contains "publish: the commit message names the record count and the commit locked" \
-	"$LOG" "Publish 1 workspace lock entry for codetracer@$MERGE_SHA"
+  "$LOG" "Publish 1 workspace lock entry for codetracer@$MERGE_SHA"
 contains "publish: provenance lives in the message, where it is not a schema change" \
-	"$LOG" "Landed by pull request #652."
+  "$LOG" "Landed by pull request #652."
 contains "publish: ...along with the record it was re-anchored from" \
-	"$LOG" "Re-anchored from the lock published for codetracer@$HEAD_SHA."
+  "$LOG" "Re-anchored from the lock published for codetracer@$HEAD_SHA."
 
 # ===========================================================================
 # 2. IDEMPOTENCY. A re-run — a re-dispatched workflow, a retried job — must be a
@@ -463,12 +463,12 @@ lacks "no-cmp: ...because it does not consult cmp at all" "$OUT" "cmp: command n
 #    action, which is the only thing in CI that can write to the store.
 # ===========================================================================
 plant_conflicting() {
-	mkdir -p "$MAN_WORK/locks/codetracer/codetracer"
-	{
-		printf 'schema = "reprobuild.workspace.lock.v1"\n\n[lock]\nproject = "codetracer"\ncreated_at = "x"\n\n'
-		printf '[[repo]]\nname = "nim-agents"\npath = "nim-agents"\nremote = "m"\nrevision = "3333333333333333333333333333333333333333"\n\n'
-		printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nremote = "m"\nrevision = "%s"\n' "$MERGE_SHA"
-	} >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"
+  mkdir -p "$MAN_WORK/locks/codetracer/codetracer"
+  {
+    printf 'schema = "reprobuild.workspace.lock.v1"\n\n[lock]\nproject = "codetracer"\ncreated_at = "x"\n\n'
+    printf '[[repo]]\nname = "nim-agents"\npath = "nim-agents"\nremote = "m"\nrevision = "3333333333333333333333333333333333333333"\n\n'
+    printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nremote = "m"\nrevision = "%s"\n' "$MERGE_SHA"
+  } >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"
 }
 mk_manifests plant_conflicting
 BEFORE_TIP="$(remote_tip)"
@@ -478,7 +478,7 @@ contains "immutable: ...named as immutability, not as a merge conflict" "$OUT" "
 check "immutable: ...and the manifests branch is untouched" "$(remote_tip)" "$BEFORE_TIP"
 refresh_checkout
 check "immutable: ...and the existing record still holds its original bytes" \
-	"$(grep -c '3333333333333333333333333333333333333333' "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml")" "1"
+  "$(grep -c '3333333333333333333333333333333333333333' "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml")" "1"
 
 # ===========================================================================
 # 4. NO SOURCE, NO INVENTION. The one thing that must never happen here is a
@@ -552,9 +552,9 @@ check "shape: none of the refusals above touched the manifests branch" "$(remote
 #    symptom.
 # ===========================================================================
 plant_participation() {
-	rm -f "$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
-	printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n' "$HEAD_SHA" \
-		>"$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
+  rm -f "$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
+  printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n' "$HEAD_SHA" \
+    >"$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
 }
 mk_manifests plant_participation
 BEFORE_TIP="$(remote_tip)"
@@ -573,11 +573,11 @@ check "race: the step succeeds after losing a push race" "$RC" "0"
 contains "race: ...and says it re-applied rather than reporting success blindly" "$OUT" "Another publisher moved"
 refresh_checkout
 check "race: our record landed" \
-	"$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
+  "$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
 check "race: the other publisher's record survived — no force, no clobber" \
-	"$(test -f "$CHECKOUT/locks/codetracer/codetracer/9999999999999999999999999999999999999999.toml" && echo yes || echo no)" "yes"
+  "$(test -f "$CHECKOUT/locks/codetracer/codetracer/9999999999999999999999999999999999999999.toml" && echo yes || echo no)" "yes"
 check "race: both publishers' commits are on the branch" \
-	"$(($(remote_commits) - BEFORE_COMMITS))" "2"
+  "$(($(remote_commits) - BEFORE_COMMITS))" "2"
 resolve nim-agents "$MERGE_SHA"
 GOT="$RESOLVE_OUT"
 check "race: and the mainline commit resolves afterwards" "$RESOLVE_RC" "0"
@@ -589,14 +589,14 @@ check "race: and the mainline commit resolves afterwards" "$RESOLVE_RC" "0"
 #    different precedence besides.
 # ===========================================================================
 mk_manifests_empty() {
-	rm -rf "$MANIFESTS_BARE" "$MAN_WORK" "$RACE_MARKER"
-	git_q init --bare -b latest "$MANIFESTS_BARE"
-	mkdir -p "$MAN_WORK/locks/codetracer"
-	git_q -C "$MAN_WORK" init -b latest .
-	printf 'placeholder\n' >"$MAN_WORK/locks/codetracer/.keep"
-	git_q -C "$MAN_WORK" add -A
-	gitc -C "$MAN_WORK" commit --quiet --no-gpg-sign -m locks
-	git_q -C "$MAN_WORK" push "$MANIFESTS_BARE" latest
+  rm -rf "$MANIFESTS_BARE" "$MAN_WORK" "$RACE_MARKER"
+  git_q init --bare -b latest "$MANIFESTS_BARE"
+  mkdir -p "$MAN_WORK/locks/codetracer"
+  git_q -C "$MAN_WORK" init -b latest .
+  printf 'placeholder\n' >"$MAN_WORK/locks/codetracer/.keep"
+  git_q -C "$MAN_WORK" add -A
+  gitc -C "$MAN_WORK" commit --quiet --no-gpg-sign -m locks
+  git_q -C "$MAN_WORK" push "$MANIFESTS_BARE" latest
 }
 mk_manifests_empty
 mk_private populate
@@ -617,7 +617,7 @@ contains "layers: ...and published to the private layer" "$OUT" "to metacraft-pr
 check "layers: the public layer is left alone — no demotion" "$(remote_tip)" "$PUBLIC_TIP"
 refresh_checkout "$PRIVATE_BARE"
 check "layers: the record is on the private server" \
-	"$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
+  "$(test -f "$CHECKOUT/locks/codetracer/codetracer/$MERGE_SHA.toml" && echo yes || echo no)" "yes"
 unset PRIVATE_REPO_IN JOB_OWNERS_IN
 
 # ===========================================================================
@@ -628,8 +628,8 @@ unset PRIVATE_REPO_IN JOB_OWNERS_IN
 #     tie-break lands on.
 # ===========================================================================
 plant_second_project() {
-	mkdir -p "$MAN_WORK/locks/dev/codetracer"
-	lock_body "$HEAD_SHA" dev >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.toml"
+  mkdir -p "$MAN_WORK/locks/dev/codetracer"
+  lock_body "$HEAD_SHA" dev >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.toml"
 }
 mk_manifests plant_second_project
 run_step
@@ -659,7 +659,7 @@ contains "projects: ...as one commit naming both" "$OUT" "2 record(s) published"
 # ===========================================================================
 git_q -C "$SELF_WORK" checkout dev
 printf 'schema = "reprobuild.workspace.lock.v1"\nrevision = "%s"\n' "$SIB_A" \
-	>"$SELF_WORK/repro.lock"
+  >"$SELF_WORK/repro.lock"
 git_q -C "$SELF_WORK" add repro.lock
 gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "declare the composition"
 LOCKED_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
@@ -670,7 +670,7 @@ gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "a commit that moves no sib
 QUIET_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
 
 printf 'schema = "reprobuild.workspace.lock.v1"\nrevision = "%s"\n' "$SIB_B" \
-	>"$SELF_WORK/repro.lock"
+  >"$SELF_WORK/repro.lock"
 git_q -C "$SELF_WORK" add repro.lock
 gitc -C "$SELF_WORK" commit --quiet --no-gpg-sign -m "bump a sibling"
 BUMP_SHA="$("$REAL_GIT" -C "$SELF_WORK" rev-parse HEAD)"
@@ -686,7 +686,7 @@ mk_manifests
 SOURCE_SHA="$HEAD_SHA" TARGET_SHA="$LOCKED_SHA" run_step
 check "carry: a backfill whose SHAs have no ancestry still publishes" "$RC" "0"
 contains "carry: ...and says the span was not evaluated rather than guessing" \
-	"$OUT" "Carry span not evaluated"
+  "$OUT" "Carry span not evaluated"
 unset SOURCE_SHA TARGET_SHA
 
 # A real forward carry across a commit that moved no sibling. This is the case
@@ -694,9 +694,9 @@ unset SOURCE_SHA TARGET_SHA
 SOURCE_SHA="$LOCKED_SHA" TARGET_SHA="$QUIET_SHA" run_step
 check "carry: a commit that moved no sibling is carried" "$RC" "0"
 contains "carry: ...and the unchanged declaration is stated, not assumed" \
-	"$OUT" "Carry checked: repro.lock is unchanged"
+  "$OUT" "Carry checked: repro.lock is unchanged"
 contains "carry: ...and the record is published under the new commit" \
-	"$OUT" "Published locks/codetracer/codetracer/$QUIET_SHA.toml"
+  "$OUT" "Published locks/codetracer/codetracer/$QUIET_SHA.toml"
 unset SOURCE_SHA TARGET_SHA
 
 # The forward carry across a commit that DID move a sibling. `$QUIET_SHA` is
@@ -706,20 +706,20 @@ unset SOURCE_SHA TARGET_SHA
 BEFORE_TIP="$(remote_tip)"
 SOURCE_SHA="$QUIET_SHA" TARGET_SHA="$BUMP_SHA" run_step
 if [[ $RC -ne 0 ]]; then ok "carry: a commit that bumped a sibling is refused"; else
-	bad "carry: a commit that bumped a sibling is refused" "step exited 0"
+  bad "carry: a commit that bumped a sibling is refused" "step exited 0"
 fi
 contains "carry: ...naming the declaration that moved" "$OUT" "repro.lock differs between"
 contains "carry: ...and both commits it moved between" "$OUT" "$QUIET_SHA and $BUMP_SHA"
 contains "carry: ...and saying the set would contradict the commit" \
-	"$OUT" "contradicts the commit it names"
+  "$OUT" "contradicts the commit it names"
 contains "carry: ...and naming a remedy that OBSERVES rather than carries" \
-	"$OUT" "refresh-workspace-lock"
+  "$OUT" "refresh-workspace-lock"
 check "carry: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
 refresh_checkout
 if [[ -e "$CHECKOUT/locks/codetracer/codetracer/$BUMP_SHA.toml" ]]; then
-	bad "carry: ...and no record filed under the bumped commit" "a record was published"
+  bad "carry: ...and no record filed under the bumped commit" "a record was published"
 else
-	ok "carry: ...and no record filed under the bumped commit"
+  ok "carry: ...and no record filed under the bumped commit"
 fi
 unset SOURCE_SHA TARGET_SHA
 
@@ -751,21 +751,21 @@ unset SOURCE_SHA TARGET_SHA
 # ===========================================================================
 SIB_OBS="4444444444444444444444444444444444444444"
 xml_body() { # <self-revision>
-	printf '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
-	printf '  <remote name="metacraft-labs" fetch="https://github.com/metacraft-labs"/>\n'
-	printf '  <project name="nim-agents" path="nim-agents" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$SIB_A"
-	printf '  <project name="codetracer" path="codetracer" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$1"
-	printf '</manifest>\n'
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
+  printf '  <remote name="metacraft-labs" fetch="https://github.com/metacraft-labs"/>\n'
+  printf '  <project name="nim-agents" path="nim-agents" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$SIB_A"
+  printf '  <project name="codetracer" path="codetracer" remote="metacraft-labs" revision="%s" upstream="dev" dest-branch="dev"/>\n' "$1"
+  printf '</manifest>\n'
 }
 observed_body() { # the pre-push gate's record for the MERGE commit
-	lock_body "$MERGE_SHA" | sed "s/$SIB_A/$SIB_OBS/"
+  lock_body "$MERGE_SHA" | sed "s/$SIB_A/$SIB_OBS/"
 }
 # Source: legacy XML only (the python/ruby shape). Target: an observed TOML.
 plant_legacy_source_and_observed_target() {
-	rm -f "$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
-	mkdir -p "$MAN_WORK/locks/dev/codetracer"
-	xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
-	observed_body >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"
+  rm -f "$MAN_WORK/locks/codetracer/codetracer/$HEAD_SHA.toml"
+  mkdir -p "$MAN_WORK/locks/dev/codetracer"
+  xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
+  observed_body >"$MAN_WORK/locks/codetracer/codetracer/$MERGE_SHA.toml"
 }
 
 # The resolver's preferred project defaults to the repo's own NAME. Here the
@@ -774,10 +774,10 @@ plant_legacy_source_and_observed_target() {
 # names are no project; `--prefer-project` set to such a name reproduces
 # exactly what `clone-siblings` (which passes none) does for them.
 resolve_as_recorder() { # <sibling> <sha>
-	RESOLVE_RC=0
-	RESOLVE_OUT="$(bash "$RESOLVER" --repo codetracer --sibling "$1" \
-		--manifest-dir "$CHECKOUT" --sha "$2" --no-walk \
-		--prefer-project codetracer-python-recorder 2>&1)" || RESOLVE_RC=$?
+  RESOLVE_RC=0
+  RESOLVE_OUT="$(bash "$RESOLVER" --repo codetracer --sibling "$1" \
+    --manifest-dir "$CHECKOUT" --sha "$2" --no-walk \
+    --prefer-project codetracer-python-recorder 2>&1)" || RESOLVE_RC=$?
 }
 
 # (a) with an .xml and an observed .toml for one commit, the resolver answers
@@ -788,7 +788,7 @@ mkdir -p "$CHECKOUT/locks/dev/codetracer"
 xml_body "$MERGE_SHA" >"$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml"
 resolve_as_recorder nim-agents "$MERGE_SHA"
 check "observed: a legacy .xml beside an observed .toml no longer shadows it" \
-	"$RESOLVE_OUT" "$SIB_OBS"
+  "$RESOLVE_OUT" "$SIB_OBS"
 
 # (b) an XML-only source is no source at all.
 mk_manifests plant_legacy_source_and_observed_target
@@ -797,39 +797,39 @@ run_step
 check "xml: a source recorded only by a legacy .xml fails like an unlocked one" "$RC" "1"
 contains "xml: ...with the no-source diagnostic" "$OUT" "will not invent one"
 contains "xml: ...and says the .xml was seen and not carried" "$OUT" \
-	"Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
+  "Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
 check "xml: ...with the manifests branch left where it was" "$(remote_tip)" "$BEFORE_TIP"
 refresh_checkout
 check "xml: ...and no legacy record filed under the target" \
-	"$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
+  "$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
 
 # (b2) a source with BOTH an .xml and a .toml: only the .toml is carried.
 plant_legacy_beside_source() {
-	mkdir -p "$MAN_WORK/locks/dev/codetracer"
-	xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
+  mkdir -p "$MAN_WORK/locks/dev/codetracer"
+  xml_body "$HEAD_SHA" >"$MAN_WORK/locks/dev/codetracer/$HEAD_SHA.xml"
 }
 mk_manifests plant_legacy_beside_source
 run_step
 check "xml: a source with an .xml beside its .toml is carried" "$RC" "0"
 contains "xml: ...the .toml is published" "$OUT" \
-	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+  "Published locks/codetracer/codetracer/$MERGE_SHA.toml"
 contains "xml: ...the .xml is reported as not carried" "$OUT" \
-	"Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
+  "Not carrying locks/dev/codetracer/$HEAD_SHA.xml"
 refresh_checkout
 check "xml: ...and no .xml is filed under the target" \
-	"$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
+  "$(test -e "$CHECKOUT/locks/dev/codetracer/$MERGE_SHA.xml" && echo yes || echo no)" "no"
 
 # (b3) a target whose only record is an .xml is NOT recorded: the carry adds
 #      the .toml rather than deferring to the .xml.
 plant_legacy_target() {
-	mkdir -p "$MAN_WORK/locks/dev/codetracer"
-	xml_body "$MERGE_SHA" >"$MAN_WORK/locks/dev/codetracer/$MERGE_SHA.xml"
+  mkdir -p "$MAN_WORK/locks/dev/codetracer"
+  xml_body "$MERGE_SHA" >"$MAN_WORK/locks/dev/codetracer/$MERGE_SHA.xml"
 }
 mk_manifests plant_legacy_target
 run_step
 check "xml: a target recorded only by an .xml is still carried onto" "$RC" "0"
 contains "xml: ...and the lock is published" "$OUT" \
-	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+  "Published locks/codetracer/codetracer/$MERGE_SHA.toml"
 refresh_checkout
 resolve_as_recorder nim-agents "$MERGE_SHA"
 check "xml: ...and the target resolves from the carried .toml" "$RESOLVE_OUT" "$SIB_A"
@@ -837,24 +837,24 @@ check "xml: ...and the target resolves from the carried .toml" "$RESOLVE_OUT" "$
 # (c) a participation record is not a lock: the commit is still unlocked, and
 #     the carry must still reach it.
 plant_participation_target() {
-	mkdir -p "$MAN_WORK/locks/team/codetracer"
-	printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n' "$MERGE_SHA" \
-		>"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
+  mkdir -p "$MAN_WORK/locks/team/codetracer"
+  printf '[[repo]]\nname = "codetracer"\npath = "codetracer"\nrevision = "%s"\n' "$MERGE_SHA" \
+    >"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
 }
 mk_manifests plant_participation_target
 run_step
 check "observed: a target recorded only by a participation record is still carried" "$RC" "0"
 contains "observed: ...and the lock is published" "$OUT" \
-	"Published locks/codetracer/codetracer/$MERGE_SHA.toml"
+  "Published locks/codetracer/codetracer/$MERGE_SHA.toml"
 
 # (c2) the participation test is the resolver's SEMANTIC one, not "has no
 #      schema": a schema-less document that names ANOTHER repo is a lock that
 #      failed to declare itself (the resolver refuses it loudly, exit 5), so the
 #      commit counts as recorded and nothing is carried beside it.
 plant_undeclared_lock_target() {
-	mkdir -p "$MAN_WORK/locks/team/codetracer"
-	printf '[[repo]]\nname = "codetracer"\nrevision = "%s"\n\n  [[repo]]\n  name = "nim-agents"\n  revision = "%s"\n' \
-		"$MERGE_SHA" "$SIB_OBS" >"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
+  mkdir -p "$MAN_WORK/locks/team/codetracer"
+  printf '[[repo]]\nname = "codetracer"\nrevision = "%s"\n\n  [[repo]]\n  name = "nim-agents"\n  revision = "%s"\n' \
+    "$MERGE_SHA" "$SIB_OBS" >"$MAN_WORK/locks/team/codetracer/$MERGE_SHA.toml"
 }
 mk_manifests plant_undeclared_lock_target
 BEFORE_TIP="$(remote_tip)"
@@ -895,7 +895,7 @@ contains "...naming the accepted values" "$OUT" "record-store"
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then
-	echo "publish-workspace-lock step: CONTRACTS BROKEN." >&2
-	exit 1
+  echo "publish-workspace-lock step: CONTRACTS BROKEN." >&2
+  exit 1
 fi
 echo "publish-workspace-lock step: all contracts hold."

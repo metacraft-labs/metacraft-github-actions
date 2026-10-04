@@ -52,18 +52,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 if [ "$#" -gt 0 ]; then
-	FILES=("$@")
+  FILES=("$@")
 else
-	FILES=()
-	while IFS= read -r f; do
-		FILES+=("$f")
-	done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
+  FILES=()
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then
-	echo "assert-no-expression-in-manifest-prose: no action.yml found under $ROOT." >&2
-	echo "  This guard has nothing to check, which is not the same as a pass." >&2
-	exit 2
+  echo "assert-no-expression-in-manifest-prose: no action.yml found under $ROOT." >&2
+  echo "  This guard has nothing to check, which is not the same as a pass." >&2
+  exit 2
 fi
 
 rc=0
@@ -77,71 +77,71 @@ checked=0
 # treat deeper-indented lines as part of the value until a line at or above the
 # key's own indentation starts something else.
 scan() { # <file>
-	local file="$1"
-	local line stripped indent top="" in_desc=0 desc_indent=0 lineno=0
-	while IFS= read -r line || [ -n "$line" ]; do
-		lineno=$((lineno + 1))
-		stripped="${line#"${line%%[![:space:]]*}"}"
-		[ -z "$stripped" ] && continue
-		indent=$((${#line} - ${#stripped}))
+  local file="$1"
+  local line stripped indent top="" in_desc=0 desc_indent=0 lineno=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    stripped="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$stripped" ] && continue
+    indent=$((${#line} - ${#stripped}))
 
-		# A new top-level key resets everything.
-		if [ "$indent" -eq 0 ]; then
-			case "$stripped" in
-			*:*)
-				top="${stripped%%:*}"
-				in_desc=0
-				# A top-level metadata key's own value may be inline.
-				case "$top" in
-				name | description | author | branding)
-					in_desc=1
-					desc_indent=0
-					;;
-				esac
-				;;
-			esac
-		elif [ "$in_desc" -eq 1 ] && [ "$indent" -le "$desc_indent" ]; then
-			# Left the description value (same or shallower indentation).
-			in_desc=0
-		fi
+    # A new top-level key resets everything.
+    if [ "$indent" -eq 0 ]; then
+      case "$stripped" in
+      *:*)
+        top="${stripped%%:*}"
+        in_desc=0
+        # A top-level metadata key's own value may be inline.
+        case "$top" in
+        name | description | author | branding)
+          in_desc=1
+          desc_indent=0
+          ;;
+        esac
+        ;;
+      esac
+    elif [ "$in_desc" -eq 1 ] && [ "$indent" -le "$desc_indent" ]; then
+      # Left the description value (same or shallower indentation).
+      in_desc=0
+    fi
 
-		# Inside inputs:/outputs:, an entry's `description:` opens a value.
-		if [ "$top" = "inputs" ] || [ "$top" = "outputs" ]; then
-			case "$stripped" in
-			description:*)
-				in_desc=1
-				desc_indent="$indent"
-				;;
-			*:*)
-				if [ "$in_desc" -eq 1 ] && [ "$indent" -le "$desc_indent" ]; then
-					in_desc=0
-				fi
-				;;
-			esac
-		fi
+    # Inside inputs:/outputs:, an entry's `description:` opens a value.
+    if [ "$top" = "inputs" ] || [ "$top" = "outputs" ]; then
+      case "$stripped" in
+      description:*)
+        in_desc=1
+        desc_indent="$indent"
+        ;;
+      *:*)
+        if [ "$in_desc" -eq 1 ] && [ "$indent" -le "$desc_indent" ]; then
+          in_desc=0
+        fi
+        ;;
+      esac
+    fi
 
-		if [ "$in_desc" -eq 1 ] && [[ "$line" == *'${{'* ]]; then
-			echo "FAIL ${file#"$ROOT"/}:${lineno}: \`\${{ ... }}\` inside \`${top}:\`, which GitHub"
-			echo "     evaluates against a context that has no \`github\`. This is not a quotation,"
-			echo "     it is a template error that fails every consumer's \`Set up job\`:"
-			echo "       ${stripped}"
-			echo "     Name the context in prose instead (e.g. \`github.action_path\`). Do not try"
-			echo "     to escape it — the escape is itself an expression."
-			rc=1
-		fi
-	done <"$file"
+    if [ "$in_desc" -eq 1 ] && [[ "$line" == *'${{'* ]]; then
+      echo "FAIL ${file#"$ROOT"/}:${lineno}: \`\${{ ... }}\` inside \`${top}:\`, which GitHub"
+      echo "     evaluates against a context that has no \`github\`. This is not a quotation,"
+      echo "     it is a template error that fails every consumer's \`Set up job\`:"
+      echo "       ${stripped}"
+      echo "     Name the context in prose instead (e.g. \`github.action_path\`). Do not try"
+      echo "     to escape it — the escape is itself an expression."
+      rc=1
+    fi
+  done <"$file"
 }
 
 for f in "${FILES[@]}"; do
-	if [ ! -f "$f" ]; then
-		echo "assert-no-expression-in-manifest-prose: no such file: $f" >&2
-		exit 2
-	fi
-	scan "$f"
-	checked=$((checked + 1))
+  if [ ! -f "$f" ]; then
+    echo "assert-no-expression-in-manifest-prose: no such file: $f" >&2
+    exit 2
+  fi
+  scan "$f"
+  checked=$((checked + 1))
 done
 
 if [ "$rc" -eq 0 ]; then
-	echo "assert-no-expression-in-manifest-prose: ${checked} manifest(s) clean."
+  echo "assert-no-expression-in-manifest-prose: ${checked} manifest(s) clean."
 fi
 exit "$rc"

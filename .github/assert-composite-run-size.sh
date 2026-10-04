@@ -77,18 +77,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 if [ "$#" -gt 0 ]; then
-	FILES=("$@")
+  FILES=("$@")
 else
-	FILES=()
-	while IFS= read -r f; do
-		FILES+=("$f")
-	done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
+  FILES=()
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then
-	echo "assert-composite-run-size: no action.yml found under $ROOT." >&2
-	echo "  This guard has nothing to measure, which is not the same as a pass." >&2
-	exit 2
+  echo "assert-composite-run-size: no action.yml found under $ROOT." >&2
+  echo "  This guard has nothing to measure, which is not the same as a pass." >&2
+  exit 2
 fi
 
 # Emit the DEDENTED body of every `run: |` block in $1, one block at a time, as
@@ -102,83 +102,83 @@ fi
 #
 # Pure bash, so the guard needs no more than the action it guards.
 blocks_of() { # <file>
-	local file="$1" line lineno=0 in_run=0 key_indent="" body_indent="" body="" start=0
-	local opened
-	while IFS= read -r line || [ -n "$line" ]; do
-		lineno=$((lineno + 1))
-		opened=0
-		if [ "$in_run" -ne 0 ]; then
-			# A non-empty line indented no deeper than the `run:` key ends the
-			# block scalar.
-			if [ -n "$line" ] && [ "${line#"$key_indent"[[:space:]]}" = "$line" ]; then
-				printf '%s\t%s\0' "$start" "$body"
-				in_run=0
-			else
-				if [ -n "$line" ] && [ -z "$body_indent" ]; then
-					body_indent="${line%%[![:space:]]*}"
-				fi
-				body="${body}${line#"$body_indent"}"$'\n'
-				continue
-			fi
-		fi
-		# Only a real `run: |` key opens a block, not those words in a comment.
-		local stripped="${line#"${line%%[![:space:]]*}"}"
-		if [ "$stripped" = "run: |" ] || [ "$stripped" = "run: |-" ]; then
-			key_indent="${line%%[![:space:]]*}"
-			body_indent=""
-			in_run=1
-			start="$lineno"
-			body=""
-			opened=1
-		fi
-		[ "$opened" -eq 1 ] && continue
-	done <"$file"
-	[ "$in_run" -eq 1 ] && printf '%s\t%s\0' "$start" "$body"
-	return 0
+  local file="$1" line lineno=0 in_run=0 key_indent="" body_indent="" body="" start=0
+  local opened
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    opened=0
+    if [ "$in_run" -ne 0 ]; then
+      # A non-empty line indented no deeper than the `run:` key ends the
+      # block scalar.
+      if [ -n "$line" ] && [ "${line#"$key_indent"[[:space:]]}" = "$line" ]; then
+        printf '%s\t%s\0' "$start" "$body"
+        in_run=0
+      else
+        if [ -n "$line" ] && [ -z "$body_indent" ]; then
+          body_indent="${line%%[![:space:]]*}"
+        fi
+        body="${body}${line#"$body_indent"}"$'\n'
+        continue
+      fi
+    fi
+    # Only a real `run: |` key opens a block, not those words in a comment.
+    local stripped="${line#"${line%%[![:space:]]*}"}"
+    if [ "$stripped" = "run: |" ] || [ "$stripped" = "run: |-" ]; then
+      key_indent="${line%%[![:space:]]*}"
+      body_indent=""
+      in_run=1
+      start="$lineno"
+      body=""
+      opened=1
+    fi
+    [ "$opened" -eq 1 ] && continue
+  done <"$file"
+  [ "$in_run" -eq 1 ] && printf '%s\t%s\0' "$start" "$body"
+  return 0
 }
 
 rc=0
 measured=0
 for f in "${FILES[@]}"; do
-	if [ ! -f "$f" ]; then
-		echo "assert-composite-run-size: no such file: $f" >&2
-		rc=2
-		continue
-	fi
-	found=0
-	while IFS= read -r -d '' rec; do
-		found=1
-		measured=$((measured + 1))
-		start="${rec%%$'\t'*}"
-		body="${rec#*$'\t'}"
-		chars="${#body}"
-		bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
-		rel="${f#"$ROOT"/}"
-		if [ "$chars" -gt "$MAX_CHARS" ]; then
-			echo "FAIL ${rel}:${start} run: block is ${chars} chars (${bytes} UTF-8 bytes); budget is ${MAX_CHARS}."
-			echo "     GitHub rejects an over-long composite \`run:\` body at TEMPLATE parse time:"
-			echo "       \"Exceeded max expression length 21000\""
-			echo "     — which fails every consumer's job before its first step, not this repo's CI."
-			echo "     Move the body into a script file beside the action and call it with"
-			echo "     \`bash \"\${GITHUB_ACTION_PATH}/<name>.sh\"\`; see this script's header."
-			rc=1
-		else
-			echo "ok   ${rel}:${start} run: block is ${chars} chars (${bytes} UTF-8 bytes), budget ${MAX_CHARS}."
-		fi
-	done < <(blocks_of "$f")
-	if [ "$found" -eq 0 ]; then
-		echo "ok   ${f#"$ROOT"/} has no composite \`run: |\` block."
-	fi
+  if [ ! -f "$f" ]; then
+    echo "assert-composite-run-size: no such file: $f" >&2
+    rc=2
+    continue
+  fi
+  found=0
+  while IFS= read -r -d '' rec; do
+    found=1
+    measured=$((measured + 1))
+    start="${rec%%$'\t'*}"
+    body="${rec#*$'\t'}"
+    chars="${#body}"
+    bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
+    rel="${f#"$ROOT"/}"
+    if [ "$chars" -gt "$MAX_CHARS" ]; then
+      echo "FAIL ${rel}:${start} run: block is ${chars} chars (${bytes} UTF-8 bytes); budget is ${MAX_CHARS}."
+      echo "     GitHub rejects an over-long composite \`run:\` body at TEMPLATE parse time:"
+      echo "       \"Exceeded max expression length 21000\""
+      echo "     — which fails every consumer's job before its first step, not this repo's CI."
+      echo "     Move the body into a script file beside the action and call it with"
+      echo "     \`bash \"\${GITHUB_ACTION_PATH}/<name>.sh\"\`; see this script's header."
+      rc=1
+    else
+      echo "ok   ${rel}:${start} run: block is ${chars} chars (${bytes} UTF-8 bytes), budget ${MAX_CHARS}."
+    fi
+  done < <(blocks_of "$f")
+  if [ "$found" -eq 0 ]; then
+    echo "ok   ${f#"$ROOT"/} has no composite \`run: |\` block."
+  fi
 done
 
 if [ "$measured" -eq 0 ]; then
-	echo "assert-composite-run-size: measured zero run: blocks across ${#FILES[@]} file(s)." >&2
-	echo "  Either the extractor stopped matching the file format or the actions stopped" >&2
-	echo "  being composite. Both are guard failures, not passes." >&2
-	exit 2
+  echo "assert-composite-run-size: measured zero run: blocks across ${#FILES[@]} file(s)." >&2
+  echo "  Either the extractor stopped matching the file format or the actions stopped" >&2
+  echo "  being composite. Both are guard failures, not passes." >&2
+  exit 2
 fi
 
 if [ "$rc" -eq 0 ]; then
-	echo "assert-composite-run-size: ${measured} run: block(s) within budget."
+  echo "assert-composite-run-size: ${measured} run: block(s) within budget."
 fi
 exit "$rc"

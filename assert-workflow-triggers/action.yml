@@ -14,13 +14,13 @@ inputs:
       codetracer or isonim, must state it here; detection has no fallback and
       will refuse rather than guess.
     required: false
-    default: ''
+    default: ""
   workflows:
     description: >
       Optional space-separated list of workflow files to check. Defaults to
       every file under .github/workflows.
     required: false
-    default: ''
+    default: ""
 
 runs:
   using: composite

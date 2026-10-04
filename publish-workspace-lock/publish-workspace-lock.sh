@@ -98,7 +98,7 @@ is_lock_record() {
     fi
   done <"$1"
   if [ "${repo_tables}" -gt 0 ] && [ "${tables}" -eq "${repo_tables}" ] &&
-     [ "${names}" -gt 0 ] && [ "${foreign}" -eq 0 ]; then
+      [ "${names}" -gt 0 ] && [ "${foreign}" -eq 0 ]; then
     return 1
   fi
   return 0
@@ -197,7 +197,7 @@ echo "Fetching ${SELF_SLUG}@${BASE_REF} to prove ${TARGET_SHA} landed on it..."
 # condition, it is an older server — retry whole rather than skip the
 # proof, which is the one thing that must not become optional.
 if ! git clone --quiet --bare --no-tags --filter=blob:none \
-       --single-branch --branch "${BASE_REF}" "${SELF_URL}" "${SELF_GIT}"; then
+        --single-branch --branch "${BASE_REF}" "${SELF_URL}" "${SELF_GIT}"; then
   rm -rf "${SELF_GIT}"
   git clone --quiet --bare --no-tags \
     --single-branch --branch "${BASE_REF}" "${SELF_URL}" "${SELF_GIT}" \
@@ -246,8 +246,8 @@ echo "Proven: ${TARGET_SHA} is an ancestor of ${SELF_SLUG}@${BASE_REF}."
 # -----------------------------------------------------------------
 CARRY_WITNESS="repro.lock"
 if git -C "${SELF_GIT}" cat-file -e "${SOURCE_SHA}^{commit}" 2>/dev/null &&
-   git -C "${SELF_GIT}" merge-base --is-ancestor \
-     "${SOURCE_SHA}" "${TARGET_SHA}" 2>/dev/null; then
+    git -C "${SELF_GIT}" merge-base --is-ancestor \
+      "${SOURCE_SHA}" "${TARGET_SHA}" 2>/dev/null; then
   CARRY_MOVED="$(git -C "${SELF_GIT}" diff-tree -r --name-only \
     --no-commit-id --no-renames "${SOURCE_SHA}" "${TARGET_SHA}" \
     -- "${CARRY_WITNESS}" 2>/dev/null || true)"

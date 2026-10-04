@@ -15,7 +15,7 @@ $aliases = @'
     discard collect("test", testExecuteActions)
     when defined(windows):
       for name in ["test_io_mon_cli_exit_status",
-                   "test_io_mon_windows_host_session_scope"]:
+                    "test_io_mon_windows_host_session_scope"]:
         var selected: seq[BuildActionDef] = @[]
         for action in testExecuteActions:
           if action.id == "io-mon.test_execute." & name & ".exe":

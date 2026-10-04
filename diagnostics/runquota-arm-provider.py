@@ -46,10 +46,10 @@ def capture_cores():
         if Path(executable).is_file():
             argv += ["-e", executable]
         argv += ["-ex", "info files", "-ex", "info sharedlibrary",
-                 "-ex", "thread apply all bt"]
+                  "-ex", "thread apply all bt"]
         with output.open("w") as log:
             subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT,
-                           timeout=120, check=False)
+                            timeout=120, check=False)
         # Raw memory may contain job credentials. Only the argument-free
         # backtrace leaves this disposable runner, never the core itself.
         core.unlink()
@@ -60,8 +60,8 @@ assert source == "f369c3429c83be2403b8dd91d25e137207b30575", source
 (evidence / "source.txt").write_text(source + "\n")
 identity = {}
 for path in [Path("/usr/bin/aarch64-linux-gnu-gcc-13"),
-             root / ".reprobuild-src/build/bin/repro",
-             root / ".reprobuild-src/build/lib/librepro_monitor_shim.so"]:
+              root / ".reprobuild-src/build/bin/repro",
+              root / ".reprobuild-src/build/lib/librepro_monitor_shim.so"]:
     if path.is_file():
         identity[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
 (evidence / "binary-sha256.json").write_text(json.dumps(identity, indent=2))
@@ -72,7 +72,7 @@ for attempt in range(1, 7):
     args = ["dev-exec", "repro", "build", "--tool-provisioning=nix"]
     if attempt > 1:
         args += ["--work-root=" + str(root / (".repro-arm-provider-" + str(attempt))),
-                 "--write-report=" + str(evidence / (name + ".json"))]
+                  "--write-report=" + str(evidence / (name + ".json"))]
     code = run(name, args, baseline)
     log = (evidence / (name + ".log")).read_text(errors="replace")
     capture_cores()

@@ -128,9 +128,9 @@ EXTRA_TOKEN_URL_PREFIXES="${EXTRA_TOKEN_URL_PREFIXES:-}"
 # leaving the sibling value alone. A bare `--replace-all` would drop whichever
 # was written first.
 git config --global --replace-all url."https://github.com/".insteadOf \
-	"git@github.com:" '^git@github\.com:$'
+  "git@github.com:" '^git@github\.com:$'
 git config --global --replace-all url."https://github.com/".insteadOf \
-	"ssh://git@github.com/" '^ssh://git@github\.com/$'
+  "ssh://git@github.com/" '^ssh://git@github\.com/$'
 
 # --- 2. evict any credential-bearing rewrite left by an earlier job --------
 #
@@ -143,18 +143,18 @@ git config --global --replace-all url."https://github.com/".insteadOf \
 #
 # `--get-regexp` exits 1 when nothing matches; that is not an error here.
 while IFS= read -r _key; do
-	[[ -z $_key ]] && continue
-	case "$_key" in
-	url.*x-access-token*) ;;
-	*) continue ;;
-	esac
-	git config --global --unset-all "$_key" 2>/dev/null || true
-	# `--unset-all` empties the value list but leaves the (now empty) subsection
-	# behind; `--remove-section` clears it so a later `--get-regexp` is quiet.
-	git config --global --remove-section "${_key%.insteadOf}" 2>/dev/null || true
+  [[ -z $_key ]] && continue
+  case "$_key" in
+  url.*x-access-token*) ;;
+  *) continue ;;
+  esac
+  git config --global --unset-all "$_key" 2>/dev/null || true
+  # `--unset-all` empties the value list but leaves the (now empty) subsection
+  # behind; `--remove-section` clears it so a later `--get-regexp` is quiet.
+  git config --global --remove-section "${_key%.insteadOf}" 2>/dev/null || true
 done < <(
-	{ git config --global --get-regexp '^url\..*\.insteadOf$' 2>/dev/null || true; } |
-		while IFS= read -r _line; do printf '%s\n' "${_line%% *}"; done
+  { git config --global --get-regexp '^url\..*\.insteadOf$' 2>/dev/null || true; } |
+    while IFS= read -r _line; do printf '%s\n' "${_line%% *}"; done
 )
 
 # --- 3. the scoped credential --------------------------------------------

@@ -48,38 +48,38 @@ CLONE="$HERE/authenticated-clone.sh"
 SERVER="$HERE/git-http-auth-server.py"
 
 for f in "$LIB" "$CLONE" "$SERVER"; do
-	[[ -f $f ]] || {
-		echo "authenticated-clone-test: cannot find $f" >&2
-		exit 2
-	}
+  [[ -f $f ]] || {
+    echo "authenticated-clone-test: cannot find $f" >&2
+    exit 2
+  }
 done
 
 PASS=0
 FAIL=0
 ok() {
-	PASS=$((PASS + 1))
-	echo "ok   $1"
+  PASS=$((PASS + 1))
+  echo "ok   $1"
 }
 bad() {
-	FAIL=$((FAIL + 1))
-	echo "FAIL $1"
-	[[ -n ${2:-} ]] && echo "     $2"
+  FAIL=$((FAIL + 1))
+  echo "FAIL $1"
+  [[ -n ${2:-} ]] && echo "     $2"
 }
 check() { # <desc> <actual> <expected>
-	if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
+  if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
 }
 assert() { # <desc> <0/1>
-	if [[ $2 == 0 ]]; then ok "$1"; else bad "$1"; fi
+  if [[ $2 == 0 ]]; then ok "$1"; else bad "$1"; fi
 }
 
 TMPROOT="$(mktemp -d)"
 SRV_PID=""
 cleanup() {
-	# By PID, recorded when this suite started it. Never by name pattern: this
-	# repo's suites run on shared self-hosted runners carrying other people's
-	# jobs, and a `pkill -f python3` would take them with it.
-	[[ -n $SRV_PID ]] && kill "$SRV_PID" 2>/dev/null
-	rm -rf "$TMPROOT"
+  # By PID, recorded when this suite started it. Never by name pattern: this
+  # repo's suites run on shared self-hosted runners carrying other people's
+  # jobs, and a `pkill -f python3` would take them with it.
+  [[ -n $SRV_PID ]] && kill "$SRV_PID" 2>/dev/null
+  rm -rf "$TMPROOT"
 }
 trap cleanup EXIT
 
@@ -107,36 +107,36 @@ git_q() { git "$@" >/dev/null 2>&1; }
 
 # `mk_repo <bare> [<gitmodules-content> <submodule-path> <submodule-sha>]`
 mk_repo() {
-	local bare="$1" gm="${2:-}" sub_path="${3:-}" sub_sha="${4:-}"
-	local work="$TMPROOT/build/${bare//\//_}"
-	git_q init --bare -b main "$SRV/$bare"
-	mkdir -p "$work"
-	git_q -C "$work" init -b main .
-	printf 'content of %s\n' "$bare" >"$work/README"
-	git_q -C "$work" add README
-	if [[ -n $gm ]]; then
-		printf '%s' "$gm" >"$work/.gitmodules"
-		git_q -C "$work" add .gitmodules
-		# A gitlink cannot be created by `submodule add` here: the URL in
-		# `.gitmodules` is a github.com URL that does not exist. Write the index
-		# entry directly, which is what a gitlink is.
-		git -C "$work" update-index --add --cacheinfo "160000,$sub_sha,$sub_path" >/dev/null 2>&1
-	fi
-	git -C "$work" -c user.name=t -c user.email=t@t commit -qm init >/dev/null 2>&1
-	git_q -C "$work" push "$SRV/$bare" main
-	git -C "$work" rev-parse HEAD
+  local bare="$1" gm="${2:-}" sub_path="${3:-}" sub_sha="${4:-}"
+  local work="$TMPROOT/build/${bare//\//_}"
+  git_q init --bare -b main "$SRV/$bare"
+  mkdir -p "$work"
+  git_q -C "$work" init -b main .
+  printf 'content of %s\n' "$bare" >"$work/README"
+  git_q -C "$work" add README
+  if [[ -n $gm ]]; then
+    printf '%s' "$gm" >"$work/.gitmodules"
+    git_q -C "$work" add .gitmodules
+    # A gitlink cannot be created by `submodule add` here: the URL in
+    # `.gitmodules` is a github.com URL that does not exist. Write the index
+    # entry directly, which is what a gitlink is.
+    git -C "$work" update-index --add --cacheinfo "160000,$sub_sha,$sub_path" >/dev/null 2>&1
+  fi
+  git -C "$work" -c user.name=t -c user.email=t@t commit -qm init >/dev/null 2>&1
+  git_q -C "$work" push "$SRV/$bare" main
+  git -C "$work" rev-parse HEAD
 }
 
 DEEP_SHA="$(mk_repo metacraft-labs/deep.git)"
 TSN_SHA="$(mk_repo metacraft-labs/tree-sitter-nim.git \
-	'[submodule "deep"]
-	path = deep
-	url = ssh://git@github.com/metacraft-labs/deep.git
+  '[submodule "deep"]
+  path = deep
+  url = ssh://git@github.com/metacraft-labs/deep.git
 ' deep "$DEEP_SHA")"
 HOST_SHA="$(mk_repo metacraft-labs/host.git \
-	'[submodule "libs/tree-sitter-nim"]
-	path = libs/tree-sitter-nim
-	url = git@github.com:metacraft-labs/tree-sitter-nim.git
+  '[submodule "libs/tree-sitter-nim"]
+  path = libs/tree-sitter-nim
+  url = git@github.com:metacraft-labs/tree-sitter-nim.git
 ' libs/tree-sitter-nim "$TSN_SHA")"
 THIRD_SHA="$(mk_repo third-party/dep.git)"
 
@@ -146,26 +146,26 @@ THIRD_SHA="$(mk_repo third-party/dep.git)"
 # ---------------------------------------------------------------------------
 JOURNAL="$TMPROOT/journal"
 python3 "$SERVER" --root "$SRV" --journal "$JOURNAL" \
-	--auth-prefix /metacraft-labs/ --auth-file "$TMPROOT/token" \
-	>"$TMPROOT/port" 2>"$TMPROOT/server.err" &
+  --auth-prefix /metacraft-labs/ --auth-file "$TMPROOT/token" \
+  >"$TMPROOT/port" 2>"$TMPROOT/server.err" &
 SRV_PID=$!
 for _ in $(seq 1 100); do
-	[[ -s $TMPROOT/port ]] && break
-	sleep 0.1
+  [[ -s $TMPROOT/port ]] && break
+  sleep 0.1
 done
 PORT="$(while IFS=' ' read -r _tag _p; do printf '%s' "$_p"; done <"$TMPROOT/port")"
 [[ -n $PORT ]] || {
-	echo "authenticated-clone-test: server did not start" >&2
-	cat "$TMPROOT/server.err" >&2
-	exit 2
+  echo "authenticated-clone-test: server did not start" >&2
+  cat "$TMPROOT/server.err" >&2
+  exit 2
 }
 BASE="http://127.0.0.1:${PORT}/"
 
 journal_verdicts() { # <path-substring> -> the verdicts recorded for it
-	local want="$1" v p
-	while read -r v p; do
-		case "$p" in *"$want"*) printf '%s\n' "$v" ;; esac
-	done <"$JOURNAL"
+  local want="$1" v p
+  while read -r v p; do
+    case "$p" in *"$want"*) printf '%s\n' "$v" ;; esac
+  done <"$JOURNAL"
 }
 
 # ---------------------------------------------------------------------------
@@ -177,10 +177,10 @@ journal_verdicts() { # <path-substring> -> the verdicts recorded for it
 # working files and git objects alike, and reports only file names.
 # ---------------------------------------------------------------------------
 credential_files() {
-	local dir="$1"
-	[[ -d $dir ]] || return 0
-	grep -rlF "$TOKEN" "$dir" 2>/dev/null
-	grep -rlF "x-access-token" "$dir" 2>/dev/null
+  local dir="$1"
+  [[ -d $dir ]] || return 0
+  grep -rlF "$TOKEN" "$dir" 2>/dev/null
+  grep -rlF "x-access-token" "$dir" 2>/dev/null
 }
 
 # A sandbox HOME with a `credential.helper`, and system/global config
@@ -218,75 +218,75 @@ git config --file "$SANDBOX_LEGACY/.gitconfig" credential.helper store
 # way. The system config is neutralised; the sandbox's own `~/.gitconfig` is
 # still read, because that is where the helper under test lives.
 sandboxed() {
-	env HOME="$SANDBOX" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRECTORIES="$TMPROOT" "$@"
+  env HOME="$SANDBOX" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRECTORIES="$TMPROOT" "$@"
 }
 sandboxed_legacy() {
-	env HOME="$SANDBOX_LEGACY" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRECTORIES="$TMPROOT" "$@"
+  env HOME="$SANDBOX_LEGACY" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRECTORIES="$TMPROOT" "$@"
 }
 
 # `run_clone <name> <args...>` — the real thing: derive the scope with the real
 # library, export it into the process, run the real clone script. Exactly what
 # clone-repo/action.yml and clone-siblings/action.yml do.
 run_clone() {
-	local name="$1"
-	shift
-	CASE_OUT="$TMPROOT/$name.out"
-	CASE_RC=0
-	sandboxed \
-		GH_TOKEN="$TOKEN" \
-		GIT_AUTH_URL_BASE="$BASE" \
-		TOKEN_OWNERS="${CASE_OWNERS:-metacraft-labs}" \
-		SCOPED_GIT_AUTH_REWRITES=1 \
-		bash -c '
-			set -euo pipefail
-			. "$1"; shift
-			scoped_git_auth_build
-			scoped_git_auth_export
-			exec bash "$@"
-		' _ "$LIB" "$CLONE" "$@" >"$CASE_OUT" 2>&1 || CASE_RC=$?
+  local name="$1"
+  shift
+  CASE_OUT="$TMPROOT/$name.out"
+  CASE_RC=0
+  sandboxed \
+    GH_TOKEN="$TOKEN" \
+    GIT_AUTH_URL_BASE="$BASE" \
+    TOKEN_OWNERS="${CASE_OWNERS:-metacraft-labs}" \
+    SCOPED_GIT_AUTH_REWRITES=1 \
+    bash -c '
+      set -euo pipefail
+      . "$1"; shift
+      scoped_git_auth_build
+      scoped_git_auth_export
+      exec bash "$@"
+    ' _ "$LIB" "$CLONE" "$@" >"$CASE_OUT" 2>&1 || CASE_RC=$?
 }
 
 # `legacy_clone <repo> <dest>` — the shape on `main`, reproduced so the
 # detectors above can be shown to fire on it. This is the mutation.
 legacy_clone() {
-	local repo="$1" dest="$2"
-	local tok="${BASE%%//*}//x-access-token:${TOKEN}@${BASE#*//}"
-	rm -rf "$dest"
-	sandboxed_legacy git clone --quiet --no-checkout "${tok}${repo}.git" "$dest" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" fetch --quiet --depth 1 origin main >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "${BASE}" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "git@github.com:" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "ssh://git@github.com/" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" submodule update --init --recursive >/dev/null 2>&1
+  local repo="$1" dest="$2"
+  local tok="${BASE%%//*}//x-access-token:${TOKEN}@${BASE#*//}"
+  rm -rf "$dest"
+  sandboxed_legacy git clone --quiet --no-checkout "${tok}${repo}.git" "$dest" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" fetch --quiet --depth 1 origin main >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "${BASE}" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "git@github.com:" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" config --add url."$tok".insteadOf "ssh://git@github.com/" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" submodule update --init --recursive >/dev/null 2>&1
 }
 
 # ===========================================================================
 # 1. The private clone, with submodules, at two levels of nesting.
 # ===========================================================================
 run_clone host --repo metacraft-labs/host --dest "$TMPROOT/host" \
-	--rev "$HOST_SHA" --shallow --submodules
+  --rev "$HOST_SHA" --shallow --submodules
 
 check "a private repo clones through the scoped header" "$CASE_RC" "0"
 check "the private repo's content is there" \
-	"$([[ -f $TMPROOT/host/README ]] && echo yes)" "yes"
+  "$([[ -f $TMPROOT/host/README ]] && echo yes)" "yes"
 check "a private scp-style submodule is checked out (codetracer libs/tree-sitter-nim)" \
-	"$([[ -f $TMPROOT/host/libs/tree-sitter-nim/README ]] && echo yes)" "yes"
+  "$([[ -f $TMPROOT/host/libs/tree-sitter-nim/README ]] && echo yes)" "yes"
 check "a private ssh:// NESTED submodule is checked out (native-backend -> rr)" \
-	"$([[ -f $TMPROOT/host/libs/tree-sitter-nim/deep/README ]] && echo yes)" "yes"
+  "$([[ -f $TMPROOT/host/libs/tree-sitter-nim/deep/README ]] && echo yes)" "yes"
 
 # The wire, not the configuration: the server says a credential arrived and
 # matched, for the superproject and for both submodules.
 for repo in host tree-sitter-nim deep; do
-	V="$(journal_verdicts "/metacraft-labs/${repo}.git/info/refs")"
-	case "$V" in
-	*ok*) ok "the server received a matching credential for ${repo}" ;;
-	*) bad "the server received a matching credential for ${repo}" "journal said: ${V:-<nothing>}" ;;
-	esac
-	case "$V" in
-	*none* | *mismatch*) bad "no unauthenticated attempt was made for ${repo}" "journal said: $V" ;;
-	*) ok "no unauthenticated attempt was made for ${repo}" ;;
-	esac
+  V="$(journal_verdicts "/metacraft-labs/${repo}.git/info/refs")"
+  case "$V" in
+  *ok*) ok "the server received a matching credential for ${repo}" ;;
+  *) bad "the server received a matching credential for ${repo}" "journal said: ${V:-<nothing>}" ;;
+  esac
+  case "$V" in
+  *none* | *mismatch*) bad "no unauthenticated attempt was made for ${repo}" "journal said: $V" ;;
+  *) ok "no unauthenticated attempt was made for ${repo}" ;;
+  esac
 done
 
 # ===========================================================================
@@ -296,12 +296,12 @@ FOUND="$(credential_files "$TMPROOT/host" | while IFS= read -r f; do printf '%s 
 check "no credential anywhere under the clone, submodules included" "$FOUND" ""
 
 check ".git/config records a credential-free remote" \
-	"$(git -C "$TMPROOT/host" config --get remote.origin.url)" \
-	"${BASE}metacraft-labs/host.git"
+  "$(git -C "$TMPROOT/host" config --get remote.origin.url)" \
+  "${BASE}metacraft-labs/host.git"
 check "no url.*.insteadOf was written into the clone at all" \
-	"$({ git -C "$TMPROOT/host" config --local --name-only --get-regexp '^url\.' 2>/dev/null || true; } | grep -c . || true)" "0"
+  "$({ git -C "$TMPROOT/host" config --local --name-only --get-regexp '^url\.' 2>/dev/null || true; } | grep -c . || true)" "0"
 check "no extraheader was written into the clone" \
-	"$({ git -C "$TMPROOT/host" config --local --name-only --get-regexp '^http\..*extraheader$' 2>/dev/null || true; } | grep -c . || true)" "0"
+  "$({ git -C "$TMPROOT/host" config --local --name-only --get-regexp '^http\..*extraheader$' 2>/dev/null || true; } | grep -c . || true)" "0"
 
 # The FOURTH persistence channel, which neither the `setup-nix` change nor its
 # rationale names: a credential carried in a URL is one git hands to `credential
@@ -317,33 +317,33 @@ check "no extraheader was written into the clone" \
 # is observable. It must be asserted BEFORE the mutation below, which is what
 # makes it happen.
 check "nothing was captured into ~/.git-credentials by a helper" \
-	"$([[ -f $SANDBOX/.git-credentials ]] && grep -cF "$TOKEN" "$SANDBOX/.git-credentials" || echo 0)" "0"
+  "$([[ -f $SANDBOX/.git-credentials ]] && grep -cF "$TOKEN" "$SANDBOX/.git-credentials" || echo 0)" "0"
 
 # MUTATION. Same server, same repos, the shape this change removes. If the
 # search above cannot tell the two apart, it is not testing anything.
 legacy_clone metacraft-labs/host "$TMPROOT/legacy"
 
 if [[ -f $SANDBOX_LEGACY/.git-credentials ]] && grep -qF "$TOKEN" "$SANDBOX_LEGACY/.git-credentials"; then
-	ok "mutation: the URL shape DOES get captured by a credential helper"
+  ok "mutation: the URL shape DOES get captured by a credential helper"
 else
-	bad "mutation: the URL shape DOES get captured by a credential helper" \
-		"nothing was stored, so the assertion above proves nothing"
+  bad "mutation: the URL shape DOES get captured by a credential helper" \
+    "nothing was stored, so the assertion above proves nothing"
 fi
 LEGACY_FOUND="$(credential_files "$TMPROOT/legacy" | grep -c . || true)"
 if [[ $LEGACY_FOUND -gt 0 ]]; then
-	ok "mutation: the same search DOES find the credential in the shape this replaces ($LEGACY_FOUND file(s))"
+  ok "mutation: the same search DOES find the credential in the shape this replaces ($LEGACY_FOUND file(s))"
 else
-	bad "mutation: the same search DOES find the credential in the shape this replaces" \
-		"it found nothing, so the assertion above proves nothing"
+  bad "mutation: the same search DOES find the credential in the shape this replaces" \
+    "it found nothing, so the assertion above proves nothing"
 fi
 check "mutation: the legacy clone also persisted a catch-all insteadOf" \
-	"$({ git -C "$TMPROOT/legacy" config --local --name-only --get-regexp '^url\.' 2>/dev/null || true; } | grep -c . || true)" "3"
+  "$({ git -C "$TMPROOT/legacy" config --local --name-only --get-regexp '^url\.' 2>/dev/null || true; } | grep -c . || true)" "3"
 
 # ===========================================================================
 # 3. Breadth: the credential does not attach to a third party.
 # ===========================================================================
 run_clone third --repo third-party/dep --dest "$TMPROOT/third" \
-	--rev "$THIRD_SHA" --shallow
+  --rev "$THIRD_SHA" --shallow
 check "a repo outside the scope still clones (it is public)" "$CASE_RC" "0"
 V="$(journal_verdicts "/third-party/dep.git")"
 case "$V" in
@@ -359,7 +359,7 @@ esac
 mkdir -p "$SRV/metacraft-labs-evil"
 EVIL_SHA="$(mk_repo metacraft-labs-evil/x.git)"
 run_clone evil --repo metacraft-labs-evil/x --dest "$TMPROOT/evil" \
-	--rev "$EVIL_SHA" --shallow
+  --rev "$EVIL_SHA" --shallow
 V="$(journal_verdicts "/metacraft-labs-evil/x.git")"
 case "$V" in
 *public-auth*) bad "an owner prefixed by ours receives no credential" "journal said: $V" ;;
@@ -408,16 +408,16 @@ mkdir -p "$SRV/metacraft-labs-open"
 OPEN_SHA="$(mk_repo metacraft-labs-open/pub.git)"
 
 CASE_OWNERS=metacraft-labs-open \
-	run_clone open --repo metacraft-labs-open/pub --dest "$TMPROOT/open" \
-	--rev "$OPEN_SHA" --shallow
+  run_clone open --repo metacraft-labs-open/pub --dest "$TMPROOT/open" \
+  --rev "$OPEN_SHA" --shallow
 check "an in-scope PUBLIC repo clones" "$CASE_RC" "0"
 V="$(journal_verdicts "/metacraft-labs-open/pub.git/info/refs")"
 case "$V" in
 *public-auth*) ok "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" ;;
 "") bad "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" \
-	"it was never contacted" ;;
+  "it was never contacted" ;;
 *) bad "an in-scope PUBLIC repo is fetched WITH the credential, unchallenged" \
-	"journal said: $V — the clone was ANONYMOUS. This is the reprobuild-provision defect: on a repo that never answers 401, the credential is not sent, and the fetch burns GitHub's per-IP anonymous budget." ;;
+  "journal said: $V — the clone was ANONYMOUS. This is the reprobuild-provision defect: on a repo that never answers 401, the credential is not sent, and the fetch burns GitHub's per-IP anonymous budget." ;;
 esac
 
 # THE MUTATION. Without this, the assertion above could pass for a reason that
@@ -428,34 +428,34 @@ legacy_clone metacraft-labs-open/pub "$TMPROOT/open-legacy"
 V="$(journal_verdicts "/metacraft-labs-open/pub.git/info/refs")"
 case "$V" in
 *public-noauth*)
-	ok "mutation: the URL-credential shape sends NOTHING to the same public repo"
-	;;
+  ok "mutation: the URL-credential shape sends NOTHING to the same public repo"
+  ;;
 *)
-	bad "mutation: the URL-credential shape sends NOTHING to the same public repo" \
-		"journal said: ${V:-<nothing>} — no unauthenticated fetch was recorded, so the assertion above proves nothing"
-	;;
+  bad "mutation: the URL-credential shape sends NOTHING to the same public repo" \
+    "journal said: ${V:-<nothing>} — no unauthenticated fetch was recorded, so the assertion above proves nothing"
+  ;;
 esac
 
 # ===========================================================================
 # 4. .gitmodules: normalised for Nix, and never carrying a credential.
 # ===========================================================================
 run_clone gm --repo metacraft-labs/host --dest "$TMPROOT/gm" \
-	--rev "$HOST_SHA" --submodules --commit-https-gitmodules
+  --rev "$HOST_SHA" --submodules --commit-https-gitmodules
 check "the --commit-https-gitmodules path succeeds" "$CASE_RC" "0"
 check "the worktree .gitmodules no longer has an scp-style URL" \
-	"$(grep -c 'git@github\.com:' "$TMPROOT/gm/.gitmodules" || true)" "0"
+  "$(grep -c 'git@github\.com:' "$TMPROOT/gm/.gitmodules" || true)" "0"
 check "the worktree .gitmodules was rewritten to the https base" \
-	"$(grep -cF "${BASE}metacraft-labs/tree-sitter-nim.git" "$TMPROOT/gm/.gitmodules" || true)" "1"
+  "$(grep -cF "${BASE}metacraft-labs/tree-sitter-nim.git" "$TMPROOT/gm/.gitmodules" || true)" "1"
 # ...and the rewritten spelling is one that actually resolves. The point of the
 # rewrite is that a fetcher which cannot apply `insteadOf` (Nix, via libgit2's
 # git_submodule_resolve_url) can still reach the submodule; a file that is
 # merely differently spelled would satisfy a grep and fail a fetch.
 check "the rewritten submodule URL is fetchable" \
-	"$([[ -f $TMPROOT/gm/libs/tree-sitter-nim/README ]] && echo yes)" "yes"
+  "$([[ -f $TMPROOT/gm/libs/tree-sitter-nim/README ]] && echo yes)" "yes"
 check "the COMMITTED .gitmodules carries no credential" \
-	"$(git -C "$TMPROOT/gm" show HEAD:.gitmodules | grep -c 'x-access-token' || true)" "0"
+  "$(git -C "$TMPROOT/gm" show HEAD:.gitmodules | grep -c 'x-access-token' || true)" "0"
 check "the commit was actually made" \
-	"$(git -C "$TMPROOT/gm" log -1 --format=%s)" "CI: rewrite submodule URLs to HTTPS"
+  "$(git -C "$TMPROOT/gm" log -1 --format=%s)" "CI: rewrite submodule URLs to HTTPS"
 FOUND="$(credential_files "$TMPROOT/gm" | grep -c . || true)"
 check "no credential under the clone that committed .gitmodules" "$FOUND" "0"
 
@@ -464,17 +464,17 @@ check "no credential under the clone that committed .gitmodules" "$FOUND" "0"
 # which is the one place a later push or a packed artifact carries it off the
 # machine. Reachable, so tested.
 POISON_SHA="$(mk_repo metacraft-labs/poison.git \
-	"[submodule \"s\"]
-	path = s
-	url = https://x-access-token:${TOKEN}@github.com/metacraft-labs/deep.git
+  "[submodule \"s\"]
+  path = s
+  url = https://x-access-token:${TOKEN}@github.com/metacraft-labs/deep.git
 " s "$DEEP_SHA")"
 run_clone poison --repo metacraft-labs/poison --dest "$TMPROOT/poison" \
-	--rev "$POISON_SHA" --commit-https-gitmodules
+  --rev "$POISON_SHA" --commit-https-gitmodules
 check "a credential-bearing .gitmodules is refused, not committed" "$CASE_RC" "1"
 check "...and the refusal names no credential" \
-	"$(grep -cF "$TOKEN" "$CASE_OUT" || true)" "0"
+  "$(grep -cF "$TOKEN" "$CASE_OUT" || true)" "0"
 check "...and nothing was committed" \
-	"$(git -C "$TMPROOT/poison" log -1 --format=%s 2>/dev/null)" "init"
+  "$(git -C "$TMPROOT/poison" log -1 --format=%s 2>/dev/null)" "init"
 
 # ===========================================================================
 # 5. `--shallow` is economical -- and the tree is unchanged by being so.
@@ -514,9 +514,9 @@ git_q -C "$HIST_WORK" add big.bin README
 git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "add big" >/dev/null 2>&1
 BIG_BLOB="$(git -C "$HIST_WORK" rev-parse HEAD:big.bin)"
 for n in 2 3 4 5; do
-	printf 'v%s\n' "$n" >"$HIST_WORK/README"
-	git_q -C "$HIST_WORK" add README
-	git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "edit $n" >/dev/null 2>&1
+  printf 'v%s\n' "$n" >"$HIST_WORK/README"
+  git_q -C "$HIST_WORK" add README
+  git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "edit $n" >/dev/null 2>&1
 done
 git_q -C "$HIST_WORK" rm -q big.bin
 git -C "$HIST_WORK" -c user.name=t -c user.email=t@t commit -qm "drop big" >/dev/null 2>&1
@@ -534,16 +534,16 @@ git_q -C "$HIST_WORK" push "$SRV/metacraft-labs/history.git" main
 # false-pass this suite's header is about. It runs in the LEGACY sandbox so the
 # credential it stores cannot answer for a later assertion.
 legacy_shallow_clone() {
-	local repo="$1" rev="$2" dest="$3"
-	local tok="${BASE%%//*}//x-access-token:${TOKEN}@${BASE#*//}"
-	rm -rf "$dest"
-	sandboxed_legacy git clone --no-checkout --quiet "${tok}${repo}.git" "$dest" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" fetch --quiet --depth 1 origin "$rev" >/dev/null 2>&1
-	sandboxed_legacy git -C "$dest" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1
+  local repo="$1" rev="$2" dest="$3"
+  local tok="${BASE%%//*}//x-access-token:${TOKEN}@${BASE#*//}"
+  rm -rf "$dest"
+  sandboxed_legacy git clone --no-checkout --quiet "${tok}${repo}.git" "$dest" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" fetch --quiet --depth 1 origin "$rev" >/dev/null 2>&1
+  sandboxed_legacy git -C "$dest" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1
 }
 
 has_object() { # <dir> <oid> -> yes/no
-	if sandboxed git -C "$1" cat-file -e "$2" >/dev/null 2>&1; then echo yes; else echo no; fi
+  if sandboxed git -C "$1" cat-file -e "$2" >/dev/null 2>&1; then echo yes; else echo no; fi
 }
 # `held_objects <dir>` -- how many objects the clone PHYSICALLY holds.
 #
@@ -554,61 +554,61 @@ has_object() { # <dir> <oid> -> yes/no
 # reports the same small number for both shapes while one of them has the whole
 # repository on disk. That is precisely the illusion the old comment traded on.
 held_objects() { # <dir> -> loose + packed
-	local loose packed k v
-	loose=0
-	packed=0
-	while read -r k v; do
-		case "$k" in
-		count:) loose="$v" ;;
-		in-pack:) packed="$v" ;;
-		esac
-	done < <(sandboxed git -C "$1" count-objects -v 2>/dev/null)
-	echo "$((loose + packed))"
+  local loose packed k v
+  loose=0
+  packed=0
+  while read -r k v; do
+    case "$k" in
+    count:) loose="$v" ;;
+    in-pack:) packed="$v" ;;
+    esac
+  done < <(sandboxed git -C "$1" count-objects -v 2>/dev/null)
+  echo "$((loose + packed))"
 }
 tree_id() { # <dir> -> the id of the checked-out tree
-	sandboxed git -C "$1" rev-parse 'HEAD^{tree}' 2>/dev/null
+  sandboxed git -C "$1" rev-parse 'HEAD^{tree}' 2>/dev/null
 }
 
 run_clone hist --repo metacraft-labs/history --dest "$TMPROOT/hist" \
-	--rev "$HIST_SHA" --shallow
+  --rev "$HIST_SHA" --shallow
 check "the economical --shallow arm clones a pinned revision" "$CASE_RC" "0"
 check "  and checks the revision out" \
-	"$(sandboxed git -C "$TMPROOT/hist" rev-parse HEAD)" "$HIST_SHA"
+  "$(sandboxed git -C "$TMPROOT/hist" rev-parse HEAD)" "$HIST_SHA"
 
 legacy_shallow_clone metacraft-labs/history "$HIST_SHA" "$TMPROOT/hist-legacy"
 # The mutation has to have WORKED to be worth comparing against. A legacy clone
 # that silently produced nothing would satisfy every "fewer than" assertion
 # below by being empty.
 check "mutation: the shape this replaces produced a real clone" \
-	"$(sandboxed_legacy git -C "$TMPROOT/hist-legacy" rev-parse HEAD 2>/dev/null)" "$HIST_SHA"
+  "$(sandboxed_legacy git -C "$TMPROOT/hist-legacy" rev-parse HEAD 2>/dev/null)" "$HIST_SHA"
 
 # THE PROPERTY. The blob is unreachable from the pinned revision, so an
 # economical clone has no reason to hold it.
 check "a blob deleted before the pinned revision is NOT transferred" \
-	"$(has_object "$TMPROOT/hist" "$BIG_BLOB")" "no"
+  "$(has_object "$TMPROOT/hist" "$BIG_BLOB")" "no"
 # MUTATION: the same probe on the shape this replaces. If this says "no", the
 # assertion above is vacuous -- it would pass against the unfixed script.
 check "mutation: the shape this replaces DID transfer it" \
-	"$(has_object "$TMPROOT/hist-legacy" "$BIG_BLOB")" "yes"
+  "$(has_object "$TMPROOT/hist-legacy" "$BIG_BLOB")" "yes"
 
 NEW_OBJS="$(held_objects "$TMPROOT/hist")"
 OLD_OBJS="$(held_objects "$TMPROOT/hist-legacy")"
 check "strictly fewer objects than the shape this replaces" \
-	"$((NEW_OBJS < OLD_OBJS))" "1"
+  "$((NEW_OBJS < OLD_OBJS))" "1"
 # The fixture has six commits; the pinned revision needs one commit, one tree
 # and one blob. Anything close to the legacy count would mean history came
 # down anyway, so the margin is stated rather than left to "strictly fewer".
 check "  and the reduction is history-sized, not incidental ($NEW_OBJS vs $OLD_OBJS)" \
-	"$((OLD_OBJS - NEW_OBJS >= 10))" "1"
+  "$((OLD_OBJS - NEW_OBJS >= 10))" "1"
 
 # ...and none of that changed the answer. Same tree id, and the working files
 # are the ones the revision names.
 check "the resulting tree is identical to the one the old shape produced" \
-	"$(tree_id "$TMPROOT/hist")" "$(tree_id "$TMPROOT/hist-legacy")"
+  "$(tree_id "$TMPROOT/hist")" "$(tree_id "$TMPROOT/hist-legacy")"
 check "the working tree holds the pinned revision's content" \
-	"$(cat "$TMPROOT/hist/README" 2>/dev/null)" "v5"
+  "$(cat "$TMPROOT/hist/README" 2>/dev/null)" "v5"
 check "  and not the file the pinned revision deleted" \
-	"$([[ -e $TMPROOT/hist/big.bin ]] && echo present || echo absent)" "absent"
+  "$([[ -e $TMPROOT/hist/big.bin ]] && echo present || echo absent)" "absent"
 
 # The economy must not have cost the credential contract, which is what the
 # rest of this suite exists for. A private repo is still reached with a
@@ -619,10 +619,10 @@ case "$V" in
 *) bad "the economical arm still authenticates through the scoped header" "journal said: ${V:-<nothing>}" ;;
 esac
 check "the economical arm writes no credential to disk" \
-	"$(credential_files "$TMPROOT/hist" | grep -c . || true)" "0"
+  "$(credential_files "$TMPROOT/hist" | grep -c . || true)" "0"
 check "  and records a credential-free remote" \
-	"$(sandboxed git -C "$TMPROOT/hist" config --get remote.origin.url)" \
-	"${BASE}metacraft-labs/history.git"
+  "$(sandboxed git -C "$TMPROOT/hist" config --get remote.origin.url)" \
+  "${BASE}metacraft-labs/history.git"
 
 # ---------------------------------------------------------------------------
 # 5b. The fallback, exercised for real: a server that will not serve an object
@@ -641,59 +641,59 @@ check "  and records a credential-free remote" \
 git_q init --bare -b main "$SRV/metacraft-labs/oldserver.git"
 git_q -C "$HIST_WORK" push "$SRV/metacraft-labs/oldserver.git" main
 for k in allowAnySHA1InWant allowReachableSHA1InWant allowTipSHA1InWant; do
-	git_q -C "$SRV/metacraft-labs/oldserver.git" config "uploadpack.${k}" false
+  git_q -C "$SRV/metacraft-labs/oldserver.git" config "uploadpack.${k}" false
 done
 # A revision that is NOT the branch tip, so it is not advertised and the
 # refusal is reached rather than dodged.
 OLD_SHA="$(git -C "$HIST_WORK" rev-parse 'HEAD~1')"
 
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.version GIT_CONFIG_VALUE_0=0 \
-	run_clone oldsrv --repo metacraft-labs/oldserver --dest "$TMPROOT/oldsrv" \
-	--rev "$OLD_SHA" --shallow
+  run_clone oldsrv --repo metacraft-labs/oldserver --dest "$TMPROOT/oldsrv" \
+  --rev "$OLD_SHA" --shallow
 check "a server that refuses an object-by-id request still yields a clone" "$CASE_RC" "0"
 check "  at exactly the pinned revision" \
-	"$(sandboxed git -C "$TMPROOT/oldsrv" rev-parse HEAD)" "$OLD_SHA"
+  "$(sandboxed git -C "$TMPROOT/oldsrv" rev-parse HEAD)" "$OLD_SHA"
 check "  with the revision's content" \
-	"$(cat "$TMPROOT/oldsrv/README" 2>/dev/null)" "v5"
+  "$(cat "$TMPROOT/oldsrv/README" 2>/dev/null)" "v5"
 # Non-vacuity: the fallback must have been REACHED. If the economical path had
 # quietly succeeded here, the assertions above would pass without testing the
 # fallback at all.
 if grep -q "falling back to a whole-repository clone" "$TMPROOT/oldsrv.out"; then
-	ok "  by taking the fallback, not by the economical path succeeding"
+  ok "  by taking the fallback, not by the economical path succeeding"
 else
-	bad "  by taking the fallback, not by the economical path succeeding" \
-		"the run never reported a fallback: $(head -c 400 "$TMPROOT/oldsrv.out")"
+  bad "  by taking the fallback, not by the economical path succeeding" \
+    "the run never reported a fallback: $(head -c 400 "$TMPROOT/oldsrv.out")"
 fi
 check "  and the degradation is not reported as an error" \
-	"$(grep -c '::error::' "$TMPROOT/oldsrv.out" || true)" "0"
+  "$(grep -c '::error::' "$TMPROOT/oldsrv.out" || true)" "0"
 check "  and it still wrote no credential" \
-	"$(credential_files "$TMPROOT/oldsrv" | grep -c . || true)" "0"
+  "$(credential_files "$TMPROOT/oldsrv" | grep -c . || true)" "0"
 
 # ===========================================================================
 # 6. Nothing the scripts print carries the credential.
 # ===========================================================================
 LEAKED=0
 for f in "$TMPROOT"/*.out; do
-	[[ -f $f ]] || continue
-	grep -qF "$TOKEN" "$f" && LEAKED=1
+  [[ -f $f ]] || continue
+  grep -qF "$TOKEN" "$f" && LEAKED=1
 done
 assert "no output of any run in this suite contains the token" "$LEAKED"
 
 # The failure path is where a diagnostic gets written without thinking. Force
 # one: a private repo with the credential scoped to the wrong owner.
 CASE_OWNERS="some-other-org" run_clone denied --repo metacraft-labs/host \
-	--dest "$TMPROOT/denied" --rev "$HOST_SHA" --shallow
+  --dest "$TMPROOT/denied" --rev "$HOST_SHA" --shallow
 check "an out-of-scope private clone FAILS rather than hanging on a prompt" \
-	"$([[ $CASE_RC -ne 0 ]] && echo failed)" "failed"
+  "$([[ $CASE_RC -ne 0 ]] && echo failed)" "failed"
 if grep -q "metacraft-labs is not one of them" "$TMPROOT/denied.out"; then
-	ok "...naming the owner that was not covered"
+  ok "...naming the owner that was not covered"
 else
-	bad "...naming the owner that was not covered" "diagnostic: $(head -c 400 "$TMPROOT/denied.out")"
+  bad "...naming the owner that was not covered" "diagnostic: $(head -c 400 "$TMPROOT/denied.out")"
 fi
 if grep -q "token-owner" "$TMPROOT/denied.out"; then
-	ok "...and naming the input that fixes it"
+  ok "...and naming the input that fixes it"
 else
-	bad "...and naming the input that fixes it" "the diagnostic did not mention token-owner"
+  bad "...and naming the input that fixes it" "the diagnostic did not mention token-owner"
 fi
 check "...without printing the token" "$(grep -cF "$TOKEN" "$TMPROOT/denied.out" || true)" "0"
 
@@ -701,35 +701,35 @@ check "...without printing the token" "$(grep -cF "$TOKEN" "$TMPROOT/denied.out"
 # 7. The scoping library's own contracts.
 # ===========================================================================
 lib_case() { # runs a snippet with the library sourced, prints its output
-	env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" bash -c "
-		set -euo pipefail
-		. '$LIB'
-		$1
-	" 2>&1
+  env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" bash -c "
+    set -euo pipefail
+    . '$LIB'
+    $1
+  " 2>&1
 }
 
 # Appending, not clobbering. A caller may run after `setup-nix` has already put
 # its own numbered configuration into the job environment; renumbering from zero
 # would silently drop it for every later step.
 OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" \
-	GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="user.name" GIT_CONFIG_VALUE_0="pre-existing" \
-	bash -c "
-		set -euo pipefail
-		. '$LIB'
-		scoped_git_auth_build
-		scoped_git_auth_export
-		printf '%s|%s|%s\n' \"\$GIT_CONFIG_COUNT\" \"\$GIT_CONFIG_KEY_0\" \"\$GIT_CONFIG_KEY_1\"
-	" 2>&1)"
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="user.name" GIT_CONFIG_VALUE_0="pre-existing" \
+  bash -c "
+    set -euo pipefail
+    . '$LIB'
+    scoped_git_auth_build
+    scoped_git_auth_export
+    printf '%s|%s|%s\n' \"\$GIT_CONFIG_COUNT\" \"\$GIT_CONFIG_KEY_0\" \"\$GIT_CONFIG_KEY_1\"
+  " 2>&1)"
 check "export appends to a pre-existing GIT_CONFIG_COUNT" \
-	"$OUT" "2|user.name|http.https://github.com/metacraft-labs/.extraHeader"
+  "$OUT" "2|user.name|http.https://github.com/metacraft-labs/.extraHeader"
 
 # An identical pair added twice makes git send the same Authorization header
 # twice, which is a malformed request and not a doubly-authenticated one.
 OUT="$(lib_case "
-	scoped_git_auth_build
-	scoped_git_auth_export
-	scoped_git_auth_export
-	printf '%s\n' \"\$GIT_CONFIG_COUNT\"
+  scoped_git_auth_build
+  scoped_git_auth_export
+  scoped_git_auth_export
+  printf '%s\n' \"\$GIT_CONFIG_COUNT\"
 ")"
 check "exporting twice does not duplicate the header" "$OUT" "1"
 
@@ -737,27 +737,27 @@ check "exporting twice does not duplicate the header" "$OUT" "1"
 # every clone in the org — with the credential scoped to follow it — by setting
 # one environment variable.
 OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" \
-	GIT_AUTH_URL_BASE="https://evil.example/" bash -c "
-		. '$LIB'
-		scoped_git_auth_build
-	" 2>&1)"
+  GIT_AUTH_URL_BASE="https://evil.example/" bash -c "
+    . '$LIB'
+    scoped_git_auth_build
+  " 2>&1)"
 RC=$?
 check "a non-github, non-loopback URL base is refused" "$RC" "2"
 
 check "no token means no credential, and that is not an error" \
-	"$(env -i PATH="$PATH" HOME="$TMPROOT" bash -c "
-		set -euo pipefail
-		. '$LIB'
-		SCOPED_GIT_AUTH_REWRITES=1 scoped_git_auth_build
-		scoped_git_auth_export
-		printf '%s\n' \"\$GIT_CONFIG_COUNT\"
-	" 2>&1)" "2"
+  "$(env -i PATH="$PATH" HOME="$TMPROOT" bash -c "
+    set -euo pipefail
+    . '$LIB'
+    SCOPED_GIT_AUTH_REWRITES=1 scoped_git_auth_build
+    scoped_git_auth_export
+    printf '%s\n' \"\$GIT_CONFIG_COUNT\"
+  " 2>&1)" "2"
 
 # The owner cross-check: the whole point of it is the message, so assert the
 # message.
 OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" TOKEN_OWNERS="metacraft-labs" bash -c "
-	. '$LIB'
-	scoped_git_auth_require_covered 'clone-siblings' metacraft-labs blocksense-network
+  . '$LIB'
+  scoped_git_auth_require_covered 'clone-siblings' metacraft-labs blocksense-network
 " 2>&1)"
 RC=$?
 check "an owner outside the token scope is refused" "$RC" "1"
@@ -770,8 +770,8 @@ case "$OUT" in
 *) bad "...and naming the input that fixes it" "message: $OUT" ;;
 esac
 OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" TOKEN_OWNERS="metacraft-labs blocksense-network" bash -c "
-	. '$LIB'
-	scoped_git_auth_require_covered 'clone-siblings' metacraft-labs blocksense-network
+  . '$LIB'
+  scoped_git_auth_require_covered 'clone-siblings' metacraft-labs blocksense-network
 " 2>&1)"
 check "owners that agree are accepted silently" "$?|$OUT" "0|"
 
@@ -783,20 +783,20 @@ check "owners that agree are accepted silently" "$?|$OUT" "0|"
 # future edit that reintroduces it should not need a server to be caught.
 # ===========================================================================
 for a in "$ROOT/clone-siblings/action.yml" "$ROOT/clone-repo/action.yml"; do
-	n="$(basename "$(dirname "$a")")"
-	check "$n/action.yml embeds no credential in a URL" \
-		"$(grep -c 'x-access-token' "$a" || true)" "0"
-	check "$n/action.yml has no catch-all insteadOf for https://github.com/" \
-		"$(grep -c 'insteadOf "https://github.com/"' "$a" || true)" "0"
-	# Interpolating a secret into a `run:` body bakes it into the command file
-	# the runner writes to disk and executes. Every mention of the token input
-	# must be a bare `KEY: ${{ ... }}` assignment on a line of its own.
-	MENTIONS="$(grep -c 'inputs\.gh-token' "$a" || true)"
-	ASSIGNMENTS="$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*\$\{\{[[:space:]]*inputs\.gh-token[[:space:]]*\}\}[[:space:]]*$' "$a" || true)"
-	check "$n/action.yml never interpolates the token into a command" \
-		"$((MENTIONS - ASSIGNMENTS))" "0"
-	check "$n/action.yml hard-codes no GitHub owner in a clone URL" \
-		"$(grep -c 'github\.com/metacraft-labs/' "$a" || true)" "0"
+  n="$(basename "$(dirname "$a")")"
+  check "$n/action.yml embeds no credential in a URL" \
+    "$(grep -c 'x-access-token' "$a" || true)" "0"
+  check "$n/action.yml has no catch-all insteadOf for https://github.com/" \
+    "$(grep -c 'insteadOf "https://github.com/"' "$a" || true)" "0"
+  # Interpolating a secret into a `run:` body bakes it into the command file
+  # the runner writes to disk and executes. Every mention of the token input
+  # must be a bare `KEY: ${{ ... }}` assignment on a line of its own.
+  MENTIONS="$(grep -c 'inputs\.gh-token' "$a" || true)"
+  ASSIGNMENTS="$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*\$\{\{[[:space:]]*inputs\.gh-token[[:space:]]*\}\}[[:space:]]*$' "$a" || true)"
+  check "$n/action.yml never interpolates the token into a command" \
+    "$((MENTIONS - ASSIGNMENTS))" "0"
+  check "$n/action.yml hard-codes no GitHub owner in a clone URL" \
+    "$(grep -c 'github\.com/metacraft-labs/' "$a" || true)" "0"
 done
 
 # The coupling from TASK 3, as wiring rather than as documentation: one input
@@ -814,30 +814,30 @@ done
 # `token-owner` input — which is what these two check, at any number of steps.
 DEV_ENV="$ROOT/setup-dev-env/action.yml"
 count_owner_lines() { # <key> [--from-input]
-	local key="$1"
-	if [[ ${2:-} == "--from-input" ]]; then
-		grep -cE "^[[:space:]]*${key}:[[:space:]]*\\\$\{\{[[:space:]]*inputs\.token-owner[[:space:]]*\}\}[[:space:]]*\$" "$DEV_ENV" || true
-	else
-		grep -cE "^[[:space:]]*${key}:" "$DEV_ENV" || true
-	fi
+  local key="$1"
+  if [[ ${2:-} == "--from-input" ]]; then
+    grep -cE "^[[:space:]]*${key}:[[:space:]]*\\\$\{\{[[:space:]]*inputs\.token-owner[[:space:]]*\}\}[[:space:]]*\$" "$DEV_ENV" || true
+  else
+    grep -cE "^[[:space:]]*${key}:" "$DEV_ENV" || true
+  fi
 }
 # `token-owner:` also appears as the action's own input declaration, which is
 # a `token-owner:` line that is not an assignment; the totals below therefore
 # count only lines that assign a `${{ }}` expression.
 count_owner_assignments() { # <key>
-	grep -cE "^[[:space:]]*${1}:[[:space:]]*\\\$\{\{" "$DEV_ENV" || true
+  grep -cE "^[[:space:]]*${1}:[[:space:]]*\\\$\{\{" "$DEV_ENV" || true
 }
 
 SIB_TOTAL="$(count_owner_assignments sibling-owner)"
 SIB_FROM="$(count_owner_lines sibling-owner --from-input)"
 check "setup-dev-env feeds every sibling-owner from token-owner" \
-	"${SIB_FROM}/${SIB_TOTAL}" "${SIB_TOTAL}/${SIB_TOTAL}"
+  "${SIB_FROM}/${SIB_TOTAL}" "${SIB_TOTAL}/${SIB_TOTAL}"
 check "  and there is at least one to feed" "$((SIB_TOTAL > 0))" "1"
 
 TOK_TOTAL="$(count_owner_assignments token-owner)"
 TOK_FROM="$(count_owner_lines token-owner --from-input)"
 check "setup-dev-env feeds every token-owner from the same input" \
-	"${TOK_FROM}/${TOK_TOTAL}" "${TOK_TOTAL}/${TOK_TOTAL}"
+  "${TOK_FROM}/${TOK_TOTAL}" "${TOK_TOTAL}/${TOK_TOTAL}"
 # One for `setup-nix` (the job-wide Git credential scope) and one per
 # `clone-siblings` invocation; fewer than two means the coupling is gone.
 check "  and it reaches setup-nix as well as clone-siblings" "$((TOK_TOTAL >= 2))" "1"
@@ -845,7 +845,7 @@ check "  and it reaches setup-nix as well as clone-siblings" "$((TOK_TOTAL >= 2)
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then
-	echo "authenticated-clone: CONTRACTS BROKEN." >&2
-	exit 1
+  echo "authenticated-clone: CONTRACTS BROKEN." >&2
+  exit 1
 fi
 echo "authenticated-clone: all contracts hold."

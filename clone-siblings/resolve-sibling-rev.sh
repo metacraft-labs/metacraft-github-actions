@@ -178,44 +178,44 @@ declare -a SHAS=()
 declare -a MANIFEST_DIRS=()
 
 while [[ $# -gt 0 ]]; do
-	case "$1" in
-	--repo)
-		SELF_REPO="$2"
-		shift 2
-		;;
-	--sibling)
-		SIBLING="$2"
-		shift 2
-		;;
-	--manifest-dir)
-		MANIFEST_DIRS+=("$2")
-		shift 2
-		;;
-	--sha)
-		SHAS+=("$2")
-		shift 2
-		;;
-	--repo-dir)
-		REPO_DIR="$2"
-		shift 2
-		;;
-	--prefer-project)
-		PREFER_PROJECT="$2"
-		shift 2
-		;;
-	--no-walk)
-		NO_WALK=1
-		shift
-		;;
-	--print-created-at)
-		PRINT_CREATED_AT=1
-		shift
-		;;
-	*)
-		echo "resolve-sibling-rev: unknown argument: $1" >&2
-		exit 2
-		;;
-	esac
+  case "$1" in
+  --repo)
+    SELF_REPO="$2"
+    shift 2
+    ;;
+  --sibling)
+    SIBLING="$2"
+    shift 2
+    ;;
+  --manifest-dir)
+    MANIFEST_DIRS+=("$2")
+    shift 2
+    ;;
+  --sha)
+    SHAS+=("$2")
+    shift 2
+    ;;
+  --repo-dir)
+    REPO_DIR="$2"
+    shift 2
+    ;;
+  --prefer-project)
+    PREFER_PROJECT="$2"
+    shift 2
+    ;;
+  --no-walk)
+    NO_WALK=1
+    shift
+    ;;
+  --print-created-at)
+    PRINT_CREATED_AT=1
+    shift
+    ;;
+  *)
+    echo "resolve-sibling-rev: unknown argument: $1" >&2
+    exit 2
+    ;;
+  esac
 done
 
 # `--sibling` names the thing whose revision is being asked for, so it is
@@ -226,12 +226,12 @@ done
 REQUIRED_ARGS=(SELF_REPO SIBLING)
 [[ $PRINT_CREATED_AT -eq 1 ]] && REQUIRED_ARGS=(SELF_REPO)
 for v in "${REQUIRED_ARGS[@]}"; do
-	if [[ -z ${!v} ]]; then
-		echo "resolve-sibling-rev: missing required value for $v" >&2
-		echo "usage: resolve-sibling-rev.sh --repo SELF --sibling NAME [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
-		echo "       resolve-sibling-rev.sh --repo SELF --print-created-at [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
-		exit 2
-	fi
+  if [[ -z ${!v} ]]; then
+    echo "resolve-sibling-rev: missing required value for $v" >&2
+    echo "usage: resolve-sibling-rev.sh --repo SELF --sibling NAME [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
+    echo "       resolve-sibling-rev.sh --repo SELF --print-created-at [--manifest-dir DIR] [--sha COMMIT]... [--repo-dir DIR] [--prefer-project P] [--no-walk]" >&2
+    exit 2
+  fi
 done
 
 [[ -z $PREFER_PROJECT ]] && PREFER_PROJECT="$SELF_REPO"
@@ -278,8 +278,8 @@ done
 # model exists to prevent.
 FROM_ENV=0
 if [[ ${#MANIFEST_DIRS[@]} -eq 0 && -n ${CT_MANIFEST_DIR:-} ]]; then
-	MANIFEST_DIRS+=("$CT_MANIFEST_DIR")
-	FROM_ENV=1
+  MANIFEST_DIRS+=("$CT_MANIFEST_DIR")
+  FROM_ENV=1
 fi
 # The env-var spelling of the private layer, for callers that address the
 # manifest checkouts through the environment rather than through flags
@@ -288,145 +288,145 @@ fi
 # ONLY when the base layer also came from the environment: a caller that names
 # its layers on the command line gets exactly those layers and no other.
 if [[ $FROM_ENV -eq 1 && -n ${CT_PRIVATE_MANIFEST_DIR:-} ]]; then
-	MANIFEST_DIRS+=("$CT_PRIVATE_MANIFEST_DIR")
+  MANIFEST_DIRS+=("$CT_PRIVATE_MANIFEST_DIR")
 fi
 AUTO_LOOKED=""
 if [[ ${#MANIFEST_DIRS[@]} -eq 0 ]]; then
-	d="$(cd "$REPO_DIR" 2>/dev/null && pwd)" || d=""
-	base=""
-	fallback=""
-	while [[ -n $d && $d != "/" ]]; do
-		if [[ -d "$d/.repro/manifests/locks" ]]; then
-			base="$d/.repro/manifests"
-			break
-		fi
-		if [[ -d "$d/.repo/manifests/locks" ]]; then
-			base="$d/.repo/manifests"
-			break
-		fi
-		if [[ -z $fallback && -d "$d/.repro/manifests" ]]; then
-			fallback="$d/.repro/manifests"
-		fi
-		if [[ -z $fallback && -d "$d/.repo/manifests" ]]; then
-			fallback="$d/.repo/manifests"
-		fi
-		d="${d%/*}"
-	done
-	[[ -z $base ]] && base="$fallback"
-	if [[ -n $base ]]; then
-		MANIFEST_DIRS+=("$base")
-		AUTO_LOOKED="$base"
-		# The extra layers always live under `.repro/`, whichever base won.
-		# An older `.repo/manifests` base does NOT suppress them: a workspace
-		# can easily have a lock-carrying `.repo/manifests` beside a
-		# `.repro/manifests-private`, and dropping the private layer because
-		# the BASE happens to be the older one is exactly the silent downgrade
-		# to public-only that the CI path treats as fatal.
-		wsroot="${base%/*}" # .../.repo or .../.repro
-		wsroot="${wsroot%/*}"
-		declare -a XD=() XN=()
-		AMBIG=""
-		for extra in "$wsroot"/.repro/manifests-*; do
-			[[ -d "$extra/locks" ]] || continue
-			[[ $extra == */manifests-private ]] && continue
-			leaf="${extra##*/}"
-			rest="${leaf#manifests-}"
-			num="${rest%%-*}"
-			okn=1
-			# `manifests-<n>-<slug>`: <n> must be present, non-empty, all
-			# digits, and actually followed by a `-<slug>`.
-			[[ -z $num || $num == "$rest" ]] && okn=0
-			if [[ $okn -eq 1 ]]; then
-				for ((i = 0; i < ${#num}; i++)); do
-					case "${num:i:1}" in
-					[0-9]) ;;
-					*)
-						okn=0
-						break
-						;;
-					esac
-				done
-			fi
-			if [[ $okn -eq 0 ]]; then
-				AMBIG="${AMBIG}
+  d="$(cd "$REPO_DIR" 2>/dev/null && pwd)" || d=""
+  base=""
+  fallback=""
+  while [[ -n $d && $d != "/" ]]; do
+    if [[ -d "$d/.repro/manifests/locks" ]]; then
+      base="$d/.repro/manifests"
+      break
+    fi
+    if [[ -d "$d/.repo/manifests/locks" ]]; then
+      base="$d/.repo/manifests"
+      break
+    fi
+    if [[ -z $fallback && -d "$d/.repro/manifests" ]]; then
+      fallback="$d/.repro/manifests"
+    fi
+    if [[ -z $fallback && -d "$d/.repo/manifests" ]]; then
+      fallback="$d/.repo/manifests"
+    fi
+    d="${d%/*}"
+  done
+  [[ -z $base ]] && base="$fallback"
+  if [[ -n $base ]]; then
+    MANIFEST_DIRS+=("$base")
+    AUTO_LOOKED="$base"
+    # The extra layers always live under `.repro/`, whichever base won.
+    # An older `.repo/manifests` base does NOT suppress them: a workspace
+    # can easily have a lock-carrying `.repo/manifests` beside a
+    # `.repro/manifests-private`, and dropping the private layer because
+    # the BASE happens to be the older one is exactly the silent downgrade
+    # to public-only that the CI path treats as fatal.
+    wsroot="${base%/*}" # .../.repo or .../.repro
+    wsroot="${wsroot%/*}"
+    declare -a XD=() XN=()
+    AMBIG=""
+    for extra in "$wsroot"/.repro/manifests-*; do
+      [[ -d "$extra/locks" ]] || continue
+      [[ $extra == */manifests-private ]] && continue
+      leaf="${extra##*/}"
+      rest="${leaf#manifests-}"
+      num="${rest%%-*}"
+      okn=1
+      # `manifests-<n>-<slug>`: <n> must be present, non-empty, all
+      # digits, and actually followed by a `-<slug>`.
+      [[ -z $num || $num == "$rest" ]] && okn=0
+      if [[ $okn -eq 1 ]]; then
+        for ((i = 0; i < ${#num}; i++)); do
+          case "${num:i:1}" in
+          [0-9]) ;;
+          *)
+            okn=0
+            break
+            ;;
+          esac
+        done
+      fi
+      if [[ $okn -eq 0 ]]; then
+        AMBIG="${AMBIG}
     ${extra}"
-				continue
-			fi
-			XD+=("$extra")
-			XN+=("$((10#$num))")
-		done
-		if [[ -n $AMBIG ]]; then
-			{
-				echo "resolve-sibling-rev: cannot order the auto-discovered manifest layers.$AMBIG"
-				echo "  A '.repro/manifests-<name>' layer whose name does not encode its"
-				echo "  '[[manifest]]' index (the 'manifests-<n>-<slug>' spelling) carries no"
-				echo "  precedence information — its position lives only in the workspace config."
-				echo "  Guessing an order here would silently pick a pin; ordering alphabetically"
-				echo "  would put 'manifests-team' ahead of 'manifests-personal', which is backwards."
-				echo "  Pass the layers explicitly instead, least specific first:"
-				echo "    --manifest-dir <public> [--manifest-dir <next>]... --manifest-dir <most specific>"
-			} >&2
-			exit 3
-		fi
-		# Selection sort on the `[[manifest]]` index. Glob order is
-		# lexicographic, which puts `manifests-10-x` BEFORE `manifests-2-x` and
-		# would silently invert precedence at ten or more layers. Pure bash: no
-		# `sort` on PATH is assumed.
-		xn=${#XD[@]}
-		for ((a = 0; a < xn; a++)); do
-			m=$a
-			for ((b = a + 1; b < xn; b++)); do
-				[[ ${XN[b]} -lt ${XN[m]} ]] && m=$b
-			done
-			if [[ $m -ne $a ]]; then
-				t="${XN[a]}"
-				XN[a]="${XN[m]}"
-				XN[m]="$t"
-				t="${XD[a]}"
-				XD[a]="${XD[m]}"
-				XD[m]="$t"
-			fi
-		done
-		for ((a = 0; a < xn; a++)); do
-			MANIFEST_DIRS+=("${XD[a]}")
-		done
-		# `-private` is the most specific layer a workspace can have on disk.
-		if [[ -d "$wsroot/.repro/manifests-private/locks" ]]; then
-			MANIFEST_DIRS+=("$wsroot/.repro/manifests-private")
-		fi
-	fi
+        continue
+      fi
+      XD+=("$extra")
+      XN+=("$((10#$num))")
+    done
+    if [[ -n $AMBIG ]]; then
+      {
+        echo "resolve-sibling-rev: cannot order the auto-discovered manifest layers.$AMBIG"
+        echo "  A '.repro/manifests-<name>' layer whose name does not encode its"
+        echo "  '[[manifest]]' index (the 'manifests-<n>-<slug>' spelling) carries no"
+        echo "  precedence information — its position lives only in the workspace config."
+        echo "  Guessing an order here would silently pick a pin; ordering alphabetically"
+        echo "  would put 'manifests-team' ahead of 'manifests-personal', which is backwards."
+        echo "  Pass the layers explicitly instead, least specific first:"
+        echo "    --manifest-dir <public> [--manifest-dir <next>]... --manifest-dir <most specific>"
+      } >&2
+      exit 3
+    fi
+    # Selection sort on the `[[manifest]]` index. Glob order is
+    # lexicographic, which puts `manifests-10-x` BEFORE `manifests-2-x` and
+    # would silently invert precedence at ten or more layers. Pure bash: no
+    # `sort` on PATH is assumed.
+    xn=${#XD[@]}
+    for ((a = 0; a < xn; a++)); do
+      m=$a
+      for ((b = a + 1; b < xn; b++)); do
+        [[ ${XN[b]} -lt ${XN[m]} ]] && m=$b
+      done
+      if [[ $m -ne $a ]]; then
+        t="${XN[a]}"
+        XN[a]="${XN[m]}"
+        XN[m]="$t"
+        t="${XD[a]}"
+        XD[a]="${XD[m]}"
+        XD[m]="$t"
+      fi
+    done
+    for ((a = 0; a < xn; a++)); do
+      MANIFEST_DIRS+=("${XD[a]}")
+    done
+    # `-private` is the most specific layer a workspace can have on disk.
+    if [[ -d "$wsroot/.repro/manifests-private/locks" ]]; then
+      MANIFEST_DIRS+=("$wsroot/.repro/manifests-private")
+    fi
+  fi
 fi
 
 # Keep only the layers that actually carry a locks/ tree, preserving order.
 declare -a LOCKS_ROOTS=()
 declare -a LAYER_DIRS=()
 for md in ${MANIFEST_DIRS[@]+"${MANIFEST_DIRS[@]}"}; do
-	[[ -n $md && -d "$md/locks" ]] || continue
-	LOCKS_ROOTS+=("$md/locks")
-	LAYER_DIRS+=("$md")
+  [[ -n $md && -d "$md/locks" ]] || continue
+  LOCKS_ROOTS+=("$md/locks")
+  LAYER_DIRS+=("$md")
 done
 if [[ ${#LOCKS_ROOTS[@]} -eq 0 ]]; then
-	{
-		echo "resolve-sibling-rev: cannot locate the manifest repo locks/ tree."
-		echo "  Pass --manifest-dir <metacraft-manifests checkout> (repeatable, least-"
-		echo "  specific layer first), set CT_MANIFEST_DIR, or run from inside a"
-		echo "  workspace with .repro/manifests or .repo/manifests."
-		for md in ${MANIFEST_DIRS[@]+"${MANIFEST_DIRS[@]}"}; do
-			[[ -n $md ]] && echo "  (looked at: $md, which has no locks/ subtree)"
-		done
-		[[ -n $AUTO_LOOKED ]] && echo "  (auto-discovery reached: $AUTO_LOOKED)"
-	} >&2
-	exit 3
+  {
+    echo "resolve-sibling-rev: cannot locate the manifest repo locks/ tree."
+    echo "  Pass --manifest-dir <metacraft-manifests checkout> (repeatable, least-"
+    echo "  specific layer first), set CT_MANIFEST_DIR, or run from inside a"
+    echo "  workspace with .repro/manifests or .repo/manifests."
+    for md in ${MANIFEST_DIRS[@]+"${MANIFEST_DIRS[@]}"}; do
+      [[ -n $md ]] && echo "  (looked at: $md, which has no locks/ subtree)"
+    done
+    [[ -n $AUTO_LOOKED ]] && echo "  (auto-discovery reached: $AUTO_LOOKED)"
+  } >&2
+  exit 3
 fi
 
 # --- candidate SHAs -------------------------------------------------------
 if [[ ${#SHAS[@]} -eq 0 ]]; then
-	if head_sha="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)"; then
-		SHAS+=("$head_sha")
-	else
-		echo "resolve-sibling-rev: no --sha given and '$REPO_DIR' is not a git repo" >&2
-		exit 2
-	fi
+  if head_sha="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)"; then
+    SHAS+=("$head_sha")
+  else
+    echo "resolve-sibling-rev: no --sha given and '$REPO_DIR' is not a git repo" >&2
+    exit 2
+  fi
 fi
 
 # Find the lock file for a given repo@sha across all workspaces, and leave it
@@ -516,46 +516,46 @@ fi
 # be refused loudly (exit 5). Likewise a document that DOES declare a schema is
 # a lock, and a one-repo workspace's lock is answered normally.
 is_participation_record() { # $1 = .toml file
-	local file="$1" l key val
-	local tables=0 repo_tables=0 names=0 foreign=0
+  local file="$1" l key val
+  local tables=0 repo_tables=0 names=0 foreign=0
 
-	while IFS= read -r l || [[ -n $l ]]; do
-		l="${l%$'\r'}"
-		while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
-		while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
-		[[ -z $l ]] && continue
-		[[ ${l:0:1} == "#" ]] && continue
+  while IFS= read -r l || [[ -n $l ]]; do
+    l="${l%$'\r'}"
+    while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
+    while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
+    [[ -z $l ]] && continue
+    [[ ${l:0:1} == "#" ]] && continue
 
-		if [[ ${l:0:1} == "[" ]]; then
-			tables=$((tables + 1))
-			[[ $l == "[[repo]]" ]] && repo_tables=$((repo_tables + 1))
-			continue
-		fi
+    if [[ ${l:0:1} == "[" ]]; then
+      tables=$((tables + 1))
+      [[ $l == "[[repo]]" ]] && repo_tables=$((repo_tables + 1))
+      continue
+    fi
 
-		key="${l%%=*}"
-		[[ $key == "$l" ]] && continue
-		val="${l#*=}"
-		while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
-		while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
-		case "$val" in
-		\"*\") val="${val#\"}" && val="${val%\"}" ;;
-		\'*\') val="${val#\'}" && val="${val%\'}" ;;
-		esac
+    key="${l%%=*}"
+    [[ $key == "$l" ]] && continue
+    val="${l#*=}"
+    while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
+    while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
+    case "$val" in
+    \"*\") val="${val#\"}" && val="${val%\"}" ;;
+    \'*\') val="${val#\'}" && val="${val%\'}" ;;
+    esac
 
-		# A top-level `schema` (i.e. before any table header) makes this a lock
-		# document, whatever else it contains.
-		if [[ $tables -eq 0 && $key == "schema" ]]; then
-			return 1
-		fi
-		if [[ $key == "name" ]]; then
-			names=$((names + 1))
-			[[ $val != "$SELF_REPO" ]] && foreign=1
-		fi
-	done <"$file"
+    # A top-level `schema` (i.e. before any table header) makes this a lock
+    # document, whatever else it contains.
+    if [[ $tables -eq 0 && $key == "schema" ]]; then
+      return 1
+    fi
+    if [[ $key == "name" ]]; then
+      names=$((names + 1))
+      [[ $val != "$SELF_REPO" ]] && foreign=1
+    fi
+  done <"$file"
 
-	# At least one [[repo]], nothing but [[repo]] tables, at least one name, and
-	# no name other than our own.
-	[[ $repo_tables -gt 0 && $tables -eq $repo_tables && $names -gt 0 && $foreign -eq 0 ]]
+  # At least one [[repo]], nothing but [[repo]] tables, at least one name, and
+  # no name other than our own.
+  [[ $repo_tables -gt 0 && $tables -eq $repo_tables && $names -gt 0 && $foreign -eq 0 ]]
 }
 
 # `find_locks <locks-root> <sha>` — the search is per LAYER, because each layer
@@ -568,59 +568,59 @@ declare -a LOCK_FILES=()
 # commit that visibly has files on disk.
 declare -a SKIPPED_PARTICIPATION=()
 find_locks() {
-	local locks_root="$1" sha="$2" f proj
-	local -a pref_nested=() pref_flat=() other_nested=() other_flat=()
-	local other_project=""
-	for f in "$locks_root"/*/"$SELF_REPO"/"$sha.toml"; do
-		[[ -f $f ]] || continue
-		if is_participation_record "$f"; then
-			SKIPPED_PARTICIPATION+=("$f")
-			continue
-		fi
-		if [[ $f == "$locks_root/$PREFER_PROJECT/"* ]]; then
-			pref_nested+=("$f")
-			continue
-		fi
-		proj="${f#"$locks_root"/}"
-		proj="${proj%%/*}"
-		[[ -z $other_project ]] && other_project="$proj"
-		[[ $proj == "$other_project" ]] && other_nested+=("$f")
-	done
-	for f in "$locks_root"/*/"$SELF_REPO-$sha.toml"; do
-		[[ -f $f ]] || continue
-		if is_participation_record "$f"; then
-			SKIPPED_PARTICIPATION+=("$f")
-			continue
-		fi
-		if [[ $f == "$locks_root/$PREFER_PROJECT/"* ]]; then
-			pref_flat+=("$f")
-			continue
-		fi
-		proj="${f#"$locks_root"/}"
-		proj="${proj%%/*}"
-		[[ -z $other_project ]] && other_project="$proj"
-		[[ $proj == "$other_project" ]] && other_flat+=("$f")
-	done
-	# Spelled out rather than looped over nameref'd array names: `local -n` is
-	# bash 4.3+, and this script has to run under the bash 3.2 that macOS ships.
-	LOCK_FILES=()
-	if [[ ${#pref_nested[@]} -gt 0 ]]; then
-		LOCK_FILES=("${pref_nested[@]}")
-		return 0
-	fi
-	if [[ ${#pref_flat[@]} -gt 0 ]]; then
-		LOCK_FILES=("${pref_flat[@]}")
-		return 0
-	fi
-	if [[ ${#other_nested[@]} -gt 0 ]]; then
-		LOCK_FILES=("${other_nested[@]}")
-		return 0
-	fi
-	if [[ ${#other_flat[@]} -gt 0 ]]; then
-		LOCK_FILES=("${other_flat[@]}")
-		return 0
-	fi
-	return 1
+  local locks_root="$1" sha="$2" f proj
+  local -a pref_nested=() pref_flat=() other_nested=() other_flat=()
+  local other_project=""
+  for f in "$locks_root"/*/"$SELF_REPO"/"$sha.toml"; do
+    [[ -f $f ]] || continue
+    if is_participation_record "$f"; then
+      SKIPPED_PARTICIPATION+=("$f")
+      continue
+    fi
+    if [[ $f == "$locks_root/$PREFER_PROJECT/"* ]]; then
+      pref_nested+=("$f")
+      continue
+    fi
+    proj="${f#"$locks_root"/}"
+    proj="${proj%%/*}"
+    [[ -z $other_project ]] && other_project="$proj"
+    [[ $proj == "$other_project" ]] && other_nested+=("$f")
+  done
+  for f in "$locks_root"/*/"$SELF_REPO-$sha.toml"; do
+    [[ -f $f ]] || continue
+    if is_participation_record "$f"; then
+      SKIPPED_PARTICIPATION+=("$f")
+      continue
+    fi
+    if [[ $f == "$locks_root/$PREFER_PROJECT/"* ]]; then
+      pref_flat+=("$f")
+      continue
+    fi
+    proj="${f#"$locks_root"/}"
+    proj="${proj%%/*}"
+    [[ -z $other_project ]] && other_project="$proj"
+    [[ $proj == "$other_project" ]] && other_flat+=("$f")
+  done
+  # Spelled out rather than looped over nameref'd array names: `local -n` is
+  # bash 4.3+, and this script has to run under the bash 3.2 that macOS ships.
+  LOCK_FILES=()
+  if [[ ${#pref_nested[@]} -gt 0 ]]; then
+    LOCK_FILES=("${pref_nested[@]}")
+    return 0
+  fi
+  if [[ ${#pref_flat[@]} -gt 0 ]]; then
+    LOCK_FILES=("${pref_flat[@]}")
+    return 0
+  fi
+  if [[ ${#other_nested[@]} -gt 0 ]]; then
+    LOCK_FILES=("${other_nested[@]}")
+    return 0
+  fi
+  if [[ ${#other_flat[@]} -gt 0 ]]; then
+    LOCK_FILES=("${other_flat[@]}")
+    return 0
+  fi
+  return 1
 }
 
 # --- lock parsers ---------------------------------------------------------
@@ -658,22 +658,22 @@ PARSE_ERR=""
 # So anything that is not a bare 40-hex SHA is a malformed lock (exit 5), never
 # a resolve.
 check_rev_shape() {
-	local rev="$1" what="$2" i c
-	if [[ ${#rev} -ne 40 ]]; then
-		PARSE_ERR="$what is not a 40-character commit SHA: '$rev'"
-		return 1
-	fi
-	for ((i = 0; i < 40; i++)); do
-		c="${rev:i:1}"
-		case "$c" in
-		[0-9a-f]) ;;
-		*)
-			PARSE_ERR="$what is not a hexadecimal commit SHA: '$rev'"
-			return 1
-			;;
-		esac
-	done
-	return 0
+  local rev="$1" what="$2" i c
+  if [[ ${#rev} -ne 40 ]]; then
+    PARSE_ERR="$what is not a 40-character commit SHA: '$rev'"
+    return 1
+  fi
+  for ((i = 0; i < 40; i++)); do
+    c="${rev:i:1}"
+    case "$c" in
+    [0-9a-f]) ;;
+    *)
+      PARSE_ERR="$what is not a hexadecimal commit SHA: '$rev'"
+      return 1
+      ;;
+    esac
+  done
+  return 0
 }
 
 # reprobuild TOML: `schema = "reprobuild.workspace.lock.v1"`, a [lock] header
@@ -681,109 +681,109 @@ check_rev_shape() {
 # (see reprobuild-specs/Workspace-Manifests.md), so a scanner is enough — but it
 # is a strict one: anything it does not recognise is reported, never skipped.
 rev_from_toml() {
-	local lock="$1" sibling="$2"
-	local l key val
-	local schema_seen=0 in_repo=0 repo_blocks=0
-	local name="" rev="" hit=0 dup=0
-	PARSE_REV=""
-	PARSE_ERR=""
+  local lock="$1" sibling="$2"
+  local l key val
+  local schema_seen=0 in_repo=0 repo_blocks=0
+  local name="" rev="" hit=0 dup=0
+  PARSE_REV=""
+  PARSE_ERR=""
 
-	# Flush the [[repo]] block that just ended; sets `hit` when it is ours.
-	# The whole file is scanned even after a hit, rather than stopping at the
-	# first match, so that a second [[repo]] pinning the SAME name is seen. One
-	# repo cannot have two revisions in one workspace; taking whichever came
-	# first would be a coin toss dressed up as an answer.
-	_flush() {
-		if [[ $in_repo -eq 1 && $name == "$sibling" ]]; then
-			if [[ $hit -eq 1 ]]; then
-				dup=1
-			else
-				PARSE_REV="$rev"
-				hit=1
-			fi
-		fi
-		in_repo=0
-		name=""
-		rev=""
-	}
+  # Flush the [[repo]] block that just ended; sets `hit` when it is ours.
+  # The whole file is scanned even after a hit, rather than stopping at the
+  # first match, so that a second [[repo]] pinning the SAME name is seen. One
+  # repo cannot have two revisions in one workspace; taking whichever came
+  # first would be a coin toss dressed up as an answer.
+  _flush() {
+    if [[ $in_repo -eq 1 && $name == "$sibling" ]]; then
+      if [[ $hit -eq 1 ]]; then
+        dup=1
+      else
+        PARSE_REV="$rev"
+        hit=1
+      fi
+    fi
+    in_repo=0
+    name=""
+    rev=""
+  }
 
-	while IFS= read -r l || [[ -n $l ]]; do
-		l="${l%$'\r'}"
-		while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
-		while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
-		[[ -z $l ]] && continue
-		[[ ${l:0:1} == "#" ]] && continue
+  while IFS= read -r l || [[ -n $l ]]; do
+    l="${l%$'\r'}"
+    while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
+    while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
+    [[ -z $l ]] && continue
+    [[ ${l:0:1} == "#" ]] && continue
 
-		if [[ ${l:0:1} == "[" ]]; then
-			# The schema key is a top-level key, so it must have been seen
-			# before the first table header. Refusing an unknown or absent
-			# schema is the point: a future lock revision must announce itself
-			# rather than be half-understood by this parser.
-			if [[ $schema_seen -eq 0 ]]; then
-				PARSE_ERR="no top-level 'schema' key (not a reprobuild.workspace.lock.v1 document)"
-				return 2
-			fi
-			_flush
-			if [[ $l == "[[repo]]" ]]; then
-				in_repo=1
-				repo_blocks=$((repo_blocks + 1))
-			fi
-			continue
-		fi
+    if [[ ${l:0:1} == "[" ]]; then
+      # The schema key is a top-level key, so it must have been seen
+      # before the first table header. Refusing an unknown or absent
+      # schema is the point: a future lock revision must announce itself
+      # rather than be half-understood by this parser.
+      if [[ $schema_seen -eq 0 ]]; then
+        PARSE_ERR="no top-level 'schema' key (not a reprobuild.workspace.lock.v1 document)"
+        return 2
+      fi
+      _flush
+      if [[ $l == "[[repo]]" ]]; then
+        in_repo=1
+        repo_blocks=$((repo_blocks + 1))
+      fi
+      continue
+    fi
 
-		key="${l%%=*}"
-		[[ $key == "$l" ]] && continue
-		val="${l#*=}"
-		while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
-		while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
-		case "$val" in
-		\"*\") val="${val#\"}" && val="${val%\"}" ;;
-		\'*\') val="${val#\'}" && val="${val%\'}" ;;
-		esac
+    key="${l%%=*}"
+    [[ $key == "$l" ]] && continue
+    val="${l#*=}"
+    while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
+    while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
+    case "$val" in
+    \"*\") val="${val#\"}" && val="${val%\"}" ;;
+    \'*\') val="${val#\'}" && val="${val%\'}" ;;
+    esac
 
-		if [[ $in_repo -eq 0 ]]; then
-			if [[ $key == "schema" ]]; then
-				if [[ $val != "reprobuild.workspace.lock.v1" ]]; then
-					PARSE_ERR="unsupported lock schema '$val' (this resolver reads reprobuild.workspace.lock.v1)"
-					return 2
-				fi
-				schema_seen=1
-			fi
-			continue
-		fi
+    if [[ $in_repo -eq 0 ]]; then
+      if [[ $key == "schema" ]]; then
+        if [[ $val != "reprobuild.workspace.lock.v1" ]]; then
+          PARSE_ERR="unsupported lock schema '$val' (this resolver reads reprobuild.workspace.lock.v1)"
+          return 2
+        fi
+        schema_seen=1
+      fi
+      continue
+    fi
 
-		case "$key" in
-		name) name="$val" ;;
-		revision) rev="$val" ;;
-		esac
-	done <"$lock"
-	_flush
+    case "$key" in
+    name) name="$val" ;;
+    revision) rev="$val" ;;
+    esac
+  done <"$lock"
+  _flush
 
-	if [[ $dup -eq 1 ]]; then
-		PARSE_REV=""
-		PARSE_ERR="more than one [[repo]] entry pins name = \"$sibling\""
-		return 2
-	fi
-	if [[ $schema_seen -eq 0 ]]; then
-		PARSE_ERR="no top-level 'schema' key (not a reprobuild.workspace.lock.v1 document)"
-		return 2
-	fi
-	if [[ $repo_blocks -eq 0 ]]; then
-		PARSE_ERR="no [[repo]] entries (truncated lock?)"
-		return 2
-	fi
-	if [[ $hit -eq 0 ]]; then
-		return 1
-	fi
-	if [[ -z $PARSE_REV ]]; then
-		PARSE_ERR="[[repo]] entry name = \"$sibling\" carries no revision"
-		return 2
-	fi
-	check_rev_shape "$PARSE_REV" "[[repo]] name = \"$sibling\" revision" || {
-		PARSE_REV=""
-		return 2
-	}
-	return 0
+  if [[ $dup -eq 1 ]]; then
+    PARSE_REV=""
+    PARSE_ERR="more than one [[repo]] entry pins name = \"$sibling\""
+    return 2
+  fi
+  if [[ $schema_seen -eq 0 ]]; then
+    PARSE_ERR="no top-level 'schema' key (not a reprobuild.workspace.lock.v1 document)"
+    return 2
+  fi
+  if [[ $repo_blocks -eq 0 ]]; then
+    PARSE_ERR="no [[repo]] entries (truncated lock?)"
+    return 2
+  fi
+  if [[ $hit -eq 0 ]]; then
+    return 1
+  fi
+  if [[ -z $PARSE_REV ]]; then
+    PARSE_ERR="[[repo]] entry name = \"$sibling\" carries no revision"
+    return 2
+  fi
+  check_rev_shape "$PARSE_REV" "[[repo]] name = \"$sibling\" revision" || {
+    PARSE_REV=""
+    return 2
+  }
+  return 0
 }
 
 # --- select the commit whose locks to read --------------------------------
@@ -799,80 +799,80 @@ declare -a CANDIDATES=("${SHAS[@]}")
 # candidate list rather than forming a second search pass, so the "same commit
 # for every layer" rule holds for the walk too.
 if [[ $NO_WALK -eq 0 ]]; then
-	if anc=$(git -C "$REPO_DIR" rev-list --first-parent --max-count=400 "${SHAS[0]}" 2>/dev/null); then
-		while IFS= read -r ancsha; do
-			[[ -z $ancsha ]] && continue
-			CANDIDATES+=("$ancsha")
-		done <<<"$anc"
-	fi
+  if anc=$(git -C "$REPO_DIR" rev-list --first-parent --max-count=400 "${SHAS[0]}" 2>/dev/null); then
+    while IFS= read -r ancsha; do
+      [[ -z $ancsha ]] && continue
+      CANDIDATES+=("$ancsha")
+    done <<<"$anc"
+  fi
 fi
 
 CHOSEN_SHA=""
 for sha in "${CANDIDATES[@]}"; do
-	for lr in "${LOCKS_ROOTS[@]}"; do
-		if find_locks "$lr" "$sha"; then
-			CHOSEN_SHA="$sha"
-			break
-		fi
-	done
-	[[ -n $CHOSEN_SHA ]] && break
+  for lr in "${LOCKS_ROOTS[@]}"; do
+    if find_locks "$lr" "$sha"; then
+      CHOSEN_SHA="$sha"
+      break
+    fi
+  done
+  [[ -n $CHOSEN_SHA ]] && break
 done
 
 if [[ -z $CHOSEN_SHA ]]; then
-	{
-		echo "resolve-sibling-rev: no workspace lock found for $SELF_REPO"
-		echo "  candidate SHAs: ${SHAS[*]}"
-		echo "  searched, for each candidate <sha>, in every manifest layer:"
-		for lr in "${LOCKS_ROOTS[@]}"; do
-			echo "    $lr/*/$SELF_REPO/<sha>.toml"
-			echo "    $lr/*/$SELF_REPO-<sha>.toml   (historical flat spelling)"
-		done
-		[[ $NO_WALK -eq 0 ]] && echo "  (also walked first-parent ancestry of ${SHAS[0]})"
-		# Name any legacy XML record that is sitting where a lock would be, so
-		# that a reader who can SEE a file for this commit is told why it did
-		# not count. Its existence is reported; its content is never read.
-		declare -a IGNORED_XML=()
-		for sha in "${SHAS[@]}"; do
-			for lr in "${LOCKS_ROOTS[@]}"; do
-				for f in "$lr"/*/"$SELF_REPO"/"$sha.xml" "$lr"/*/"$SELF_REPO-$sha.xml"; do
-					[[ -f $f ]] && IGNORED_XML+=("$f")
-				done
-			done
-		done
-		if [[ ${#IGNORED_XML[@]} -gt 0 ]]; then
-			echo "  Ignored ${#IGNORED_XML[@]} legacy repo-workspaces XML record(s):"
-			for f in "${IGNORED_XML[@]}"; do
-				echo "    $f"
-			done
-			echo "  XML lock records are not supported. Support was removed on 2026-09-29"
-			echo "  and the records were erased from metacraft-manifests; an .xml file is"
-			echo "  never read as a lock, with or without a .toml beside it. Publish a"
-			echo "  reprobuild record for this commit with 'repro workspace lock'."
-		fi
-		if [[ ${#SKIPPED_PARTICIPATION[@]} -gt 0 ]]; then
-			echo "  Ignored ${#SKIPPED_PARTICIPATION[@]} routed per-repo participation record(s):"
-			for f in "${SKIPPED_PARTICIPATION[@]}"; do
-				echo "    $f"
-			done
-			echo "  Those are written by reprobuild's ROUTED locking mode ('repro locking"
-			echo "  adopt-manifest'). Each record pins only '$SELF_REPO' itself, so none of"
-			echo "  them can name a sibling. Treated exactly as a missing lock, never as a"
-			echo "  broken one."
-			echo "  Routed mode DOES publish a workspace-lock document"
-			echo '  (schema = "reprobuild.workspace.lock.v1"): one per routed partition,'
-			echo "  written into that partition's own backend at this same"
-			echo "  locks/<project>/<repo>/<sha> key, covering that partition's repos. The"
-			echo "  minimal records above are what it writes for repos NO partition covers."
-			echo "  Seeing only records here therefore means no partition lock was published"
-			echo "  for this commit — not that routed mode declines to write one. Re-run"
-			echo "  'repro workspace lock' in the workspace and push the manifest repo."
-		fi
-		echo "  Every commit under cross-repo CI must be locked by the workspace tooling"
-		echo "  ('repro workspace lock' / the reprobuild post-commit + pre-push hooks)."
-		echo "  A missing lock means the commit was not published through that tooling,"
-		echo "  or its lock was not pushed to the manifest repo."
-	} >&2
-	exit 3
+  {
+    echo "resolve-sibling-rev: no workspace lock found for $SELF_REPO"
+    echo "  candidate SHAs: ${SHAS[*]}"
+    echo "  searched, for each candidate <sha>, in every manifest layer:"
+    for lr in "${LOCKS_ROOTS[@]}"; do
+      echo "    $lr/*/$SELF_REPO/<sha>.toml"
+      echo "    $lr/*/$SELF_REPO-<sha>.toml   (historical flat spelling)"
+    done
+    [[ $NO_WALK -eq 0 ]] && echo "  (also walked first-parent ancestry of ${SHAS[0]})"
+    # Name any legacy XML record that is sitting where a lock would be, so
+    # that a reader who can SEE a file for this commit is told why it did
+    # not count. Its existence is reported; its content is never read.
+    declare -a IGNORED_XML=()
+    for sha in "${SHAS[@]}"; do
+      for lr in "${LOCKS_ROOTS[@]}"; do
+        for f in "$lr"/*/"$SELF_REPO"/"$sha.xml" "$lr"/*/"$SELF_REPO-$sha.xml"; do
+          [[ -f $f ]] && IGNORED_XML+=("$f")
+        done
+      done
+    done
+    if [[ ${#IGNORED_XML[@]} -gt 0 ]]; then
+      echo "  Ignored ${#IGNORED_XML[@]} legacy repo-workspaces XML record(s):"
+      for f in "${IGNORED_XML[@]}"; do
+        echo "    $f"
+      done
+      echo "  XML lock records are not supported. Support was removed on 2026-09-29"
+      echo "  and the records were erased from metacraft-manifests; an .xml file is"
+      echo "  never read as a lock, with or without a .toml beside it. Publish a"
+      echo "  reprobuild record for this commit with 'repro workspace lock'."
+    fi
+    if [[ ${#SKIPPED_PARTICIPATION[@]} -gt 0 ]]; then
+      echo "  Ignored ${#SKIPPED_PARTICIPATION[@]} routed per-repo participation record(s):"
+      for f in "${SKIPPED_PARTICIPATION[@]}"; do
+        echo "    $f"
+      done
+      echo "  Those are written by reprobuild's ROUTED locking mode ('repro locking"
+      echo "  adopt-manifest'). Each record pins only '$SELF_REPO' itself, so none of"
+      echo "  them can name a sibling. Treated exactly as a missing lock, never as a"
+      echo "  broken one."
+      echo "  Routed mode DOES publish a workspace-lock document"
+      echo '  (schema = "reprobuild.workspace.lock.v1"): one per routed partition,'
+      echo "  written into that partition's own backend at this same"
+      echo "  locks/<project>/<repo>/<sha> key, covering that partition's repos. The"
+      echo "  minimal records above are what it writes for repos NO partition covers."
+      echo "  Seeing only records here therefore means no partition lock was published"
+      echo "  for this commit — not that routed mode declines to write one. Re-run"
+      echo "  'repro workspace lock' in the workspace and push the manifest repo."
+    fi
+    echo "  Every commit under cross-repo CI must be locked by the workspace tooling"
+    echo "  ('repro workspace lock' / the reprobuild post-commit + pre-push hooks)."
+    echo "  A missing lock means the commit was not published through that tooling,"
+    echo "  or its lock was not pushed to the manifest repo."
+  } >&2
+  exit 3
 fi
 
 # --- WHEN THE PINS WERE GENERATED ------------------------------------------
@@ -896,53 +896,53 @@ fi
 # A lock whose `[lock]` table has no `created_at` answers `unknown`, which is a
 # true statement about the record, and never a fabricated date.
 created_at_from_toml() { # <lock>
-	local lock="$1" l key val in_lock=0
-	CREATED_AT=""
-	while IFS= read -r l || [[ -n $l ]]; do
-		l="${l%$'\r'}"
-		while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
-		while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
-		[[ -z $l ]] && continue
-		[[ ${l:0:1} == "#" ]] && continue
-		if [[ ${l:0:1} == "[" ]]; then
-			# `[lock]` only. `[[repo]]` entries have no created_at, and a
-			# future table that grows one must not be read as the lock's.
-			if [[ $l == "[lock]" ]]; then in_lock=1; else in_lock=0; fi
-			continue
-		fi
-		[[ $in_lock -eq 1 ]] || continue
-		key="${l%%=*}"
-		[[ $key == "$l" ]] && continue
-		val="${l#*=}"
-		while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
-		while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
-		case "$val" in
-		\"*\") val="${val#\"}" && val="${val%\"}" ;;
-		\'*\') val="${val#\'}" && val="${val%\'}" ;;
-		esac
-		if [[ $key == "created_at" ]]; then
-			CREATED_AT="$val"
-			return 0
-		fi
-	done <"$lock"
-	return 1
+  local lock="$1" l key val in_lock=0
+  CREATED_AT=""
+  while IFS= read -r l || [[ -n $l ]]; do
+    l="${l%$'\r'}"
+    while [[ $l == [[:space:]]* ]]; do l="${l#?}"; done
+    while [[ $l == *[[:space:]] ]]; do l="${l%?}"; done
+    [[ -z $l ]] && continue
+    [[ ${l:0:1} == "#" ]] && continue
+    if [[ ${l:0:1} == "[" ]]; then
+      # `[lock]` only. `[[repo]]` entries have no created_at, and a
+      # future table that grows one must not be read as the lock's.
+      if [[ $l == "[lock]" ]]; then in_lock=1; else in_lock=0; fi
+      continue
+    fi
+    [[ $in_lock -eq 1 ]] || continue
+    key="${l%%=*}"
+    [[ $key == "$l" ]] && continue
+    val="${l#*=}"
+    while [[ $key == *[[:space:]] ]]; do key="${key%?}"; done
+    while [[ $val == [[:space:]]* ]]; do val="${val#?}"; done
+    case "$val" in
+    \"*\") val="${val#\"}" && val="${val%\"}" ;;
+    \'*\') val="${val#\'}" && val="${val%\'}" ;;
+    esac
+    if [[ $key == "created_at" ]]; then
+      CREATED_AT="$val"
+      return 0
+    fi
+  done <"$lock"
+  return 1
 }
 
 if [[ $PRINT_CREATED_AT -eq 1 ]]; then
-	# The MOST SPECIFIC layer that carries one wins, which is the same
-	# precedence the revision lookup below uses: the layers are read least
-	# specific first and each answer replaces the previous one.
-	FOUND_CREATED_AT=""
-	for lr in "${LOCKS_ROOTS[@]}"; do
-		find_locks "$lr" "$CHOSEN_SHA" || continue
-		for LOCK in "${LOCK_FILES[@]}"; do
-			if created_at_from_toml "$LOCK"; then
-				FOUND_CREATED_AT="$CREATED_AT"
-			fi
-		done
-	done
-	printf '%s\n' "${FOUND_CREATED_AT:-unknown}"
-	exit 0
+  # The MOST SPECIFIC layer that carries one wins, which is the same
+  # precedence the revision lookup below uses: the layers are read least
+  # specific first and each answer replaces the previous one.
+  FOUND_CREATED_AT=""
+  for lr in "${LOCKS_ROOTS[@]}"; do
+    find_locks "$lr" "$CHOSEN_SHA" || continue
+    for LOCK in "${LOCK_FILES[@]}"; do
+      if created_at_from_toml "$LOCK"; then
+        FOUND_CREATED_AT="$CREATED_AT"
+      fi
+    done
+  done
+  printf '%s\n' "${FOUND_CREATED_AT:-unknown}"
+  exit 0
 fi
 
 # --- read the sibling's revision, layer by layer --------------------------
@@ -961,60 +961,60 @@ REV=""
 REV_SRC=""
 CONSULTED=""
 for lr in "${LOCKS_ROOTS[@]}"; do
-	find_locks "$lr" "$CHOSEN_SHA" || continue
-	LAYER_REV=""
-	LAYER_SRC=""
-	for LOCK in "${LOCK_FILES[@]}"; do
-		CONSULTED="${CONSULTED}
+  find_locks "$lr" "$CHOSEN_SHA" || continue
+  LAYER_REV=""
+  LAYER_SRC=""
+  for LOCK in "${LOCK_FILES[@]}"; do
+    CONSULTED="${CONSULTED}
     ${LOCK}"
-		rc=0
-		rev_from_toml "$LOCK" "$SIBLING" || rc=$?
-		if [[ $rc -eq 2 ]]; then
-			echo "resolve-sibling-rev: malformed lock $LOCK: $PARSE_ERR" >&2
-			exit 5
-		fi
-		this_rev=""
-		[[ $rc -eq 0 ]] && this_rev="$PARSE_REV"
-		if [[ -z $LAYER_SRC ]]; then
-			LAYER_REV="$this_rev"
-			LAYER_SRC="$LOCK"
-			continue
-		fi
-		if [[ $this_rev != "$LAYER_REV" ]]; then
-			{
-				echo "resolve-sibling-rev: conflicting locks for $SELF_REPO — they disagree about '$SIBLING'"
-				echo "  ${LAYER_SRC}: ${LAYER_REV:-<sibling absent>}"
-				echo "  ${LOCK}: ${this_rev:-<sibling absent>}"
-				echo "  Both locks describe the same commit in the SAME manifest layer, so exactly"
-				echo "  one is stale. Remove or regenerate the wrong one; this resolver will not"
-				echo "  guess which pin is correct."
-			} >&2
-			exit 6
-		fi
-	done
-	# A layer that has a lock but does not name the sibling contributes nothing.
-	# That is the normal shape of a private layer pinning only private repos —
-	# not a failure, as long as some layer does name it.
-	[[ -z $LAYER_REV ]] && continue
-	if [[ -n $REV && $LAYER_REV != "$REV" ]]; then
-		{
-			echo "resolve-sibling-rev: '$SIBLING' overridden by a more specific manifest layer"
-			echo "  ${REV_SRC}: ${REV}"
-			echo "  ${LAYER_SRC}: ${LAYER_REV}  <- used"
-		} >&2
-	fi
-	REV="$LAYER_REV"
-	REV_SRC="$LAYER_SRC"
+    rc=0
+    rev_from_toml "$LOCK" "$SIBLING" || rc=$?
+    if [[ $rc -eq 2 ]]; then
+      echo "resolve-sibling-rev: malformed lock $LOCK: $PARSE_ERR" >&2
+      exit 5
+    fi
+    this_rev=""
+    [[ $rc -eq 0 ]] && this_rev="$PARSE_REV"
+    if [[ -z $LAYER_SRC ]]; then
+      LAYER_REV="$this_rev"
+      LAYER_SRC="$LOCK"
+      continue
+    fi
+    if [[ $this_rev != "$LAYER_REV" ]]; then
+      {
+        echo "resolve-sibling-rev: conflicting locks for $SELF_REPO — they disagree about '$SIBLING'"
+        echo "  ${LAYER_SRC}: ${LAYER_REV:-<sibling absent>}"
+        echo "  ${LOCK}: ${this_rev:-<sibling absent>}"
+        echo "  Both locks describe the same commit in the SAME manifest layer, so exactly"
+        echo "  one is stale. Remove or regenerate the wrong one; this resolver will not"
+        echo "  guess which pin is correct."
+      } >&2
+      exit 6
+    fi
+  done
+  # A layer that has a lock but does not name the sibling contributes nothing.
+  # That is the normal shape of a private layer pinning only private repos —
+  # not a failure, as long as some layer does name it.
+  [[ -z $LAYER_REV ]] && continue
+  if [[ -n $REV && $LAYER_REV != "$REV" ]]; then
+    {
+      echo "resolve-sibling-rev: '$SIBLING' overridden by a more specific manifest layer"
+      echo "  ${REV_SRC}: ${REV}"
+      echo "  ${LAYER_SRC}: ${LAYER_REV}  <- used"
+    } >&2
+  fi
+  REV="$LAYER_REV"
+  REV_SRC="$LAYER_SRC"
 done
 
 if [[ -z $REV ]]; then
-	{
-		echo "resolve-sibling-rev: sibling '$SIBLING' not present in lock${CONSULTED}"
-		echo "  A lock exists for this commit but no manifest layer pins '$SIBLING'. Either"
-		echo "  the name is wrong (siblings are keyed by repo NAME, which can differ from the"
-		echo "  workspace path) or the repo is not a member of that workspace's project."
-	} >&2
-	exit 4
+  {
+    echo "resolve-sibling-rev: sibling '$SIBLING' not present in lock${CONSULTED}"
+    echo "  A lock exists for this commit but no manifest layer pins '$SIBLING'. Either"
+    echo "  the name is wrong (siblings are keyed by repo NAME, which can differ from the"
+    echo "  workspace path) or the repo is not a member of that workspace's project."
+  } >&2
+  exit 4
 fi
 
 printf '%s\n' "$REV"

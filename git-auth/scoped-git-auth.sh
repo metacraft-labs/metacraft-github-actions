@@ -89,134 +89,134 @@
 #
 # Input is ASCII (`x-access-token:<token>`); no binary handling is needed.
 scoped_git_auth_b64() {
-	local input="$1" out
-	if command -v base64 >/dev/null 2>&1; then
-		out="$(printf '%s' "$input" | base64)"
-		# `base64` line-wraps at 76 columns; the encoding of a typical
-		# `x-access-token:ghs_...` is right at that boundary, so this is load
-		# bearing and not hygiene. Pure-bash strip: no `tr` either.
-		out="${out//$'\n'/}"
-		out="${out//$'\r'/}"
-		printf '%s' "$out"
-		return 0
-	fi
+  local input="$1" out
+  if command -v base64 >/dev/null 2>&1; then
+    out="$(printf '%s' "$input" | base64)"
+    # `base64` line-wraps at 76 columns; the encoding of a typical
+    # `x-access-token:ghs_...` is right at that boundary, so this is load
+    # bearing and not hygiene. Pure-bash strip: no `tr` either.
+    out="${out//$'\n'/}"
+    out="${out//$'\r'/}"
+    printf '%s' "$out"
+    return 0
+  fi
 
-	local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	local i n c1 c2 c3 trip
-	out=""
-	for ((i = 0; i < ${#input}; i += 3)); do
-		printf -v c1 '%d' "'${input:i:1}"
-		c2=0
-		c3=0
-		n=1
-		if [[ $((i + 1)) -lt ${#input} ]]; then
-			printf -v c2 '%d' "'${input:i+1:1}"
-			n=2
-		fi
-		if [[ $((i + 2)) -lt ${#input} ]]; then
-			printf -v c3 '%d' "'${input:i+2:1}"
-			n=3
-		fi
-		trip=$(((c1 << 16) | (c2 << 8) | c3))
-		out+="${alphabet:$(((trip >> 18) & 63)):1}"
-		out+="${alphabet:$(((trip >> 12) & 63)):1}"
-		if [[ $n -ge 2 ]]; then out+="${alphabet:$(((trip >> 6) & 63)):1}"; else out+="="; fi
-		if [[ $n -ge 3 ]]; then out+="${alphabet:$((trip & 63)):1}"; else out+="="; fi
-	done
-	printf '%s' "$out"
+  local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  local i n c1 c2 c3 trip
+  out=""
+  for ((i = 0; i < ${#input}; i += 3)); do
+    printf -v c1 '%d' "'${input:i:1}"
+    c2=0
+    c3=0
+    n=1
+    if [[ $((i + 1)) -lt ${#input} ]]; then
+      printf -v c2 '%d' "'${input:i+1:1}"
+      n=2
+    fi
+    if [[ $((i + 2)) -lt ${#input} ]]; then
+      printf -v c3 '%d' "'${input:i+2:1}"
+      n=3
+    fi
+    trip=$(((c1 << 16) | (c2 << 8) | c3))
+    out+="${alphabet:$(((trip >> 18) & 63)):1}"
+    out+="${alphabet:$(((trip >> 12) & 63)):1}"
+    if [[ $n -ge 2 ]]; then out+="${alphabet:$(((trip >> 6) & 63)):1}"; else out+="="; fi
+    if [[ $n -ge 3 ]]; then out+="${alphabet:$((trip & 63)):1}"; else out+="="; fi
+  done
+  printf '%s' "$out"
 }
 
 # `scoped_git_auth_build` -- derive the scope and the credential pairs.
 scoped_git_auth_build() {
-	local url_base="${GIT_AUTH_URL_BASE:-https://github.com/}"
-	# The base is a TEST knob and is constrained to be one. Left unconstrained it
-	# would be a way to point every clone -- and the credential scoped to it --
-	# at an arbitrary host by setting one environment variable, which is a
-	# strictly worse hole than the one this file exists to close. Anything that
-	# is not github.com must be loopback.
-	case "$url_base" in
-	https://github.com/) ;;
-	http://127.0.0.1:*/ | http://localhost:*/) ;;
-	*)
-		echo "scoped-git-auth: GIT_AUTH_URL_BASE must be https://github.com/ or a loopback address (got '$url_base')" >&2
-		return 2
-		;;
-	esac
-	local owners="${TOKEN_OWNERS:-metacraft-labs}"
-	local extra="${EXTRA_TOKEN_URL_PREFIXES:-}"
-	local _owner _prefix
+  local url_base="${GIT_AUTH_URL_BASE:-https://github.com/}"
+  # The base is a TEST knob and is constrained to be one. Left unconstrained it
+  # would be a way to point every clone -- and the credential scoped to it --
+  # at an arbitrary host by setting one environment variable, which is a
+  # strictly worse hole than the one this file exists to close. Anything that
+  # is not github.com must be loopback.
+  case "$url_base" in
+  https://github.com/) ;;
+  http://127.0.0.1:*/ | http://localhost:*/) ;;
+  *)
+    echo "scoped-git-auth: GIT_AUTH_URL_BASE must be https://github.com/ or a loopback address (got '$url_base')" >&2
+    return 2
+    ;;
+  esac
+  local owners="${TOKEN_OWNERS:-metacraft-labs}"
+  local extra="${EXTRA_TOKEN_URL_PREFIXES:-}"
+  local _owner _prefix
 
-	SCOPED_GIT_AUTH_SCOPES=()
-	SCOPED_GIT_AUTH_PAIRS=()
+  SCOPED_GIT_AUTH_SCOPES=()
+  SCOPED_GIT_AUTH_PAIRS=()
 
-	# The credential-free scheme rewrites. `.gitmodules` in this org's repos
-	# spells submodule URLs in all three styles, and a rewrite is the only thing
-	# that turns the ssh spellings into something an https credential can
-	# authenticate. They carry no credential, so a caller that persists them
-	# persists nothing sensitive.
-	#
-	# These apply to submodule URLs even after `git submodule init` has copied
-	# them from `.gitmodules` into `.git/config`: git applies `insteadOf` when it
-	# USES a URL, not when it records one. Both actions previously claimed the
-	# opposite in a comment and carried a per-submodule token rewrite to work
-	# around it; the contract suite pins the real behaviour.
-	if [[ ${SCOPED_GIT_AUTH_REWRITES:-0} == 1 ]]; then
-		SCOPED_GIT_AUTH_PAIRS+=("url.${url_base}.insteadOf" "git@github.com:")
-		SCOPED_GIT_AUTH_PAIRS+=("url.${url_base}.insteadOf" "ssh://git@github.com/")
-	fi
+  # The credential-free scheme rewrites. `.gitmodules` in this org's repos
+  # spells submodule URLs in all three styles, and a rewrite is the only thing
+  # that turns the ssh spellings into something an https credential can
+  # authenticate. They carry no credential, so a caller that persists them
+  # persists nothing sensitive.
+  #
+  # These apply to submodule URLs even after `git submodule init` has copied
+  # them from `.gitmodules` into `.git/config`: git applies `insteadOf` when it
+  # USES a URL, not when it records one. Both actions previously claimed the
+  # opposite in a comment and carried a per-submodule token rewrite to work
+  # around it; the contract suite pins the real behaviour.
+  if [[ ${SCOPED_GIT_AUTH_REWRITES:-0} == 1 ]]; then
+    SCOPED_GIT_AUTH_PAIRS+=("url.${url_base}.insteadOf" "git@github.com:")
+    SCOPED_GIT_AUTH_PAIRS+=("url.${url_base}.insteadOf" "ssh://git@github.com/")
+  fi
 
-	for _owner in $owners; do
-		[[ -z $_owner ]] && continue
-		# The trailing slash is for readability only, and it is worth being exact
-		# about why: git breaks its `http.<url>.*` path match on `/`, so
-		# `<base><owner>` already fails to match `<base><owner>-evil/x`. The
-		# boundary is git's, not ours -- do not "harden" it here with a manual
-		# check, and do not assume dropping the slash would open it.
-		SCOPED_GIT_AUTH_SCOPES+=("${url_base}${_owner}/")
-	done
-	for _prefix in $extra; do
-		[[ -z $_prefix ]] && continue
-		case "$_prefix" in
-		https://*) ;;
-		# Plaintext http is accepted for LOOPBACK only, and exists so the
-		# contract suite can point a scope at its own local git server and watch
-		# the credential arrive on the wire. Any other http:// prefix would put
-		# a live App token on an unencrypted connection, so it is refused with
-		# everything else that is not https.
-		http://127.0.0.1:* | http://localhost:*) ;;
-		*)
-			echo "scoped-git-auth: extra-token-url-prefixes entry '$_prefix' is not an https:// URL" >&2
-			return 2
-			;;
-		esac
-		SCOPED_GIT_AUTH_SCOPES+=("$_prefix")
-	done
+  for _owner in $owners; do
+    [[ -z $_owner ]] && continue
+    # The trailing slash is for readability only, and it is worth being exact
+    # about why: git breaks its `http.<url>.*` path match on `/`, so
+    # `<base><owner>` already fails to match `<base><owner>-evil/x`. The
+    # boundary is git's, not ours -- do not "harden" it here with a manual
+    # check, and do not assume dropping the slash would open it.
+    SCOPED_GIT_AUTH_SCOPES+=("${url_base}${_owner}/")
+  done
+  for _prefix in $extra; do
+    [[ -z $_prefix ]] && continue
+    case "$_prefix" in
+    https://*) ;;
+    # Plaintext http is accepted for LOOPBACK only, and exists so the
+    # contract suite can point a scope at its own local git server and watch
+    # the credential arrive on the wire. Any other http:// prefix would put
+    # a live App token on an unencrypted connection, so it is refused with
+    # everything else that is not https.
+    http://127.0.0.1:* | http://localhost:*) ;;
+    *)
+      echo "scoped-git-auth: extra-token-url-prefixes entry '$_prefix' is not an https:// URL" >&2
+      return 2
+      ;;
+    esac
+    SCOPED_GIT_AUTH_SCOPES+=("$_prefix")
+  done
 
-	# No token: the caller clones public repositories only. The rewrites (if
-	# requested) still stand; there is simply no credential to scope.
-	if [[ -z ${GH_TOKEN:-} ]]; then
-		SCOPED_GIT_AUTH_SCOPES=()
-		return 0
-	fi
+  # No token: the caller clones public repositories only. The rewrites (if
+  # requested) still stand; there is simply no credential to scope.
+  if [[ -z ${GH_TOKEN:-} ]]; then
+    SCOPED_GIT_AUTH_SCOPES=()
+    return 0
+  fi
 
-	if [[ ${#SCOPED_GIT_AUTH_SCOPES[@]} -eq 0 ]]; then
-		echo "scoped-git-auth: a token was supplied but no scope (token-owner and extra-token-url-prefixes are both empty)" >&2
-		return 2
-	fi
+  if [[ ${#SCOPED_GIT_AUTH_SCOPES[@]} -eq 0 ]]; then
+    echo "scoped-git-auth: a token was supplied but no scope (token-owner and extra-token-url-prefixes are both empty)" >&2
+    return 2
+  fi
 
-	# Basic auth with the App token as the password -- exactly what
-	# `x-access-token:<token>@` encoded positionally in the URL. Same credential,
-	# carried in a header instead of a URL.
-	local blob
-	blob="$(scoped_git_auth_b64 "$(printf 'x-access-token:%s' "$GH_TOKEN")")"
-	if [[ ${SCOPED_GIT_AUTH_MASK:-0} == 1 ]]; then
-		printf '::add-mask::%s\n' "$blob"
-	fi
-	local _scope
-	for _scope in "${SCOPED_GIT_AUTH_SCOPES[@]}"; do
-		SCOPED_GIT_AUTH_PAIRS+=("http.${_scope}.extraHeader" "AUTHORIZATION: basic ${blob}")
-	done
-	return 0
+  # Basic auth with the App token as the password -- exactly what
+  # `x-access-token:<token>@` encoded positionally in the URL. Same credential,
+  # carried in a header instead of a URL.
+  local blob
+  blob="$(scoped_git_auth_b64 "$(printf 'x-access-token:%s' "$GH_TOKEN")")"
+  if [[ ${SCOPED_GIT_AUTH_MASK:-0} == 1 ]]; then
+    printf '::add-mask::%s\n' "$blob"
+  fi
+  local _scope
+  for _scope in "${SCOPED_GIT_AUTH_SCOPES[@]}"; do
+    SCOPED_GIT_AUTH_PAIRS+=("http.${_scope}.extraHeader" "AUTHORIZATION: basic ${blob}")
+  done
+  return 0
 }
 
 # `scoped_git_auth_export` -- install SCOPED_GIT_AUTH_PAIRS into this process's
@@ -231,35 +231,35 @@ scoped_git_auth_build() {
 # `Authorization` header twice, which is a malformed request rather than a
 # doubly-authenticated one.
 scoped_git_auth_export() {
-	local n="${GIT_CONFIG_COUNT:-0}"
-	local i key value j have kn vn
+  local n="${GIT_CONFIG_COUNT:-0}"
+  local i key value j have kn vn
 
-	# Indirect expansion (`${!name-}`) rather than a nameref: GitHub's macOS
-	# runner images ship bash 3.2, `declare -n` needs 4.3, and `setup-nix`
-	# deliberately supports those runners.
-	for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
-		key="${SCOPED_GIT_AUTH_PAIRS[i]}"
-		value="${SCOPED_GIT_AUTH_PAIRS[i + 1]}"
-		have=0
-		for ((j = 0; j < n; j++)); do
-			kn="GIT_CONFIG_KEY_${j}"
-			vn="GIT_CONFIG_VALUE_${j}"
-			if [[ ${!kn-} == "$key" && ${!vn-} == "$value" ]]; then
-				have=1
-				break
-			fi
-		done
-		[[ $have == 1 ]] && continue
-		printf -v "GIT_CONFIG_KEY_${n}" '%s' "$key"
-		printf -v "GIT_CONFIG_VALUE_${n}" '%s' "$value"
-		export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
-		n=$((n + 1))
-	done
+  # Indirect expansion (`${!name-}`) rather than a nameref: GitHub's macOS
+  # runner images ship bash 3.2, `declare -n` needs 4.3, and `setup-nix`
+  # deliberately supports those runners.
+  for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
+    key="${SCOPED_GIT_AUTH_PAIRS[i]}"
+    value="${SCOPED_GIT_AUTH_PAIRS[i + 1]}"
+    have=0
+    for ((j = 0; j < n; j++)); do
+      kn="GIT_CONFIG_KEY_${j}"
+      vn="GIT_CONFIG_VALUE_${j}"
+      if [[ ${!kn-} == "$key" && ${!vn-} == "$value" ]]; then
+        have=1
+        break
+      fi
+    done
+    [[ $have == 1 ]] && continue
+    printf -v "GIT_CONFIG_KEY_${n}" '%s' "$key"
+    printf -v "GIT_CONFIG_VALUE_${n}" '%s' "$value"
+    export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
+    n=$((n + 1))
+  done
 
-	export GIT_CONFIG_COUNT="$n"
-	# Without a URL-embedded credential a misconfigured scope would block on an
-	# interactive prompt instead of failing; make it fail.
-	export GIT_TERMINAL_PROMPT=0
+  export GIT_CONFIG_COUNT="$n"
+  # Without a URL-embedded credential a misconfigured scope would block on an
+  # interactive prompt instead of failing; make it fail.
+  export GIT_TERMINAL_PROMPT=0
 }
 
 # `scoped_git_auth_emit <sink>` -- print SCOPED_GIT_AUTH_PAIRS as `KEY=VALUE`
@@ -267,44 +267,44 @@ scoped_git_auth_export() {
 # Numbering starts at 0: this is for `setup-nix`, whose whole job is to define
 # the job-wide git configuration, and which must not inherit a partial one.
 scoped_git_auth_emit() {
-	local sink="${1:-}"
-	local i n=0 out=()
+  local sink="${1:-}"
+  local i n=0 out=()
 
-	for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
-		out+=("GIT_CONFIG_KEY_${n}=${SCOPED_GIT_AUTH_PAIRS[i]}")
-		out+=("GIT_CONFIG_VALUE_${n}=${SCOPED_GIT_AUTH_PAIRS[i + 1]}")
-		n=$((n + 1))
-	done
-	out+=("GIT_CONFIG_COUNT=${n}")
-	out+=("GIT_TERMINAL_PROMPT=0")
+  for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
+    out+=("GIT_CONFIG_KEY_${n}=${SCOPED_GIT_AUTH_PAIRS[i]}")
+    out+=("GIT_CONFIG_VALUE_${n}=${SCOPED_GIT_AUTH_PAIRS[i + 1]}")
+    n=$((n + 1))
+  done
+  out+=("GIT_CONFIG_COUNT=${n}")
+  out+=("GIT_TERMINAL_PROMPT=0")
 
-	if [[ -n $sink ]]; then
-		printf '%s\n' "${out[@]}" >>"$sink"
-	else
-		printf '%s\n' "${out[@]}"
-	fi
+  if [[ -n $sink ]]; then
+    printf '%s\n' "${out[@]}" >>"$sink"
+  else
+    printf '%s\n' "${out[@]}"
+  fi
 }
 
 # `scoped_git_auth_report` -- say what was covered, without saying with what.
 scoped_git_auth_report() {
-	if [[ ${#SCOPED_GIT_AUTH_SCOPES[@]} -eq 0 ]]; then
-		echo "scoped-git-auth: no token supplied; git is configured for public clones only."
-		return 0
-	fi
-	echo "scoped-git-auth: git credential scoped to ${#SCOPED_GIT_AUTH_SCOPES[@]} URL prefix(es):"
-	local _scope
-	for _scope in "${SCOPED_GIT_AUTH_SCOPES[@]}"; do
-		echo "  ${_scope}"
-	done
+  if [[ ${#SCOPED_GIT_AUTH_SCOPES[@]} -eq 0 ]]; then
+    echo "scoped-git-auth: no token supplied; git is configured for public clones only."
+    return 0
+  fi
+  echo "scoped-git-auth: git credential scoped to ${#SCOPED_GIT_AUTH_SCOPES[@]} URL prefix(es):"
+  local _scope
+  for _scope in "${SCOPED_GIT_AUTH_SCOPES[@]}"; do
+    echo "  ${_scope}"
+  done
 }
 
 # `scoped_git_auth_owner_of <owner/name>` -- the owner half of a `owner/name`
 # repository spec, or empty when the spec has no owner.
 scoped_git_auth_owner_of() {
-	case "$1" in
-	*/*) printf '%s' "${1%%/*}" ;;
-	*) printf '' ;;
-	esac
+  case "$1" in
+  */*) printf '%s' "${1%%/*}" ;;
+  *) printf '' ;;
+  esac
 }
 
 # `scoped_git_auth_require_covered <what> <owner...>` -- fail loudly when an
@@ -318,25 +318,25 @@ scoped_git_auth_owner_of() {
 # this org real hours. So the disagreement is detected here, by name, before the
 # first fetch.
 scoped_git_auth_require_covered() {
-	local what="$1"
-	shift
-	local owners="${TOKEN_OWNERS:-metacraft-labs}"
-	local bad=() _o _t found
+  local what="$1"
+  shift
+  local owners="${TOKEN_OWNERS:-metacraft-labs}"
+  local bad=() _o _t found
 
-	for _o in "$@"; do
-		[[ -z $_o ]] && continue
-		found=0
-		for _t in $owners; do
-			[[ $_o == "$_t" ]] && {
-				found=1
-				break
-			}
-		done
-		[[ $found == 0 ]] && bad+=("$_o")
-	done
+  for _o in "$@"; do
+    [[ -z $_o ]] && continue
+    found=0
+    for _t in $owners; do
+      [[ $_o == "$_t" ]] && {
+        found=1
+        break
+      }
+    done
+    [[ $found == 0 ]] && bad+=("$_o")
+  done
 
-	[[ ${#bad[@]} -eq 0 ]] && return 0
+  [[ ${#bad[@]} -eq 0 ]] && return 0
 
-	echo "::error::${what} is configured to clone from GitHub owner(s) [${bad[*]}], but the CI token for this job is scoped to [${owners}]. These two must be changed together: the Git CLI credential is installed as an 'http.https://github.com/<owner>/.extraHeader', so a private repository under an owner outside that list is not authenticated and GitHub answers 404 -- indistinguishable from a typo in the repository name. Fix by adding the owner to the action's 'token-owner' input (it is whitespace-separated and accepts several), or by cloning from an owner already in it." >&2
-	return 1
+  echo "::error::${what} is configured to clone from GitHub owner(s) [${bad[*]}], but the CI token for this job is scoped to [${owners}]. These two must be changed together: the Git CLI credential is installed as an 'http.https://github.com/<owner>/.extraHeader', so a private repository under an owner outside that list is not authenticated and GitHub answers 404 -- indistinguishable from a typo in the repository name. Fix by adding the owner to the action's 'token-owner' input (it is whitespace-separated and accepts several), or by cloning from an owner already in it." >&2
+  return 1
 }

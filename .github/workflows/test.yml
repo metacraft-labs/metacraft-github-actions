@@ -388,3 +388,19 @@ jobs:
 
       - name: shellcheck
         run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
+
+  portable-hooks:
+    # Independent native POSIX hook qualification; existing guard jobs unchanged.
+    # Native Windows formatter provisioning remains an explicit owning issue.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Complete canonical portable hooks and owning lint
+        env:
+          PREK_NO_FAST_PATH: "1"
+        run: nix-shell shell.nix --run 'prek run --all-files && bash tools/lint.sh'

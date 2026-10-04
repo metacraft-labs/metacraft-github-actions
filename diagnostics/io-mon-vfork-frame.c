@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
   void *after = frame();
   int stale = after != before;
   printf("vfork frame state: before-null=%d after-null=%d changed=%d\n",
-         before == NULL, after == NULL, stale);
+          before == NULL, after == NULL, stale);
   int status = 0;
   if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status))
     return 14;

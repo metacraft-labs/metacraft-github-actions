@@ -29,6 +29,7 @@ on:
           - windows-thread-snapshots
           - windows-hook-pages
           - runquota-windows-handles
+          - runquota-repro-cwd
           - runquota-linux-arm-bootstrap
           - io-mon-windows-cleanup
           - io-mon-windows-debug-cleanup
@@ -50,7 +51,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.checks != 'windows-hook-pages' && inputs.checks != 'windows-thread-snapshots' && inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.checks != 'runquota-repro-cwd' && inputs.checks != 'windows-hook-pages' && inputs.checks != 'windows-thread-snapshots' && inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -131,8 +132,8 @@ jobs:
           original = source[start:end]
           mutated = original
           for live, cached in [('uint64(c_getpid())', 'currentPid()'),
-                               ('uint64(c_getppid())', 'currentPpid()'),
-                               ('uint64(c_gettid())', 'currentThreadId()')]:
+                                ('uint64(c_getppid())', 'currentPpid()'),
+                                ('uint64(c_gettid())', 'currentThreadId()')]:
               assert mutated.count(live) == 1
               mutated = mutated.replace(live, cached)
           path.write_text(source[:start] + mutated + source[end:])
@@ -787,7 +788,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   io-mon-repro-dlopen:
     if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-repro-dlopen'
     runs-on: ubuntu-24.04
@@ -864,7 +864,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   gosti-repro-shutdown:
     if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-shutdown'
     runs-on: ubuntu-24.04-arm
@@ -933,7 +932,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   runquota-linux-arm-bootstrap:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-arm-bootstrap'
     # Supplemental diagnosis of the source-closure issue. Normal CI stays required.
@@ -997,7 +995,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
-
 
   gosti-repro-concurrency:
     if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-concurrency'
@@ -1185,7 +1182,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-
   windows-thread-snapshots:
     if: inputs.checks == 'windows-thread-snapshots'
     runs-on: ${{ matrix.runner }}
@@ -1248,3 +1244,64 @@ jobs:
           name: windows-hook-pages-${{ matrix.runner }}
           path: test-logs/hook-pages/
           retention-days: 14
+
+  runquota-repro-cwd:
+    if: inputs.product == 'runquota' && inputs.checks == 'runquota-repro-cwd'
+    runs-on: windows-2025
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: baseline
+            hooks: 43b1835128331fef09ecf64a614dbf46880dbe9f
+          - variant: prepared-pages
+            hooks: a043a07f71a9b662c6ae9bae7837107e6c1ade67
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/runquota
+          ref: 6fc59c967460b132ab7f5ddbf0ac4fd0c755b9c0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Set up the exact failing bootstrap with the selected hook revision
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-stackable-hooks-pin: ${{ matrix.hooks }}
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Refresh build authentication
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Exercise the complete suite and record child completion phases
+        shell: pwsh
+        env:
+          DIAGNOSTIC_HOOK_REVISION: ${{ matrix.hooks }}
+        run: ./.diagnostic-tools/diagnostics/runquota-repro-cwd.ps1 -HookRevision $env:DIAGNOSTIC_HOOK_REVISION
+      - name: Preserve the full report, exact patches and phase measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runquota-cwd-${{ matrix.variant }}
+          path: test-logs/runquota-cwd/
+          retention-days: 14
+          if-no-files-found: warn

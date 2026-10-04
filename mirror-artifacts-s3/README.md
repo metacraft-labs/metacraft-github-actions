@@ -4,7 +4,7 @@ Non-blocking mirror of a CI artifact directory to the Metacraft **in-house S3
 artifact store** (Garage on `high-mem-server`, reached over the NetBird VPN).
 It moves the bulk of artifact bytes off GitHub's org-wide, quota-limited Actions
 artifact storage — whose exhaustion (`Artifact storage quota has been hit`) fails
-CI across *unrelated* repos.
+CI across _unrelated_ repos.
 
 Use it **alongside** `actions/upload-artifact` (keep that at `retention-days: 1`
 for the immediate-run convenience copy); this action is the durable copy. See
@@ -30,7 +30,7 @@ for the immediate-run convenience copy); this action is the durable copy. See
   with:
     name: test-logs-${{ matrix.runner }}
     path: test-logs/
-    retention-days: 1          # short — the S3 mirror is the durable copy
+    retention-days: 1 # short — the S3 mirror is the durable copy
 
 - name: Mirror logs to S3 (non-blocking)
   if: always()

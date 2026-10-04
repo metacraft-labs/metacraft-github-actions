@@ -72,9 +72,9 @@ proc diagnosticPhase(phase: cstring) {.raises: [], stackTrace: off.} =
 '''
 replace_once('proc dbg(msg: cstring) =', helper + 'proc dbg(msg: cstring) =')
 replace_once('  let report = shProp.injectShimIntoChildReport(pi[].hProcess,',
-             '  diagnosticPhase("inject-begin")\n  let report = shProp.injectShimIntoChildReport(pi[].hProcess,')
+              '  diagnosticPhase("inject-begin")\n  let report = shProp.injectShimIntoChildReport(pi[].hProcess,')
 replace_once('    selfDllPath(), "repro_runtime_init", spawnInjectionConfig, hThread)',
-             '    selfDllPath(), "repro_runtime_init", spawnInjectionConfig, hThread)\n  diagnosticPhase("inject-end")')
+              '    selfDllPath(), "repro_runtime_init", spawnInjectionConfig, hThread)\n  diagnosticPhase("inject-end")')
 start = source.index('proc snoopCreateProcessW(')
 end = source.index('\nproc ', start + 1)
 part = source[start:end]
@@ -86,15 +86,15 @@ part = part.replace('          shProp.windowsForkRuntimeForProcess(lpProcessInfo
                     '          shProp.windowsForkRuntimeForProcess(lpProcessInfo[].hProcess)\n        diagnosticPhase("fork-runtime-end")')
 source = source[:start] + part + source[end:]
 replace_once('  dbg("[repro_monitor_shim] repro_monitor_shim_init entered\\n")',
-             '  diagnosticPhase("init-begin")\n  dbg("[repro_monitor_shim] repro_monitor_shim_init entered\\n")')
+              '  diagnosticPhase("init-begin")\n  dbg("[repro_monitor_shim] repro_monitor_shim_init entered\\n")')
 replace_once('  let iatFallbackCount = installAllHooks()',
-             '  diagnosticPhase("install-hooks-begin")\n  let iatFallbackCount = installAllHooks()\n  diagnosticPhase("install-hooks-end")')
+              '  diagnosticPhase("install-hooks-begin")\n  let iatFallbackCount = installAllHooks()\n  diagnosticPhase("install-hooks-end")')
 replace_once('  dbg("[repro_monitor_shim] initialization complete\\n")',
-             '  diagnosticPhase("init-complete")\n  dbg("[repro_monitor_shim] initialization complete\\n")')
+              '  diagnosticPhase("init-complete")\n  dbg("[repro_monitor_shim] initialization complete\\n")')
 for indent in ('        ', '          '):
     before = '\n' + indent + 'flushAllRegisteredSlots()\n'
     replace_once(before, '\n' + indent + 'diagnosticPhase("flush-begin")' + before +
-                 indent + 'diagnosticPhase("flush-end")\n')
+                  indent + 'diagnosticPhase("flush-end")\n')
 replace_once('          discard uninstallAllInlineHooks()',
-             '          diagnosticPhase("uninstall-hooks-begin")\n          discard uninstallAllInlineHooks()\n          diagnosticPhase("uninstall-hooks-end")')
+              '          diagnosticPhase("uninstall-hooks-begin")\n          discard uninstallAllInlineHooks()\n          diagnosticPhase("uninstall-hooks-end")')
 shim.write_text(source)

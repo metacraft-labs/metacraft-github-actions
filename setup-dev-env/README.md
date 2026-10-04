@@ -39,17 +39,17 @@ jobs:
 
 ## Inputs
 
-| Input                   | Required | Description                                                                                                                                                                  |
-| ----------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `env-flavor`            | yes      | `nix` \| `windows-diy` \| `reprobuild`.                                                                                                                                      |
-| `gh-token`              | no       | Forwarded to `setup-nix` so private flake inputs resolve.                                                                                                                    |
-| `substituters`          | no       | Space-separated extra Nix substituter URLs, such as Attic cache URLs.                                                                                                        |
-| `trusted-public-keys`   | no       | Space-separated signing keys for the extra substituters.                                                                                                                     |
-| `flake-override-inputs` | no       | Newline-separated `NAME=PATH` entries; each becomes `--override-input NAME path:PATH` on every `nix develop` invocation. Use for sibling-repo overrides cloned alongside.    |
-| `env-ps1-path`          | no       | Path to `env.ps1` (windows-diy only). Defaults to `./env.ps1`.                                                                                                               |
-| `sibling-strategy`      | no       | `auto` (default) \| `repro-lock` \| `clone-siblings`. Which mechanism provisions cross-repo siblings — see below.                                                             |
-| `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                                 |
-| `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                               |
+| Input                   | Required | Description                                                                                                                                                               |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `env-flavor`            | yes      | `nix` \| `windows-diy` \| `reprobuild`.                                                                                                                                   |
+| `gh-token`              | no       | Forwarded to `setup-nix` so private flake inputs resolve.                                                                                                                 |
+| `substituters`          | no       | Space-separated extra Nix substituter URLs, such as Attic cache URLs.                                                                                                     |
+| `trusted-public-keys`   | no       | Space-separated signing keys for the extra substituters.                                                                                                                  |
+| `flake-override-inputs` | no       | Newline-separated `NAME=PATH` entries; each becomes `--override-input NAME path:PATH` on every `nix develop` invocation. Use for sibling-repo overrides cloned alongside. |
+| `env-ps1-path`          | no       | Path to `env.ps1` (windows-diy only). Defaults to `./env.ps1`.                                                                                                            |
+| `sibling-strategy`      | no       | `auto` (default) \| `repro-lock` \| `clone-siblings`. Which mechanism provisions cross-repo siblings — see below.                                                         |
+| `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                             |
+| `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                           |
 
 ### Source-built Reprobuild inputs
 
@@ -65,10 +65,10 @@ bootstrap inputs.
 
 There are two, and they answer different questions:
 
-| strategy         | reads                                                                  | is the source of truth for                            |
-| ---------------- | ---------------------------------------------------------------------- | ----------------------------------------------------- |
-| `clone-siblings` | the workspace-**project** lock in `metacraft-manifests`                | a repo **set** convenient for setting up a workspace  |
-| `repro-lock`     | the consuming repo's own committed `repro.lock`, via `repro develop`   | the **build's** solved dependency graph, at exact SHAs |
+| strategy         | reads                                                                | is the source of truth for                             |
+| ---------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
+| `clone-siblings` | the workspace-**project** lock in `metacraft-manifests`              | a repo **set** convenient for setting up a workspace   |
+| `repro-lock`     | the consuming repo's own committed `repro.lock`, via `repro develop` | the **build's** solved dependency graph, at exact SHAs |
 
 Project manifests are typically a superset of what a build needs. That is fine
 for a human bootstrapping a workspace and wrong for CI, which is why a repo
@@ -113,7 +113,7 @@ It is never silently ignored, on either path:
 
 - under `auto`, a non-empty list keeps `clone-siblings` even when a usable lock
   exists, and the log says the lock was available and was not used. Such lists
-  routinely name build-time siblings that are *not* solved-graph dependencies —
+  routinely name build-time siblings that are _not_ solved-graph dependencies —
   `reprobuild`'s own names two — and switching them to the lock would drop them;
 - under a forced `repro-lock`, the lock wins and the list is reconciled against
   it: an entry the lock already pins is reported redundant (by name and locked
@@ -124,7 +124,7 @@ It is never silently ignored, on either path:
 ### Relationship to `env-flavor: reprobuild`
 
 `reprobuild-provision` and `setup-reprobuild` are not a third mechanism. They
-provision *reprobuild's own* build inputs and build the `repro` CLI;
+provision _reprobuild's own_ build inputs and build the `repro` CLI;
 `reprobuild-provision`'s header already documents that a **consumer** project's
 dependency siblings come from `repro develop --all` against its committed
 `repro.lock`. `sibling-strategy: repro-lock` is that consumer half, which is why
@@ -144,12 +144,12 @@ a one-job-then-destroyed container is discarded along with the container.
 
 This action now makes that choice, on every flavor, and reports it:
 
-| what it finds at `shared-store-path`   | what it does                    |
-| -------------------------------------- | ------------------------------- |
-| a writable directory                   | exports `REPRO_STORE_ROOT` to `$GITHUB_ENV` |
-| nothing                                | exports nothing; **does not fail** |
-| a directory it cannot write            | exports nothing; **does not fail** |
-| `REPRO_STORE_ROOT` already set         | leaves the caller's value alone |
+| what it finds at `shared-store-path` | what it does                                |
+| ------------------------------------ | ------------------------------------------- |
+| a writable directory                 | exports `REPRO_STORE_ROOT` to `$GITHUB_ENV` |
+| nothing                              | exports nothing; **does not fail**          |
+| a directory it cannot write          | exports nothing; **does not fail**          |
+| `REPRO_STORE_ROOT` already set       | leaves the caller's value alone             |
 
 The two "exports nothing" rows are why this is safe to run fleet-wide: on
 GitHub-hosted runners, on macOS and on Windows there is no such mount, and

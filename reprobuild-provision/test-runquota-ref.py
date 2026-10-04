@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="repro-bootstrap-ref-") as directory:
     config.touch()
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG")}
     env.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
-               RUNNER_OS="Linux", RUNNER_TEMP=str(root), SIBLING_OWNER="fixture")
+                RUNNER_OS="Linux", RUNNER_TEMP=str(root), SIBLING_OWNER="fixture")
     run("git", "config", "--file", str(config), "protocol.file.allow", "always", env=env)
     run("git", "config", "--file", str(config),
         f"url.file://{root}/remotes/.insteadOf", "https://github.com/fixture/", env=env)

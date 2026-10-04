@@ -62,31 +62,31 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLONE="$HERE/authenticated-clone.sh"
 [[ -f $CLONE ]] || {
-	echo "longpaths-test: cannot find $CLONE" >&2
-	exit 2
+  echo "longpaths-test: cannot find $CLONE" >&2
+  exit 2
 }
 
 REAL_GIT="$(command -v git)" || {
-	echo "longpaths-test: git is not on PATH" >&2
-	exit 2
+  echo "longpaths-test: git is not on PATH" >&2
+  exit 2
 }
 
 PASS=0
 FAIL=0
 ok() {
-	PASS=$((PASS + 1))
-	echo "ok   $1"
+  PASS=$((PASS + 1))
+  echo "ok   $1"
 }
 bad() {
-	FAIL=$((FAIL + 1))
-	echo "FAIL $1"
-	[[ -n ${2:-} ]] && echo "     $2"
+  FAIL=$((FAIL + 1))
+  echo "FAIL $1"
+  [[ -n ${2:-} ]] && echo "     $2"
 }
 check() { # <desc> <actual> <expected>
-	if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
+  if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
 }
 at_least() { # <desc> <actual> <minimum>
-	if [[ $2 -ge $3 ]]; then ok "$1 ($2 >= $3)"; else bad "$1" "expected at least $3, got $2"; fi
+  if [[ $2 -ge $3 ]]; then ok "$1 ($2 >= $3)"; else bad "$1" "expected at least $3, got $2"; fi
 }
 
 TMPROOT="$(mktemp -d)"
@@ -126,19 +126,19 @@ WORK="$TMPROOT/work"
 mkdir -p "$SRV" "$WORK"
 
 mk_repo() { # <name>
-	local d="$WORK/$1"
-	mkdir -p "$d"
-	git_q init "$d"
-	printf 'content of %s\n' "$1" >"$d/file.txt"
-	git_q -C "$d" add -A
-	git_q -C "$d" commit -m "init $1"
+  local d="$WORK/$1"
+  mkdir -p "$d"
+  git_q init "$d"
+  printf 'content of %s\n' "$1" >"$d/file.txt"
+  git_q -C "$d" add -A
+  git_q -C "$d" commit -m "init $1"
 }
 
 publish() { # <name>
-	git_q clone --bare "$WORK/$1" "$SRV/$1.git"
-	# `--rev` on a sibling clone names an exact commit, and a depth-1 fetch of a
-	# commit that is not a branch tip needs the server to allow it.
-	git_q -C "$SRV/$1.git" config uploadpack.allowAnySHA1InWant true
+  git_q clone --bare "$WORK/$1" "$SRV/$1.git"
+  # `--rev` on a sibling clone names an exact commit, and a depth-1 fetch of a
+  # commit that is not a branch tip needs the server to allow it.
+  git_q -C "$SRV/$1.git" config uploadpack.allowAnySHA1InWant true
 }
 
 mk_repo leaf
@@ -146,13 +146,13 @@ publish leaf
 
 mk_repo mid
 git_q -C "$WORK/mid" -c protocol.file.allow=always \
-	submodule add "file://$SRV/leaf.git" deep/leafmod
+  submodule add "file://$SRV/leaf.git" deep/leafmod
 git_q -C "$WORK/mid" commit -m "add deep/leafmod"
 publish mid
 
 mk_repo super
 git_q -C "$WORK/super" -c protocol.file.allow=always \
-	submodule add "file://$SRV/mid.git" libs/midmod
+  submodule add "file://$SRV/mid.git" libs/midmod
 git_q -C "$WORK/super" commit -m "add libs/midmod"
 publish super
 
@@ -178,13 +178,13 @@ pfa="<unset>"
 c="${GIT_CONFIG_COUNT:-0}"
 i=0
 while [ "$i" -lt "$c" ]; do
-	eval "k=\${GIT_CONFIG_KEY_$i-}"
-	eval "v=\${GIT_CONFIG_VALUE_$i-}"
-	case "$k" in
-	core.longpaths) lp="$v" ;;
-	protocol.file.allow) pfa="$v" ;;
-	esac
-	i=$((i + 1))
+  eval "k=\${GIT_CONFIG_KEY_$i-}"
+  eval "v=\${GIT_CONFIG_VALUE_$i-}"
+  case "$k" in
+  core.longpaths) lp="$v" ;;
+  protocol.file.allow) pfa="$v" ;;
+  esac
+  i=$((i + 1))
 done
 
 printf '%s\t%s\t%s\t%s\n' "$n" "$lp" "$pfa" "$*" >>"$LP_LOG_DIR/invocations"
@@ -200,60 +200,60 @@ export LP_REAL_GIT="$REAL_GIT"
 # script with the shim first on PATH and a fresh log directory.
 LP_LOG_DIR=""
 run_scenario() {
-	local name="$1"
-	shift
-	LP_LOG_DIR="$TMPROOT/logs/$name"
-	mkdir -p "$LP_LOG_DIR"
-	: >"$LP_LOG_DIR/invocations"
-	export LP_LOG_DIR
-	# The fixture's `file://` submodules are refused by git unless
-	# `protocol.file.allow` says otherwise (CVE-2022-39253). It is installed as
-	# PRE-EXISTING numbered configuration, at index 0, so the run also proves
-	# the script APPENDS to an environment it did not create rather than
-	# renumbering from zero and dropping it — `setup-nix` puts the job's
-	# credential there by exactly this mechanism.
-	env PATH="$SHIM:$PATH" \
-		GIT_CONFIG_COUNT=1 \
-		GIT_CONFIG_KEY_0=protocol.file.allow \
-		GIT_CONFIG_VALUE_0=always \
-		bash "$@"
+  local name="$1"
+  shift
+  LP_LOG_DIR="$TMPROOT/logs/$name"
+  mkdir -p "$LP_LOG_DIR"
+  : >"$LP_LOG_DIR/invocations"
+  export LP_LOG_DIR
+  # The fixture's `file://` submodules are refused by git unless
+  # `protocol.file.allow` says otherwise (CVE-2022-39253). It is installed as
+  # PRE-EXISTING numbered configuration, at index 0, so the run also proves
+  # the script APPENDS to an environment it did not create rather than
+  # renumbering from zero and dropping it — `setup-nix` puts the job's
+  # credential there by exactly this mechanism.
+  env PATH="$SHIM:$PATH" \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=protocol.file.allow \
+    GIT_CONFIG_VALUE_0=always \
+    bash "$@"
 }
 
 # `field <n> <line>` -- tab-separated field, in pure bash.
 lp_of() { # <invocations-file> <argv-substring> -> the core.longpaths column
-	local file="$1" want="$2" n lp argv
-	while IFS=$'\t' read -r n lp _ argv; do
-		case "$argv" in
-		*"$want"*)
-			printf '%s' "$lp"
-			return 0
-			;;
-		esac
-	done <"$file"
-	printf '<no-such-invocation>'
+  local file="$1" want="$2" n lp argv
+  while IFS=$'\t' read -r n lp _ argv; do
+    case "$argv" in
+    *"$want"*)
+      printf '%s' "$lp"
+      return 0
+      ;;
+    esac
+  done <"$file"
+  printf '<no-such-invocation>'
 }
 
 idx_of() { # <invocations-file> <argv-substring> -> the invocation index
-	local file="$1" want="$2" n lp argv
-	while IFS=$'\t' read -r n lp _ argv; do
-		case "$argv" in
-		*"$want"*)
-			printf '%s' "$n"
-			return 0
-			;;
-		esac
-	done <"$file"
-	printf -- '-1'
+  local file="$1" want="$2" n lp argv
+  while IFS=$'\t' read -r n lp _ argv; do
+    case "$argv" in
+    *"$want"*)
+      printf '%s' "$n"
+      return 0
+      ;;
+    esac
+  done <"$file"
+  printf -- '-1'
 }
 
 count_matching() { # <invocations-file> <argv-substring>
-	local file="$1" want="$2" n lp argv c=0
-	while IFS=$'\t' read -r n lp _ argv; do
-		case "$argv" in
-		*"$want"*) c=$((c + 1)) ;;
-		esac
-	done <"$file"
-	printf '%s' "$c"
+  local file="$1" want="$2" n lp argv c=0
+  while IFS=$'\t' read -r n lp _ argv; do
+    case "$argv" in
+    *"$want"*) c=$((c + 1)) ;;
+    esac
+  done <"$file"
+  printf '%s' "$c"
 }
 
 # ---------------------------------------------------------------------------
@@ -293,27 +293,27 @@ count_matching() { # <invocations-file> <argv-substring>
 # ---------------------------------------------------------------------------
 
 sids_resolving_true() { # <trace>
-	[[ -f $1 ]] || return 0
-	grep -o '"sid":"[^"]*"[^}]*"param":"core\.longpaths","value":"true"' "$1" 2>/dev/null |
-		sed 's/^"sid":"\([^"]*\)".*/\1/' | sort -u
+  [[ -f $1 ]] || return 0
+  grep -o '"sid":"[^"]*"[^}]*"param":"core\.longpaths","value":"true"' "$1" 2>/dev/null |
+    sed 's/^"sid":"\([^"]*\)".*/\1/' | sort -u
 }
 
 sids_opening_worktree() { # <trace> <worktree>
-	[[ -f $1 ]] || return 0
-	grep -o '"sid":"[^"]*"[^}]*"worktree":"[^"]*"' "$1" 2>/dev/null |
-		sed -n 's/^"sid":"\([^"]*\)".*"worktree":"\(.*\)"$/\1\t\2/p' |
-		while IFS=$'\t' read -r _s _w; do
-			[[ $_w == "$2" ]] && printf '%s\n' "$_s"
-		done | sort -u
+  [[ -f $1 ]] || return 0
+  grep -o '"sid":"[^"]*"[^}]*"worktree":"[^"]*"' "$1" 2>/dev/null |
+    sed -n 's/^"sid":"\([^"]*\)".*"worktree":"\(.*\)"$/\1\t\2/p' |
+    while IFS=$'\t' read -r _s _w; do
+      [[ $_w == "$2" ]] && printf '%s\n' "$_s"
+    done | sort -u
 }
 
 # `deep_resolvers <trace> <superproject-worktree> <submodule-worktree>` -- how
 # many git processes opened ONLY the submodule and resolved core.longpaths=true.
 deep_resolvers() {
-	local trace="$1" root="$2" wt="$3"
-	comm -12 \
-		<(comm -23 <(sids_opening_worktree "$trace" "$wt") <(sids_opening_worktree "$trace" "$root")) \
-		<(sids_resolving_true "$trace") | grep -c . || true
+  local trace="$1" root="$2" wt="$3"
+  comm -12 \
+    <(comm -23 <(sids_opening_worktree "$trace" "$wt") <(sids_opening_worktree "$trace" "$root")) \
+    <(sids_resolving_true "$trace") | grep -c . || true
 }
 
 # `total_resolvers <trace>` -- distinct git processes resolving it to true, at
@@ -324,7 +324,7 @@ echo "=== scenario A: full clone with --submodules (the clone-repo shape) ==="
 
 DEST_A="$TMPROOT/dest-a"
 run_scenario a "$CLONE" --repo owner/super --dest "$DEST_A" \
-	--submodules --url-base "file://$TMPROOT/remotes/"
+  --submodules --url-base "file://$TMPROOT/remotes/"
 RC_A=$?
 LOG_A="$TMPROOT/logs/a/invocations"
 
@@ -334,9 +334,9 @@ check "authenticated-clone succeeded" "$RC_A" 0
 # cloning outright would still satisfy every configuration assertion below.
 [[ -f $DEST_A/file.txt ]] && ok "superproject is checked out" || bad "superproject is checked out"
 [[ -f $DEST_A/libs/midmod/file.txt ]] && ok "level-1 submodule is checked out" ||
-	bad "level-1 submodule is checked out"
+  bad "level-1 submodule is checked out"
 [[ -f $DEST_A/libs/midmod/deep/leafmod/file.txt ]] && ok "level-2 submodule is checked out" ||
-	bad "level-2 submodule is checked out"
+  bad "level-2 submodule is checked out"
 
 # Non-vacuity: the log must have records in it, and enough of them to be the
 # real thing rather than an empty scan reading as a clean one.
@@ -347,12 +347,12 @@ at_least "the shim recorded the script's git invocations" "$N_INV_A" 2
 BAD_A=0
 UNSET_A=0
 while IFS=$'\t' read -r _n _lp _pfa _argv; do
-	[[ -z ${_n:-} ]] && continue
-	if [[ $_lp != "true" ]]; then
-		BAD_A=$((BAD_A + 1))
-		[[ $_lp == "<unset>" ]] && UNSET_A=$((UNSET_A + 1))
-		echo "     not carrying core.longpaths=true: [$_lp] git $_argv"
-	fi
+  [[ -z ${_n:-} ]] && continue
+  if [[ $_lp != "true" ]]; then
+    BAD_A=$((BAD_A + 1))
+    [[ $_lp == "<unset>" ]] && UNSET_A=$((UNSET_A + 1))
+    echo "     not carrying core.longpaths=true: [$_lp] git $_argv"
+  fi
 done <"$LOG_A"
 check "every git invocation is handed core.longpaths=true" "$BAD_A" 0
 
@@ -361,24 +361,24 @@ check "every git invocation is handed core.longpaths=true" "$BAD_A" 0
 # where the reported failure actually happened. A fix installed after the
 # submodule update leaves exactly this one record unset.
 check "the recursive submodule update is handed core.longpaths=true" \
-	"$(lp_of "$LOG_A" "submodule update")" "true"
+  "$(lp_of "$LOG_A" "submodule update")" "true"
 check "the initial clone is handed core.longpaths=true" \
-	"$(lp_of "$LOG_A" "clone --quiet")" "true"
+  "$(lp_of "$LOG_A" "clone --quiet")" "true"
 check "exactly one recursive submodule update was run" \
-	"$(count_matching "$LOG_A" "submodule update")" "1"
+  "$(count_matching "$LOG_A" "submodule update")" "1"
 
 # Pre-existing numbered configuration survives: index 0 was the fixture's, and
 # it has to still be in force at the invocation that needs it most.
 check "pre-existing numbered config (protocol.file.allow) survives to the submodule update" \
-	"$(
-		while IFS=$'\t' read -r _n _lp _pfa _argv; do
-			case "$_argv" in *"submodule update"*)
-				printf '%s' "$_pfa"
-				break
-				;;
-			esac
-		done <"$LOG_A"
-	)" "always"
+  "$(
+    while IFS=$'\t' read -r _n _lp _pfa _argv; do
+      case "$_argv" in *"submodule update"*)
+        printf '%s' "$_pfa"
+        break
+        ;;
+      esac
+    done <"$LOG_A"
+  )" "always"
 
 # The property the whole fix rests on: the git processes that check the
 # SUBMODULES out resolve it too, at both levels of nesting.
@@ -386,22 +386,22 @@ IDX_SUB_A="$(idx_of "$LOG_A" "submodule update")"
 check "the submodule update invocation was traced" "$([[ $IDX_SUB_A -ge 0 ]] && echo yes || echo no)" "yes"
 TRACE_A="$TMPROOT/logs/a/trace-$IDX_SUB_A.json"
 [[ -s $TRACE_A ]] && ok "the submodule update produced a trace to read" ||
-	bad "the submodule update produced a trace to read" "no events in $TRACE_A"
+  bad "the submodule update produced a trace to read" "no events in $TRACE_A"
 ROOT_A="$(cd "$DEST_A" && pwd -P)"
 at_least "git processes resolving core.longpaths=true during the submodule update" \
-	"$(total_resolvers "$TRACE_A")" 3
+  "$(total_resolvers "$TRACE_A")" 3
 at_least "level-1 submodule-only git processes resolving core.longpaths=true" \
-	"$(deep_resolvers "$TRACE_A" "$ROOT_A" "$ROOT_A/libs/midmod")" 1
+  "$(deep_resolvers "$TRACE_A" "$ROOT_A" "$ROOT_A/libs/midmod")" 1
 at_least "level-2 submodule-only git processes resolving core.longpaths=true" \
-	"$(deep_resolvers "$TRACE_A" "$ROOT_A" "$ROOT_A/libs/midmod/deep/leafmod")" 1
+  "$(deep_resolvers "$TRACE_A" "$ROOT_A" "$ROOT_A/libs/midmod/deep/leafmod")" 1
 
 echo
 echo "=== scenario B: shallow pinned clone (the \`clone-siblings\` shape) ==="
 
 DEST_B="$TMPROOT/dest-b"
 run_scenario b "$CLONE" --repo owner/super --dest "$DEST_B" \
-	--rev "$SUPER_SHA" --shallow --submodules-optional \
-	--url-base "file://$TMPROOT/remotes/"
+  --rev "$SUPER_SHA" --shallow --submodules-optional \
+  --url-base "file://$TMPROOT/remotes/"
 RC_B=$?
 LOG_B="$TMPROOT/logs/b/invocations"
 
@@ -411,38 +411,38 @@ check "authenticated-clone succeeded (shallow)" "$RC_B" 0
 # still exits 0, which is exactly how this defect stayed invisible for as long
 # as it did. So the shallow scenario asserts the tree, not the exit code.
 [[ -f $DEST_B/libs/midmod/deep/leafmod/file.txt ]] &&
-	ok "level-2 submodule is checked out (shallow, optional)" ||
-	bad "level-2 submodule is checked out (shallow, optional)"
+  ok "level-2 submodule is checked out (shallow, optional)" ||
+  bad "level-2 submodule is checked out (shallow, optional)"
 
 N_INV_B="$(count_matching "$LOG_B" "")"
 at_least "the shim recorded the shallow run's git invocations" "$N_INV_B" 4
 
 BAD_B=0
 while IFS=$'\t' read -r _n _lp _pfa _argv; do
-	[[ -z ${_n:-} ]] && continue
-	if [[ $_lp != "true" ]]; then
-		BAD_B=$((BAD_B + 1))
-		echo "     not carrying core.longpaths=true: [$_lp] git $_argv"
-	fi
+  [[ -z ${_n:-} ]] && continue
+  if [[ $_lp != "true" ]]; then
+    BAD_B=$((BAD_B + 1))
+    echo "     not carrying core.longpaths=true: [$_lp] git $_argv"
+  fi
 done <"$LOG_B"
 check "every git invocation is handed core.longpaths=true (shallow)" "$BAD_B" 0
 
 check "the depth-1 fetch of the pinned revision is handed core.longpaths=true" \
-	"$(lp_of "$LOG_B" "fetch --quiet --depth 1")" "true"
+  "$(lp_of "$LOG_B" "fetch --quiet --depth 1")" "true"
 check "the detached checkout is handed core.longpaths=true" \
-	"$(lp_of "$LOG_B" "checkout --quiet --detach")" "true"
+  "$(lp_of "$LOG_B" "checkout --quiet --detach")" "true"
 
 IDX_SUB_B="$(idx_of "$LOG_B" "submodule update")"
 TRACE_B="$TMPROOT/logs/b/trace-$IDX_SUB_B.json"
 [[ -s $TRACE_B ]] && ok "the shallow submodule update produced a trace to read" ||
-	bad "the shallow submodule update produced a trace to read" "no events in $TRACE_B"
+  bad "the shallow submodule update produced a trace to read" "no events in $TRACE_B"
 ROOT_B="$(cd "$DEST_B" && pwd -P)"
 at_least "git processes resolving core.longpaths=true during the shallow submodule update" \
-	"$(total_resolvers "$TRACE_B")" 3
+  "$(total_resolvers "$TRACE_B")" 3
 at_least "level-1 submodule-only git processes resolving core.longpaths=true (shallow)" \
-	"$(deep_resolvers "$TRACE_B" "$ROOT_B" "$ROOT_B/libs/midmod")" 1
+  "$(deep_resolvers "$TRACE_B" "$ROOT_B" "$ROOT_B/libs/midmod")" 1
 at_least "level-2 submodule-only git processes resolving core.longpaths=true (shallow)" \
-	"$(deep_resolvers "$TRACE_B" "$ROOT_B" "$ROOT_B/libs/midmod/deep/leafmod")" 1
+  "$(deep_resolvers "$TRACE_B" "$ROOT_B" "$ROOT_B/libs/midmod/deep/leafmod")" 1
 
 echo
 echo "=== control: the same fixtures WITHOUT authenticated-clone ==="
@@ -458,41 +458,41 @@ mkdir -p "$LP_LOG_DIR"
 : >"$LP_LOG_DIR/invocations"
 export LP_LOG_DIR
 env PATH="$SHIM:$PATH" \
-	GIT_CONFIG_COUNT=1 \
-	GIT_CONFIG_KEY_0=protocol.file.allow \
-	GIT_CONFIG_VALUE_0=always \
-	bash -c '
-		set -e
-		git clone --quiet "file://'"$TMPROOT"'/remotes/owner/super.git" "'"$DEST_C"'"
-		git -C "'"$DEST_C"'" submodule update --init --recursive --quiet
-	'
+  GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_KEY_0=protocol.file.allow \
+  GIT_CONFIG_VALUE_0=always \
+  bash -c '
+    set -e
+    git clone --quiet "file://'"$TMPROOT"'/remotes/owner/super.git" "'"$DEST_C"'"
+    git -C "'"$DEST_C"'" submodule update --init --recursive --quiet
+  '
 RC_C=$?
 LOG_C="$TMPROOT/logs/control/invocations"
 
 check "control run succeeded (so it is comparable)" "$RC_C" 0
 [[ -f $DEST_C/libs/midmod/deep/leafmod/file.txt ]] &&
-	ok "control checked out both submodule levels" ||
-	bad "control checked out both submodule levels"
+  ok "control checked out both submodule levels" ||
+  bad "control checked out both submodule levels"
 
 check "control: the submodule update is NOT handed core.longpaths" \
-	"$(lp_of "$LOG_C" "submodule update")" "<unset>"
+  "$(lp_of "$LOG_C" "submodule update")" "<unset>"
 check "control: the clone is NOT handed core.longpaths" \
-	"$(lp_of "$LOG_C" "clone --quiet")" "<unset>"
+  "$(lp_of "$LOG_C" "clone --quiet")" "<unset>"
 
 IDX_SUB_C="$(idx_of "$LOG_C" "submodule update")"
 TRACE_C="$TMPROOT/logs/control/trace-$IDX_SUB_C.json"
 [[ -s $TRACE_C ]] && ok "the control submodule update produced a trace to read" ||
-	bad "the control submodule update produced a trace to read" "no events in $TRACE_C"
+  bad "the control submodule update produced a trace to read" "no events in $TRACE_C"
 ROOT_C="$(cd "$DEST_C" && pwd -P)"
 check "control: NO git process resolves core.longpaths at all" \
-	"$(total_resolvers "$TRACE_C")" 0
+  "$(total_resolvers "$TRACE_C")" 0
 # The worktree correlation itself must be working in the control, or the two
 # `deep_resolvers` assertions above could be reading zero from a broken parse
 # rather than from a missing setting.
 at_least "control: the trace DOES record submodule worktrees (so the correlation is live)" \
-	"$(sids_opening_worktree "$TRACE_C" "$ROOT_C/libs/midmod/deep/leafmod" | grep -c . || true)" 1
+  "$(sids_opening_worktree "$TRACE_C" "$ROOT_C/libs/midmod/deep/leafmod" | grep -c . || true)" 1
 check "control: level-2 submodule-only git processes resolving core.longpaths=true" \
-	"$(deep_resolvers "$TRACE_C" "$ROOT_C" "$ROOT_C/libs/midmod/deep/leafmod")" 0
+  "$(deep_resolvers "$TRACE_C" "$ROOT_C" "$ROOT_C/libs/midmod/deep/leafmod")" 0
 
 echo
 echo "-- $PASS passed, $FAIL failed"

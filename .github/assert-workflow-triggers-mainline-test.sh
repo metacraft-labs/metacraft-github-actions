@@ -40,42 +40,42 @@ trap 'rm -rf "$TMP"' EXIT
 failures=0
 pass() { printf 'ok   %s\n' "$1"; }
 fail() {
-	printf 'FAIL %s\n' "$1"
-	shift
-	[ "$#" -gt 0 ] && printf '     %s\n' "$@"
-	failures=$((failures + 1))
+  printf 'FAIL %s\n' "$1"
+  shift
+  [ "$#" -gt 0 ] && printf '     %s\n' "$@"
+  failures=$((failures + 1))
 }
 
 n=0
 write() { # <<heredoc  -> prints path
-	n=$((n + 1))
-	local f="$TMP/wf-${n}.yml"
-	cat >"$f"
-	printf '%s' "$f"
+  n=$((n + 1))
+  local f="$TMP/wf-${n}.yml"
+  cat >"$f"
+  printf '%s' "$f"
 }
 
 # expect_reject <label> <mainline> <file>
 expect_reject() {
-	local label="$1" mainline="$2" file="$3" out rc
-	out="$(bash "$GUARD" "$mainline" "$file" 2>&1)"
-	rc=$?
-	if [ "$rc" -eq 1 ]; then
-		pass "$label"
-	else
-		fail "$label — expected exit 1, got $rc" "$out"
-	fi
+  local label="$1" mainline="$2" file="$3" out rc
+  out="$(bash "$GUARD" "$mainline" "$file" 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    pass "$label"
+  else
+    fail "$label — expected exit 1, got $rc" "$out"
+  fi
 }
 
 # expect_accept <label> <mainline> <file>
 expect_accept() {
-	local label="$1" mainline="$2" file="$3" out rc
-	out="$(bash "$GUARD" "$mainline" "$file" 2>&1)"
-	rc=$?
-	if [ "$rc" -eq 0 ]; then
-		pass "$label"
-	else
-		fail "$label — expected exit 0, got $rc" "$out"
-	fi
+  local label="$1" mainline="$2" file="$3" out rc
+  out="$(bash "$GUARD" "$mainline" "$file" 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "$label"
+  else
+    fail "$label — expected exit 0, got $rc" "$out"
+  fi
 }
 
 # ==== NEGATIVE: the real pre-fix files ======================================
@@ -490,9 +490,9 @@ expect_reject "rejects an exemption with no reason" dev "$f"
 out="$(bash "$GUARD" dev "$TMP/nope.yml" 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-	pass "a missing file is exit 2, not a pass"
+  pass "a missing file is exit 2, not a pass"
 else
-	fail "a missing file should be exit 2, got $rc" "$out"
+  fail "a missing file should be exit 2, got $rc" "$out"
 fi
 
 # Asked to scan a repo with no workflows, it must fail loudly rather than
@@ -503,9 +503,9 @@ cp "$GUARD" "$empty/"
 out="$(bash "$empty/assert-workflow-triggers-mainline.sh" dev 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-	pass "no workflows at all is exit 2, not a vacuous pass"
+  pass "no workflows at all is exit 2, not a vacuous pass"
 else
-	fail "no workflows should be exit 2, got $rc" "$out"
+  fail "no workflows should be exit 2, got $rc" "$out"
 fi
 
 # Refuses to guess a mainline when it cannot detect one.
@@ -519,9 +519,9 @@ YAML
 out="$(cd "$TMP/norepo" && bash .github/assert-workflow-triggers-mainline.sh 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-	pass "refuses to guess a mainline outside a repo with branches"
+  pass "refuses to guess a mainline outside a repo with branches"
 else
-	fail "should refuse to guess a mainline, got $rc" "$out"
+  fail "should refuse to guess a mainline, got $rc" "$out"
 fi
 
 # Detects the mainline from the branches that exist, in policy order.
@@ -534,21 +534,21 @@ on:
     branches: [dev]
 YAML
 (
-	cd "$detect_repo" || exit 1
-	git init -q . 2>/dev/null
-	git config user.email t@e.st
-	git config user.name t
-	git add -A >/dev/null 2>&1
-	git commit -qm x >/dev/null 2>&1
-	git branch -q dev 2>/dev/null
-	git remote add origin "$detect_repo/.git" 2>/dev/null
+  cd "$detect_repo" || exit 1
+  git init -q . 2>/dev/null
+  git config user.email t@e.st
+  git config user.name t
+  git add -A >/dev/null 2>&1
+  git commit -qm x >/dev/null 2>&1
+  git branch -q dev 2>/dev/null
+  git remote add origin "$detect_repo/.git" 2>/dev/null
 ) >/dev/null 2>&1
 out="$(cd "$detect_repo" && bash .github/assert-workflow-triggers-mainline.sh 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ] && [ "${out#*dev}" != "$out" ]; then
-	pass "detects \`dev\` from the branches that exist"
+  pass "detects \`dev\` from the branches that exist"
 else
-	fail "should have detected \`dev\` (exit $rc)" "$out"
+  fail "should have detected \`dev\` (exit $rc)" "$out"
 fi
 
 # The composite action runs the guard from ITS OWN checkout against SOMEBODY
@@ -565,9 +565,9 @@ YAML
 out="$(WORKFLOW_TRIGGERS_ROOT="$other" bash "$GUARD" dev 2>&1)"
 rc=$?
 if [ "$rc" -eq 1 ]; then
-	pass "WORKFLOW_TRIGGERS_ROOT inspects the named tree, not the script's own"
+  pass "WORKFLOW_TRIGGERS_ROOT inspects the named tree, not the script's own"
 else
-	fail "WORKFLOW_TRIGGERS_ROOT should have found the other tree's defect (exit $rc)" "$out"
+  fail "WORKFLOW_TRIGGERS_ROOT should have found the other tree's defect (exit $rc)" "$out"
 fi
 case "$out" in
 *"ci.yml"*) pass "the diagnostic names the other tree's file" ;;
@@ -578,9 +578,9 @@ esac
 out="$(bash "$GUARD" dev 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ]; then
-	pass "this repository's own workflows name the mainline"
+  pass "this repository's own workflows name the mainline"
 else
-	fail "this repository's workflows should pass (exit $rc)" "$out"
+  fail "this repository's workflows should pass (exit $rc)" "$out"
 fi
 case "$out" in
 *"name the mainline"*) pass "the pass path reports a count" ;;
@@ -589,8 +589,8 @@ esac
 
 # ===========================================================================
 if [ "$failures" -eq 0 ]; then
-	echo "assert-workflow-triggers-mainline-test: all cases pass."
-	exit 0
+  echo "assert-workflow-triggers-mainline-test: all cases pass."
+  exit 0
 fi
 echo "assert-workflow-triggers-mainline-test: ${failures} case(s) failed."
 exit 1

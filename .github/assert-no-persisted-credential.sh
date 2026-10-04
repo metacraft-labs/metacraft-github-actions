@@ -34,44 +34,44 @@ set -uo pipefail
 FAIL=0
 ok() { echo "ok   $1"; }
 bad() {
-	FAIL=1
-	echo "FAIL $1"
-	[[ -n ${2:-} ]] && echo "     $2"
+  FAIL=1
+  echo "FAIL $1"
+  [[ -n ${2:-} ]] && echo "     $2"
 }
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-	echo "assert-no-persisted-credential: not a git repository; nothing to assert" >&2
-	exit 2
+  echo "assert-no-persisted-credential: not a git repository; nothing to assert" >&2
+  exit 2
 fi
 
 # 1. The `actions/checkout` header itself. `--get-all` exits 1 when the key is
 #    unset, which is the passing case; count the lines rather than reading any.
 n="$({ git config --local --get-all 'http.https://github.com/.extraheader' 2>/dev/null || true; } | grep -c . || true)"
 if [[ $n -eq 0 ]]; then
-	ok "no http.https://github.com/.extraheader in .git/config"
+  ok "no http.https://github.com/.extraheader in .git/config"
 else
-	bad "the checkout persisted a catch-all Authorization header" \
-		"$n value(s) set for http.https://github.com/.extraheader; set persist-credentials: false"
+  bad "the checkout persisted a catch-all Authorization header" \
+    "$n value(s) set for http.https://github.com/.extraheader; set persist-credentials: false"
 fi
 
 # 2. The same shape written under any other URL prefix — a narrower scope is
 #    still a persisted credential, so report it, and report only the key.
 while IFS= read -r key; do
-	[[ -z $key ]] && continue
-	bad "a persisted extraheader is configured" "key: $key"
+  [[ -z $key ]] && continue
+  bad "a persisted extraheader is configured" "key: $key"
 done < <({ git config --local --name-only --get-regexp '^http\..*\.extraheader$' 2>/dev/null || true; })
 
 # 3. A credential-bearing URL rewrite, the other way the same thing gets stored.
 while IFS= read -r key; do
-	[[ -z $key ]] && continue
-	case "$key" in
-	*x-access-token*) bad "a credential-bearing url rewrite is configured" "key: ${key//x-access-token*@/x-access-token:***@}" ;;
-	esac
+  [[ -z $key ]] && continue
+  case "$key" in
+  *x-access-token*) bad "a credential-bearing url rewrite is configured" "key: ${key//x-access-token*@/x-access-token:***@}" ;;
+  esac
 done < <({ git config --local --name-only --get-regexp '^url\..*\.insteadof$' 2>/dev/null || true; })
 
 if [[ $FAIL -eq 0 ]]; then
-	echo "assert-no-persisted-credential: checkout carries no stored credential."
+  echo "assert-no-persisted-credential: checkout carries no stored credential."
 else
-	echo "assert-no-persisted-credential: STORED CREDENTIAL PRESENT." >&2
+  echo "assert-no-persisted-credential: STORED CREDENTIAL PRESENT." >&2
 fi
 exit "$FAIL"
