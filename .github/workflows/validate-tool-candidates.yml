@@ -26,6 +26,7 @@ on:
           - gosti-repro-process-timing
           - gosti-repro-shutdown
           - gosti-repro-concurrency
+          - windows-thread-snapshots
           - runquota-windows-handles
           - runquota-linux-arm-bootstrap
           - io-mon-windows-cleanup
@@ -48,7 +49,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.checks != 'windows-thread-snapshots' && inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -1173,5 +1174,30 @@ jobs:
         with:
           name: io-mon-87bc-repro-frame
           path: test-logs/repro-frame/
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  windows-thread-snapshots:
+    if: inputs.checks == 'windows-thread-snapshots'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare snapshot APIs with known real peer threads
+        shell: pwsh
+        run: ./diagnostics/windows-thread-snapshots.ps1
+      - name: Preserve measurements and x64 binary identity
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thread-snapshots-${{ matrix.runner }}
+          path: |
+            test-logs/thread-snapshots/*.log
+            test-logs/thread-snapshots/*.txt
           if-no-files-found: warn
           retention-days: 14
