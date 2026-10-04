@@ -572,7 +572,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/gosti
-          ref: d23d90175493ae7ad78f585a8581e4c7bce848f8
+          ref: ae5cbfbabdf2796d48cc7cec3065a53fc3db5a72
           persist-credentials: false
       - name: Mint installation token
         id: ci-token
@@ -619,7 +619,7 @@ jobs:
           & git -C nim-stackable-hooks log -1 --format='%H %s' > "$evidence/hooks-source.txt"
           Get-FileHash reprobuild/build/lib/librepro_monitor_shim.dll | Format-List > "$evidence/shim.txt"
           $results = @()
-          foreach ($name in @('t_vmharness_serve_survives_a_hung_request')) {
+          foreach ($name in @('t_linux_runner_recipe_pin')) {
             # Match full CI: a shared daemon may inherit stdout. Bash redirects
             # the foreground command to a file and returns its actual status;
             # PowerShell's native-output pipe would wait for daemon EOF.
