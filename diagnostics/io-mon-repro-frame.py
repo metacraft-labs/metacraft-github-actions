@@ -60,6 +60,11 @@ try:
     source = fixture.read_text()
     assert source.count('    defer: removeDir(work)') == 1
     source = source.replace('    defer: removeDir(work)', '    echo "diagnostic retained work: ", work')
+    # unittest checkpoints print only on failure. Expose the actual captured C
+    # output on success too, without changing the original fixture assertions.
+    assert source.count('    checkpoint(observed.output)') == 1
+    source = source.replace('    checkpoint(observed.output)',
+                            '    echo observed.output\n    checkpoint(observed.output)')
     for before, after in [
         ('  alarm(30);', '  alarm(30);\n  puts("probe phase: main"); fflush(stdout);'),
         ('  void *before = frame();', '  puts("probe phase: before frame query and vfork"); fflush(stdout);\n  void *before = frame();'),
