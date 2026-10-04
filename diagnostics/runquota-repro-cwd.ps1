@@ -4,7 +4,8 @@
 param([Parameter(Mandatory)][string]$HookRevision)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
-$evidence = Join-Path $PWD 'test-logs/runquota-cwd'
+$evidence = (Join-Path $PWD 'test-logs/runquota-cwd').Replace('\', '/')
+$capture = (Join-Path $PSScriptRoot 'capture-command.sh').Replace('\', '/')
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $fixture = Join-Path $PWD 'tests/integration/t_m5_process_exec_bench_contract.nim'
 $originalFixture = [IO.File]::ReadAllBytes($fixture)
@@ -34,9 +35,24 @@ try {
     & python "$PSScriptRoot/runquota-cwd-profile.py" $fixture
     if ($LASTEXITCODE -ne 0) { throw 'M5 diagnostic anchors changed' }
     & git diff -- tests/integration/t_m5_process_exec_bench_contract.nim > "$evidence/fixture.patch"
+    # Record the bounded child before the full-suite contention experiment.
+    # Bash owns every long-lived command's log; a background descendant must
+    # not make PowerShell wait for an inherited native output pipe to close.
+    Write-Host "Starting focused production-monitor probe at $([DateTime]::UtcNow.ToString('o'))"
+    & bash $capture "$evidence/focused.log" dev-exec repro build '.#test-t_m5_process_exec_bench_contract' --tool-provisioning=tarball --force-rebuild "--write-report=$evidence/focused-report.json"
+    $code = $LASTEXITCODE
+    $results += @{mode='focused'; exitCode=$code; hooks=$HookRevision}
+    $results | ConvertTo-Json | Set-Content "$evidence/results.json"
+    $report = Get-Content "$evidence/focused-report.json" -Raw | ConvertFrom-Json
+    $m5 = @($report.actions | Where-Object {$_.id -eq 'runquota.test_execute.t_m5_process_exec_bench_contract'})
+    if ($m5.Count -ne 1 -or -not $m5[0].launched) { throw 'The focused M5 action did not execute' }
+    $m5[0] | ConvertTo-Json -Depth 20 > "$evidence/focused-m5.json"
+    if (-not ($m5[0].stdout + $m5[0].stderr).Contains('cwd-profile phase=wait-end')) { throw 'Missing focused completion diagnostics' }
+    if ($code -ne 0 -or $m5[0].status -ne 'asSucceeded') { $failed = $true }
     # Keep default production concurrency, all 213 actions, and every assertion.
     # The original production monitor is untouched for this full-suite run.
-    & dev-exec repro test --tool-provisioning=tarball --force-rebuild "--write-report=$evidence/full-report.json" *> "$evidence/full.log"
+    Write-Host "Starting full production-monitor suite at $([DateTime]::UtcNow.ToString('o'))"
+    & bash $capture "$evidence/full.log" dev-exec repro test --tool-provisioning=tarball --force-rebuild "--write-report=$evidence/full-report.json"
     $code = $LASTEXITCODE
     $results += @{mode='full'; exitCode=$code; hooks=$HookRevision}
     $results | ConvertTo-Json | Set-Content "$evidence/results.json"
@@ -51,7 +67,8 @@ try {
     $binary = Join-Path $PWD 'build/test-bin/t_m5_process_exec_bench_contract.exe'
     $hash = (Get-FileHash $binary -Algorithm SHA256).Hash
     foreach ($iteration in 1..3) {
-        & $binary *> "$evidence/direct-$iteration.log"
+        Write-Host "Starting direct iteration $iteration at $([DateTime]::UtcNow.ToString('o'))"
+        & bash $capture "$evidence/direct-$iteration.log" ($binary.Replace('\', '/'))
         $code = $LASTEXITCODE
         $text = Get-Content "$evidence/direct-$iteration.log" -Raw
         $results += @{mode='direct'; iteration=$iteration; exitCode=$code; sha256=$hash}
@@ -72,11 +89,13 @@ try {
     $env:IO_MON_BUILD_MODE = 'debug'
     $env:IO_MON_SHIM_OUT_DIR = (Join-Path $PWD 'build/cwd-profile/lib').Replace('\', '/')
     $env:IO_MON_SHIM_NIMCACHE_DIR = (Join-Path $PWD 'build/cwd-profile/nimcache').Replace('\', '/')
-    & bash io-mon/scripts/build_shim.sh --opt:none *> "$evidence/profile-monitor-build.log"
+    Write-Host "Building the separately profiled monitor at $([DateTime]::UtcNow.ToString('o'))"
+    & bash $capture "$evidence/profile-monitor-build.log" bash io-mon/scripts/build_shim.sh --opt:none
     if ($LASTEXITCODE -ne 0) { throw 'Profile monitor build failed' }
     $env:REPRO_MONITOR_SHIM_LIB = (Resolve-Path "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll").Path
     Get-FileHash $env:REPRO_MONITOR_SHIM_LIB -Algorithm SHA256 | Format-List > "$evidence/profile-monitor-sha256.txt"
-    & dev-exec repro build '.#test-t_m5_process_exec_bench_contract' --tool-provisioning=tarball --force-rebuild "--write-report=$evidence/profile-report.json" *> "$evidence/profile.log"
+    Write-Host "Starting profiled M5 action at $([DateTime]::UtcNow.ToString('o'))"
+    & bash $capture "$evidence/profile.log" dev-exec repro build '.#test-t_m5_process_exec_bench_contract' --tool-provisioning=tarball --force-rebuild "--write-report=$evidence/profile-report.json"
     $code = $LASTEXITCODE
     $results += @{mode='profile'; exitCode=$code; shim=$env:REPRO_MONITOR_SHIM_LIB}
     $results | ConvertTo-Json | Set-Content "$evidence/results.json"
