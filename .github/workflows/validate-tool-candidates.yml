@@ -955,13 +955,13 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
-      - name: Set up the exact ordinary CI bootstrap
+      - name: Set up ordinary CI with the candidate Linux runtime repair
         uses: metacraft-labs/metacraft-github-actions/setup-dev-env@41d0680bd78ca59ad110a261a20bcaa93a38fffd
         with:
           env-flavor: reprobuild
           repro-from-source: true
           repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
-          repro-posix-io-mon-pin: 3df08c24ee91900b950ed20a3827923d213f2a9c
+          repro-posix-io-mon-pin: 004b8fc3eb0a6c31f78622272ba323c221b79b28
           repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
           repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
           repro-stackable-hooks-pin: 43b1835128331fef09ecf64a614dbf46880dbe9f
@@ -1074,7 +1074,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: metacraft-labs/io-mon
-          ref: 28f5995e3c19a23db74840f45384287acd2c1661
+          ref: de87b223567c36a7dd8a6940c55dec69d9aa1fc2
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
