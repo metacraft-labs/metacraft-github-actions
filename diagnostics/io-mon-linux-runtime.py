@@ -3,7 +3,6 @@ import json
 import os
 import platform
 import resource
-import shlex
 from pathlib import Path
 import subprocess
 
@@ -11,15 +10,13 @@ root = Path.cwd()
 evidence = root / "test-logs/linux-runtime"
 evidence.mkdir(parents=True, exist_ok=True)
 source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-assert source == "004b8fc3eb0a6c31f78622272ba323c221b79b28", source
+assert source == "de87b223567c36a7dd8a6940c55dec69d9aa1fc2", source
 (evidence / "source.txt").write_text(source + "\n")
 config = root / "src/io_mon/shim/linux_preload.nim.cfg"
 original = config.read_bytes()
 results = []
 resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 cores = Path(os.environ["RUNNER_TEMP"]) / "io-runtime-cores"
-shim_source = root / "src/io_mon/shim/linux_preload.nim"
-shim_original = shim_source.read_bytes()
 fault_test = root / "tests/linux/test_io_mon_host_fault_handlers.nim"
 fault_original = fault_test.read_bytes()
 # Retain the diagnostic child's ELF and private shim until GDB has read them.
@@ -52,7 +49,7 @@ def run(name, args, timeout=600, env=None):
     return code
 
 
-programs = ["test_io_mon_host_fault_handlers"]
+programs = ["test_io_mon_host_fault_handlers", "test_io_mon_vfork_frame_state"]
 if platform.machine() == "x86_64":
     programs.append("test_io_mon_propagation")
 else:
@@ -60,11 +57,6 @@ else:
     # full propagation suite still requires complete raw-syscall capability,
     # which ARM does not implement. Its existing assertions stay unchanged.
     print("ARM: full propagation requires the deferred raw-syscall backend.")
-subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
-    [str(root / ".diagnostic-tools/diagnostics/io-mon-vfork-frame.c"), "-ldl",
-     "-o", str(evidence / "vfork-frame")], check=True)
-# Use an actual executable, never a shell builtin.
-true_binary = "/usr/bin/true"
 
 for program in programs:
     if run("compile-" + program, ["nim", "c", "--hints:off",
@@ -80,25 +72,24 @@ try:
     ]:
         config.write_bytes(settings)
         (evidence / (name + ".nim.cfg")).write_bytes(settings)
-        shim_source.write_bytes(shim_original + b"\nproc io_mon_diagnostic_frame_state(): pointer {.exportc, dynlib, stackTrace: off, raises: [].} =\n  cast[pointer](getFrame())\n")
-        if run(name + "-build-frame-shim", ["bash", "scripts/build_shim.sh"]):
-            raise RuntimeError("Cannot build diagnostic shim")
-        environment = dict(os.environ)
-        environment["LD_PRELOAD"] = str(root / "build/lib/librepro_monitor_shim.so")
-        environment["REPRO_MONITOR_SHIM_LIB"] = environment["LD_PRELOAD"]
-        run(name + "-frame-state", [str(evidence / "vfork-frame"), true_binary], env=environment)
-        shim_source.write_bytes(shim_original)
         for program in programs:
             run(name + "-" + program, [str(root / "tests/linux" / program)])
 finally:
     config.write_bytes(original)
-    shim_source.write_bytes(shim_original)
     fault_test.write_bytes(fault_original)
 
 required = [r for r in results if r["name"].startswith("posix-policy-")]
-assert len(required) == len(programs) + 2
+assert len(required) == len(programs)
 assert all(r["exitCode"] == 0 for r in required), required
 negative = next(r for r in results if r["name"] ==
                 "old-orc-traces-handlers-test_io_mon_host_fault_handlers")
 assert negative["exitCode"] not in (0, 124), negative
 print("Production settings pass; old settings fail the real host-handler control.")
+
+frame_negative = next(r for r in results if r["name"] ==
+    "old-orc-traces-handlers-test_io_mon_vfork_frame_state")
+assert frame_negative["exitCode"] == 1, frame_negative
+frame_log = (evidence / (frame_negative["name"] + ".log")).read_text()
+assert "observed.exitCode was 71" in frame_log, frame_log[-2000:]
+assert "before-null=1 after-null=0" in frame_log, frame_log[-2000:]
+print("The permanent regression rejects the real abandoned vfork frame.")
