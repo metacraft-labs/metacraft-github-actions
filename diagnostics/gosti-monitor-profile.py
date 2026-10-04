@@ -42,13 +42,16 @@ static void io_mon_diagnostic_phase(const char *phase) {
 """.}
 proc diagnosticPhaseRaw(phase: cstring)
     {.importc: "io_mon_diagnostic_phase", nodecl, raises: [].}
-proc diagnosticPhase(phase: cstring) {.raises: [].} =
+proc diagnosticPhase(phase: cstring) {.raises: [], stackTrace: off.} =
   # Only the diagnostic write is muted; the measured operation stays outside.
+  # Preserve the value across Nim's own TLS accesses as well as the C writer.
+  let savedDiagnosticError = GetLastError()
   inc disabled
   try:
     diagnosticPhaseRaw(phase)
   finally:
     dec disabled
+    SetLastError(savedDiagnosticError)
 
 '''
 replace_once('proc dbg(msg: cstring) =', helper + 'proc dbg(msg: cstring) =')
