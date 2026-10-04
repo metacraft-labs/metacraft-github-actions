@@ -11,7 +11,7 @@ root = Path.cwd()
 evidence = root / "test-logs/linux-runtime"
 evidence.mkdir(parents=True, exist_ok=True)
 source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-assert source == "28f5995e3c19a23db74840f45384287acd2c1661", source
+assert source == "004b8fc3eb0a6c31f78622272ba323c221b79b28", source
 (evidence / "source.txt").write_text(source + "\n")
 config = root / "src/io_mon/shim/linux_preload.nim.cfg"
 original = config.read_bytes()
@@ -63,8 +63,7 @@ else:
 subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
     [str(root / ".diagnostic-tools/diagnostics/io-mon-vfork-frame.c"), "-ldl",
      "-o", str(evidence / "vfork-frame")], check=True)
-true_binary = subprocess.check_output(["sh", "-c", "command -v true"], text=True).strip()
-# Use an actual executable, rather than the shell builtin returned above.
+# Use an actual executable, never a shell builtin.
 true_binary = "/usr/bin/true"
 
 for program in programs:
