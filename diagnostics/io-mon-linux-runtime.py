@@ -10,7 +10,7 @@ root = Path.cwd()
 evidence = root / "test-logs/linux-runtime"
 evidence.mkdir(parents=True, exist_ok=True)
 source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-assert source == "de87b223567c36a7dd8a6940c55dec69d9aa1fc2", source
+assert source == "19ea53ce4593c6a7fe2281cda30b584c5ffff3cc", source
 (evidence / "source.txt").write_text(source + "\n")
 config = root / "src/io_mon/shim/linux_preload.nim.cfg"
 original = config.read_bytes()
