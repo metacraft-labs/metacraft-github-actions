@@ -34,6 +34,7 @@ on:
           - io-mon-windows-unlink
           - io-mon-dlopen-elf
           - io-mon-repro-dlopen
+          - io-mon-repro-frame
           - io-mon-propagation
           - io-mon-linux-runtime
           - runquota-macos-authority
@@ -47,7 +48,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -1108,4 +1109,65 @@ jobs:
           name: io-mon-linux-runtime-${{ matrix.runner }}
           path: test-logs/linux-runtime/
           if-no-files-found: error
+          retention-days: 14
+
+  io-mon-repro-frame:
+    if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-repro-frame'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/io-mon
+          ref: 87bc824d99fbd0c58ac6714310213ed7227bf78e
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/metacraft-github-actions
+          ref: ${{ github.sha }}
+          path: .diagnostic-tools
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Set up the same product CI environment
+        uses: metacraft-labs/metacraft-github-actions/setup-dev-env@ad0535e1305cf59fa2f52dddb1b0cdc6787a0e21
+        with:
+          env-flavor: reprobuild
+          repro-from-source: true
+          repro-build-pin: 1f85ace0037d0a70e966fe8eee645d766522b1ab
+          repro-runquota-pin: 292e578d57eb85d6037f9e2d3a03f0bcb0489dbb
+          repro-io-mon-pin: 5e71adf033b860c0fdbe13dda4320cf4a580f632
+          repro-posix-io-mon-pin: 004b8fc3eb0a6c31f78622272ba323c221b79b28
+          gh-token: ${{ steps.ci-token.outputs.token }}
+      - name: Enable private diagnostic cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gdb >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y gdb
+          fi
+          mkdir -p "$RUNNER_TEMP/io-frame-cores"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/io-frame-cores/core.%E.%p"
+      - name: Refresh build authentication
+        uses: metacraft-labs/metacraft-github-actions/refresh-build-auth@bcd29c631ff01fbd0e577c5f96e5f9d5211fed26
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - name: Compare the actual probe with its enclosing-monitor run
+        shell: bash
+        run: dev-exec python3 .diagnostic-tools/diagnostics/io-mon-repro-frame.py
+      - name: Preserve exact probe and argument-free backtrace evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: io-mon-87bc-repro-frame
+          path: test-logs/repro-frame/
+          if-no-files-found: warn
           retention-days: 14
