@@ -1,10 +1,10 @@
 """Qualify real Linux image binding with an original-binding failure control."""
 import json
-import os
 from pathlib import Path
 import platform
 import resource
 import subprocess
+import time
 
 root = Path.cwd()
 evidence = root / "test-logs/linux-runtime"
@@ -23,13 +23,15 @@ results = []
 
 
 def run(name, args, timeout=600):
+    started = time.monotonic()
     with (evidence / (name + ".log")).open("w") as output:
         try:
             code = subprocess.run(args, stdout=output, stderr=subprocess.STDOUT,
                                   timeout=timeout, check=False).returncode
         except subprocess.TimeoutExpired:
             code = 124
-    results.append({"name": name, "exitCode": code, "argv": args})
+    results.append({"name": name, "exitCode": code, "argv": args,
+                    "elapsedSeconds": time.monotonic() - started})
     (evidence / "results.json").write_text(json.dumps(results, indent=2))
     print(name, code, flush=True)
     print("\n".join((evidence / (name + ".log")).read_text(errors="replace").splitlines()[-20:]), flush=True)
@@ -58,6 +60,13 @@ finally:
     config.write_bytes(original)
 
 assert negative == 1, results
-assert "code was 139" in (evidence / "original-binding.log").read_text(), results
+negative_log = (evidence / "original-binding.log").read_text()
+# Two identical old preloads hang in startup; the real fixture's two 30-second
+# POSIX waitForExit calls kill/reap them and return 128 + SIGKILL. The original
+# enclosing-monitor failure involved different builds and exhausted its stack
+# instead. Require this specific bounded failure in BOTH preload orders.
+assert negative_log.count("code was 137") == 2, negative_log
+negative_result = next(r for r in results if r["name"] == "original-binding")
+assert negative_result["elapsedSeconds"] >= 59, negative_result
 assert all(code == 0 for code in fixed), results
-print("Original binding crashes; image-local binding passes the real regressions.")
+print("Original binding hangs in both orders; image-local binding passes the real regressions.")
