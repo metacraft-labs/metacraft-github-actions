@@ -11,6 +11,10 @@ $server = Join-Path $PWD 'src/vm_harness/serve/server.nim'
 $originalServer = [IO.File]::ReadAllBytes($server)
 $shimSource = Join-Path $PWD 'io-mon/src/io_mon/shim/windows_interpose.nim'
 $originalShimSource = [IO.File]::ReadAllBytes($shimSource)
+$hooksSource = Join-Path $PWD 'nim-stackable-hooks/src/stackable_hooks/inline_hook/windows/install_windows.c'
+$originalHooksSource = [IO.File]::ReadAllBytes($hooksSource)
+$fixture = Join-Path $PWD 'tests/e2e/t_vmharness_serve_concurrency.nim'
+$originalFixture = [IO.File]::ReadAllBytes($fixture)
 $originalShimPin = $env:REPRO_MONITOR_SHIM_LIB
 $source = [Text.Encoding]::UTF8.GetString($original)
 $anchor = 'const timingTests = ["t_tart_backend", "t_vmharness_serve_concurrency"]'
@@ -36,15 +40,24 @@ try {
     $selected = $source.Replace($anchor, 'const timingTests = ["diagnostic-unused-target"]')
     [IO.File]::WriteAllText($recipe, $selected, (New-Object Text.UTF8Encoding($false)))
     & "$PSScriptRoot/gosti-serve-profile.ps1" -Server $server
-    & git diff -- repro.nim src/vm_harness/serve/server.nim > "$evidence/diagnostic.patch"
+    $fixtureText = [Text.Encoding]::UTF8.GetString($originalFixture)
+    $logAnchor = '          got.add(ev.line)'
+    if ([regex]::Matches($fixtureText, [regex]::Escape($logAnchor)).Count -ne 1) { throw 'Fixture log anchor changed' }
+    $fixtureText = $fixtureText.Replace($logAnchor, "          if ev.line.contains(`"monitor-profile`") or ev.line.contains(`"hook-profile`"): echo ev.line`n$logAnchor")
+    [IO.File]::WriteAllText($fixture, $fixtureText, (New-Object Text.UTF8Encoding($false)))
+    & git diff -- repro.nim src/vm_harness/serve/server.nim tests/e2e/t_vmharness_serve_concurrency.nim > "$evidence/diagnostic.patch"
+    & python "$PSScriptRoot/gosti-hooks-profile.py" $hooksSource
+    if ($LASTEXITCODE -ne 0) { throw 'Hook backend anchors changed' }
+    & git -C nim-stackable-hooks diff -- src/stackable_hooks/inline_hook/windows/install_windows.c > "$evidence/hooks-profile.patch"
     & python "$PSScriptRoot/gosti-monitor-profile.py" $shimSource
     if ($LASTEXITCODE -ne 0) { throw 'Monitor phase anchors changed' }
     & git -C io-mon diff -- src/io_mon/shim/windows_interpose.nim > "$evidence/monitor-profile.patch"
-    # Both variants have the same diagnostic timestamps. Optimize only machine
-    # code; no release/danger defines, changed hooks or disabled checks.
+    # Attribute the measured baseline cost. No release/danger defines, changed
+    # hooks or disabled checks. The earlier optimized-DLL comparison is retained
+    # in run 37170164155 and still fails the original deadline.
     $env:IO_MON_BUILD_MODE = 'debug'
     $shims = @{}
-    foreach ($name in @('baseline', 'optimized')) {
+    foreach ($name in @('baseline')) {
         $env:IO_MON_SHIM_OUT_DIR = (Join-Path $PWD "build/profile-$name/lib").Replace('\', '/')
         $env:IO_MON_SHIM_NIMCACHE_DIR = (Join-Path $PWD "build/profile-$name/nimcache").Replace('\', '/')
         $optimization = if ($name -eq 'baseline') { '--opt:none' } else { '--opt:speed' }
@@ -52,7 +65,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "The $name monitor did not build" }
         $shims[$name] = (Resolve-Path "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll").Path
     }
-    foreach ($name in @('baseline', 'optimized')) {
+    foreach ($name in @('baseline')) {
         $env:REPRO_MONITOR_SHIM_LIB = $shims[$name]
         Get-FileHash $env:REPRO_MONITOR_SHIM_LIB -Algorithm SHA256 |
             Format-List > "$evidence/$name-monitor-sha256.txt"
@@ -72,7 +85,8 @@ try {
         if (-not $actionOutput.Contains('monitor-profile') -or
             -not $actionOutput.Contains("profile-$name") -or
             -not $actionOutput.Contains('phase=inject-end') -or
-            -not $actionOutput.Contains('phase=uninstall-hooks-end')) {
+            -not $actionOutput.Contains('phase=uninstall-hooks-end') -or
+            -not $actionOutput.Contains('hook-profile')) {
             throw 'The test did not prove the selected monitor image and phase coverage'
         }
         if ($actions[0].status -ne 'asSucceeded' -or $actions[0].exitCode -ne 0 -or ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -ne 2) {
@@ -105,6 +119,8 @@ try {
     [IO.File]::WriteAllBytes($recipe, $original)
     [IO.File]::WriteAllBytes($server, $originalServer)
     [IO.File]::WriteAllBytes($shimSource, $originalShimSource)
+    [IO.File]::WriteAllBytes($hooksSource, $originalHooksSource)
+    [IO.File]::WriteAllBytes($fixture, $originalFixture)
     $env:REPRO_MONITOR_SHIM_LIB = $originalShimPin
     Remove-Item Env:IO_MON_BUILD_MODE, Env:IO_MON_SHIM_OUT_DIR, Env:IO_MON_SHIM_NIMCACHE_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:VMH_CONC_TEST_THREADS -ErrorAction SilentlyContinue

@@ -20,6 +20,8 @@ helper = r'''
 {.emit: """
 #include <windows.h>
 #include <stdio.h>
+#include <string.h>
+extern void ct_inline_hook_diagnostic_metrics(unsigned long long *, unsigned long long *);
 static void io_mon_diagnostic_phase(const char *phase) {
   DWORD saved = GetLastError(), written = 0;
   LARGE_INTEGER tick, frequency;
@@ -37,6 +39,19 @@ static void io_mon_diagnostic_phase(const char *phase) {
       (long long)tick.QuadPart, (long long)frequency.QuadPart, path);
   if (size > 0 && size < sizeof(line))
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, size, &written, NULL);
+  if (!strcmp(phase, "install-hooks-end") || !strcmp(phase, "uninstall-hooks-end")) {
+    unsigned long long counts[6], ticks[6];
+    const char *names[] = {"protect", "icache", "snapshot", "open-thread", "suspend", "resume"};
+    ct_inline_hook_diagnostic_metrics(counts, ticks);
+    for (int i = 0; i < 6; ++i) {
+      size = snprintf(line, sizeof(line),
+          "hook-profile pid=%lu phase=%s api=%s count=%llu ticks=%llu frequency=%lld\n",
+          (unsigned long)GetCurrentProcessId(), phase, names[i], counts[i], ticks[i],
+          (long long)frequency.QuadPart);
+      if (size > 0 && size < sizeof(line))
+        WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, size, &written, NULL);
+    }
+  }
   SetLastError(saved);
 }
 """.}
