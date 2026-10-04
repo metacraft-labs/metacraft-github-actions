@@ -1024,6 +1024,13 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 10ed82a4bc5bd8c5fccbbe3f3aaaed53ef7d6485
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+          path: .hook-candidate
       - name: Install the CI image tools
         id: qemu-msys2
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e

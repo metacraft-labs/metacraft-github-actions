@@ -13,6 +13,10 @@ $shimSource = Join-Path $PWD 'io-mon/src/io_mon/shim/windows_interpose.nim'
 $originalShimSource = [IO.File]::ReadAllBytes($shimSource)
 $hooksSource = Join-Path $PWD 'nim-stackable-hooks/src/stackable_hooks/inline_hook/windows/install_windows.c'
 $originalHooksSource = [IO.File]::ReadAllBytes($hooksSource)
+$hookCandidate = '10ed82a4bc5bd8c5fccbbe3f3aaaed53ef7d6485'
+$hookCandidateDir = Join-Path $PWD '.hook-candidate'
+if ((& git -C $hookCandidateDir rev-parse HEAD).Trim() -ne $hookCandidate) { throw 'Unexpected page-preparation candidate' }
+$candidateHooksSource = [IO.File]::ReadAllBytes((Join-Path $hookCandidateDir 'src/stackable_hooks/inline_hook/windows/install_windows.c'))
 $fixture = Join-Path $PWD 'tests/e2e/t_vmharness_serve_concurrency.nim'
 $originalFixture = [IO.File]::ReadAllBytes($fixture)
 $originalShimPin = $env:REPRO_MONITOR_SHIM_LIB
@@ -46,26 +50,28 @@ try {
     $fixtureText = $fixtureText.Replace($logAnchor, "          if ev.line.contains(`"monitor-profile`") or ev.line.contains(`"hook-profile`"): echo ev.line`n$logAnchor")
     [IO.File]::WriteAllText($fixture, $fixtureText, (New-Object Text.UTF8Encoding($false)))
     & git diff -- repro.nim src/vm_harness/serve/server.nim tests/e2e/t_vmharness_serve_concurrency.nim > "$evidence/diagnostic.patch"
-    & python "$PSScriptRoot/gosti-hooks-profile.py" $hooksSource
-    if ($LASTEXITCODE -ne 0) { throw 'Hook backend anchors changed' }
-    & git -C nim-stackable-hooks diff -- src/stackable_hooks/inline_hook/windows/install_windows.c > "$evidence/hooks-profile.patch"
     & python "$PSScriptRoot/gosti-monitor-profile.py" $shimSource
     if ($LASTEXITCODE -ne 0) { throw 'Monitor phase anchors changed' }
     & git -C io-mon diff -- src/io_mon/shim/windows_interpose.nim > "$evidence/monitor-profile.patch"
-    # Attribute the measured baseline cost. No release/danger defines, changed
-    # hooks or disabled checks. The earlier optimized-DLL comparison is retained
-    # in run 37170164155 and still fails the original deadline.
+    # Compare identical debug monitor builds. The only production difference is
+    # the candidate installer; both carry the same diagnostic instrumentation.
+    # All fixture assertions and the original 2.5-second bound remain intact.
+    "Page preparation candidate $hookCandidate" | Add-Content "$evidence/sources.txt"
     $env:IO_MON_BUILD_MODE = 'debug'
     $shims = @{}
-    foreach ($name in @('baseline')) {
+    foreach ($name in @('baseline', 'prepared-pages')) {
         $env:IO_MON_SHIM_OUT_DIR = (Join-Path $PWD "build/profile-$name/lib").Replace('\', '/')
         $env:IO_MON_SHIM_NIMCACHE_DIR = (Join-Path $PWD "build/profile-$name/nimcache").Replace('\', '/')
-        $optimization = if ($name -eq 'baseline') { '--opt:none' } else { '--opt:speed' }
-        & bash io-mon/scripts/build_shim.sh $optimization *> "$evidence/$name-monitor-build.log"
+        $installerBytes = if ($name -eq 'baseline') { $originalHooksSource } else { $candidateHooksSource }
+        [IO.File]::WriteAllBytes($hooksSource, $installerBytes)
+        & python "$PSScriptRoot/gosti-hooks-profile.py" $hooksSource
+        if ($LASTEXITCODE -ne 0) { throw 'Hook backend anchors changed' }
+        & git -C nim-stackable-hooks diff -- src/stackable_hooks/inline_hook/windows/install_windows.c > "$evidence/$name-hooks.patch"
+        & bash io-mon/scripts/build_shim.sh --opt:none *> "$evidence/$name-monitor-build.log"
         if ($LASTEXITCODE -ne 0) { throw "The $name monitor did not build" }
         $shims[$name] = (Resolve-Path "$env:IO_MON_SHIM_OUT_DIR/librepro_monitor_shim.dll").Path
     }
-    foreach ($name in @('baseline')) {
+    foreach ($name in @('baseline', 'prepared-pages')) {
         $env:REPRO_MONITOR_SHIM_LIB = $shims[$name]
         Get-FileHash $env:REPRO_MONITOR_SHIM_LIB -Algorithm SHA256 |
             Format-List > "$evidence/$name-monitor-sha256.txt"
@@ -74,7 +80,7 @@ try {
         & bash scripts/capture-ci-command.sh "$evidence/$name-repro.log" dev-exec repro build '.#test-t_vmharness_serve_concurrency' --tool-provisioning=path --force-rebuild "--write-report=$evidence/$name-report.json"
         $code = $LASTEXITCODE
         $results += @{mode='repro'; variant=$name; exitCode=$code; shim=$env:REPRO_MONITOR_SHIM_LIB}
-        if ($code -ne 0) { $failed = $true }
+        if ($name -ne 'baseline' -and $code -ne 0) { $failed = $true }
         Get-Content "$evidence/$name-repro.log" -Tail 25
         $report = Get-Content "$evidence/$name-report.json" -Raw | ConvertFrom-Json
         $actions = @($report.actions | Where-Object {$_.id -like 'vm_harness.test_execute.*'})
@@ -93,8 +99,17 @@ try {
             $actionOutput -match 'clock-errors=[1-9]' -or $actionOutput -match 'frequency=0') {
             throw 'The unhooked diagnostic clock failed; API timings are invalid'
         }
-        if ($actions[0].status -ne 'asSucceeded' -or $actions[0].exitCode -ne 0 -or ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -ne 2) {
-            $failed = $true
+        $passed = $actions[0].status -eq 'asSucceeded' -and $actions[0].exitCode -eq 0 -and ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -eq 2
+        if (-not $passed) {
+            # The baseline may reproduce only the already recorded latency
+            # failure. Other failures invalidate this comparative experiment.
+            $knownBaseline = $name -eq 'baseline' -and $code -ne 0 -and
+                $actionOutput.Contains('Check failed: elapsed < 2.5') -and
+                $actionOutput.Contains('[FAILED] a slow exec does not serialize concurrent fast execs') -and
+                ([regex]::Matches($actionOutput, 'Check failed:')).Count -eq 1 -and
+                ([regex]::Matches($actions[0].stdout, '\[FAILED\]')).Count -eq 1 -and
+                ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -eq 1
+            if (-not $knownBaseline) { $failed = $true }
         }
         $binary = Join-Path $PWD 'build/test-bin/t_vmharness_serve_concurrency.exe'
         $hash = (Get-FileHash $binary -Algorithm SHA256).Hash
