@@ -6,6 +6,7 @@
 #include <tlhelp32.h>
 #include <processsnapshot.h>
 #include <stdio.h>
+#include <string.h>
 
 static DWORD peers[4];
 static HANDLE stop_event;
@@ -67,7 +68,7 @@ static int process_snapshot(unsigned *count) {
     return error == ERROR_NO_MORE_ITEMS && found == 31u ? 0 : 21;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     IMAGE_DOS_HEADER *image = (IMAGE_DOS_HEADER *)GetModuleHandleW(NULL);
     IMAGE_NT_HEADERS *header = (IMAGE_NT_HEADERS *)((char *)image + image->e_lfanew);
     if (header->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) return 30;
@@ -75,6 +76,12 @@ int main(void) {
     GetNativeSystemInfo(&system);
     printf("PE machine=0x%x native processor architecture=%u\n",
            header->FileHeader.Machine, system.wProcessorArchitecture);
+    USHORT process_machine = 0, native_machine = 0;
+    if (!IsWow64Process2(GetCurrentProcess(), &process_machine, &native_machine)) return 34;
+    printf("IsWow64Process2 process=0x%x native=0x%x\n", process_machine, native_machine);
+    if (argc != 2 ||
+        (strcmp(argv[1], "ARM64") == 0 ? native_machine != IMAGE_FILE_MACHINE_ARM64 :
+         strcmp(argv[1], "X64") != 0 || native_machine != IMAGE_FILE_MACHINE_AMD64)) return 35;
     stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!stop_event) return 31;
     HANDLE workers[4] = {0};

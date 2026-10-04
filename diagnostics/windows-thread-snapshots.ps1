@@ -21,7 +21,8 @@ exit /b %errorlevel%
 & cmd /d /c $batch *> "$evidence/build.log"
 if ($LASTEXITCODE -ne 0) { Get-Content "$evidence/build.log"; throw 'Snapshot diagnostic did not compile' }
 Get-FileHash $binary -Algorithm SHA256 | Format-List > "$evidence/binary-sha256.txt"
-& $binary *> "$evidence/results.log"
+"Runner $env:RUNNER_OS $env:RUNNER_ARCH; source $(& git rev-parse HEAD)" > "$evidence/source.txt"
+& $binary $env:RUNNER_ARCH *> "$evidence/results.log"
 $code = $LASTEXITCODE
 Get-Content "$evidence/results.log"
 if ($code -ne 0) { throw "Real peer enumeration failed: $code" }
