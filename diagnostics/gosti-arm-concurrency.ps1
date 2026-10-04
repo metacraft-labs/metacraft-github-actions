@@ -145,3 +145,7 @@ try {
     Remove-Item Env:VMH_CONC_TEST_THREADS -ErrorAction SilentlyContinue
 }
 if ($failed) { throw 'At least one unchanged concurrency execution failed; inspect timings' }
+# The GitHub PowerShell wrapper propagates LASTEXITCODE. The last native
+# command is the deliberately failing one-worker control, already validated
+# above. Return success only after every assertion and restoration completes.
+exit 0
