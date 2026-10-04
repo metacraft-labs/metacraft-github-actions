@@ -104,18 +104,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 if [ "$#" -gt 0 ]; then
-	FILES=("$@")
+  FILES=("$@")
 else
-	FILES=()
-	while IFS= read -r f; do
-		FILES+=("$f")
-	done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
+  FILES=()
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then
-	echo "assert-action-archive-size: no action.yml found under $ROOT." >&2
-	echo "  This guard has nothing to measure, which is not the same as a pass." >&2
-	exit 2
+  echo "assert-action-archive-size: no action.yml found under $ROOT." >&2
+  echo "  This guard has nothing to measure, which is not the same as a pass." >&2
+  exit 2
 fi
 
 # Print every cross-repo `uses:` target in $1 as "<owner>/<repo>\t<ref>".
@@ -125,73 +125,73 @@ fi
 # `owner/repo` at `ref` — the subpath is a path INSIDE that archive, which is
 # the whole defect this guard exists for.
 targets_of() { # <file>
-	local file="$1" line stripped spec repo ref
-	while IFS= read -r line || [ -n "$line" ]; do
-		stripped="${line#"${line%%[![:space:]]*}"}"
-		# Skip comments so prose mentioning a `uses:` is not measured. The
-		# rationale block in setup-dev-env quotes the very reference this guard
-		# was written about, and measuring quoted history would be nonsense.
-		case "$stripped" in
-		'#'*) continue ;;
-		'uses:'*) ;;
-		'- uses:'*) stripped="${stripped#- }" ;;
-		*) continue ;;
-		esac
-		spec="${stripped#uses:}"
-		spec="${spec#"${spec%%[![:space:]]*}"}"
-		spec="${spec%%[[:space:]]*}"
-		spec="${spec%\"}"
-		spec="${spec#\"}"
-		spec="${spec%\'}"
-		spec="${spec#\'}"
-		# Local path reference: no archive, nothing to measure.
-		case "$spec" in
-		'./'* | '.\\'* | '') continue ;;
-		# docker:// references are not repository archives.
-		docker://*) continue ;;
-		esac
-		case "$spec" in
-		*@*) ;;
-		*) continue ;;
-		esac
-		ref="${spec##*@}"
-		repo="${spec%@*}"
-		# owner/repo, dropping any sub-path.
-		repo="$(printf '%s' "$repo" | cut -d/ -f1,2)"
-		case "$repo" in
-		*/*) printf '%s\t%s\n' "$repo" "$ref" ;;
-		esac
-	done <"$file"
+  local file="$1" line stripped spec repo ref
+  while IFS= read -r line || [ -n "$line" ]; do
+    stripped="${line#"${line%%[![:space:]]*}"}"
+    # Skip comments so prose mentioning a `uses:` is not measured. The
+    # rationale block in setup-dev-env quotes the very reference this guard
+    # was written about, and measuring quoted history would be nonsense.
+    case "$stripped" in
+    '#'*) continue ;;
+    'uses:'*) ;;
+    '- uses:'*) stripped="${stripped#- }" ;;
+    *) continue ;;
+    esac
+    spec="${stripped#uses:}"
+    spec="${spec#"${spec%%[![:space:]]*}"}"
+    spec="${spec%%[[:space:]]*}"
+    spec="${spec%\"}"
+    spec="${spec#\"}"
+    spec="${spec%\'}"
+    spec="${spec#\'}"
+    # Local path reference: no archive, nothing to measure.
+    case "$spec" in
+    './'* | '.\\'* | '') continue ;;
+    # docker:// references are not repository archives.
+    docker://*) continue ;;
+    esac
+    case "$spec" in
+    *@*) ;;
+    *) continue ;;
+    esac
+    ref="${spec##*@}"
+    repo="${spec%@*}"
+    # owner/repo, dropping any sub-path.
+    repo="$(printf '%s' "$repo" | cut -d/ -f1,2)"
+    case "$repo" in
+    */*) printf '%s\t%s\n' "$repo" "$ref" ;;
+    esac
+  done <"$file"
 }
 
 # Echo the size in bytes of the codeload archive for $1@$2, reading at most
 # MAX_BYTES+1. Exit non-zero (and print nothing) if it cannot be fetched.
 archive_size() { # <owner/repo> <ref>
-	local repo="$1" ref="$2" url cap n auth=()
-	cap=$((MAX_BYTES + 1))
-	# A bare ref works for a SHA; branches and tags need the refs/ form, and
-	# codeload accepts the bare name for those too, so use it directly.
-	url="https://codeload.github.com/${repo}/zip/${ref}"
-	if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
-		auth=(-H "Authorization: Bearer ${GH_TOKEN:-${GITHUB_TOKEN}}")
-	fi
-	# `head -c` closes the pipe once the cap is reached; curl dies of SIGPIPE,
-	# which is the intended early stop, so its exit status is not meaningful
-	# here. An unreachable archive is detected by a zero-byte read instead.
-	n="$(curl -sfL "${auth[@]}" "$url" 2>/dev/null | head -c "$cap" | wc -c | tr -d ' ')"
-	# Retry anonymously when a token was sent and got nothing. Every target here
-	# is a public repo, and a job's own `GITHUB_TOKEN` is scoped to ITS
-	# repository — codeload may refuse it for a foreign one. Anonymous still
-	# works for public archives, so a scoped token must not be able to turn a
-	# passing guard into a false failure. (The reverse, dropping to anonymous
-	# for a genuinely private repo, still yields nothing and still fails.)
-	if { [ -z "$n" ] || [ "$n" -eq 0 ]; } && [ "${#auth[@]}" -gt 0 ]; then
-		n="$(curl -sfL "$url" 2>/dev/null | head -c "$cap" | wc -c | tr -d ' ')"
-	fi
-	if [ -z "$n" ] || [ "$n" -eq 0 ]; then
-		return 1
-	fi
-	printf '%s' "$n"
+  local repo="$1" ref="$2" url cap n auth=()
+  cap=$((MAX_BYTES + 1))
+  # A bare ref works for a SHA; branches and tags need the refs/ form, and
+  # codeload accepts the bare name for those too, so use it directly.
+  url="https://codeload.github.com/${repo}/zip/${ref}"
+  if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+    auth=(-H "Authorization: Bearer ${GH_TOKEN:-${GITHUB_TOKEN}}")
+  fi
+  # `head -c` closes the pipe once the cap is reached; curl dies of SIGPIPE,
+  # which is the intended early stop, so its exit status is not meaningful
+  # here. An unreachable archive is detected by a zero-byte read instead.
+  n="$(curl -sfL "${auth[@]}" "$url" 2>/dev/null | head -c "$cap" | wc -c | tr -d ' ')"
+  # Retry anonymously when a token was sent and got nothing. Every target here
+  # is a public repo, and a job's own `GITHUB_TOKEN` is scoped to ITS
+  # repository — codeload may refuse it for a foreign one. Anonymous still
+  # works for public archives, so a scoped token must not be able to turn a
+  # passing guard into a false failure. (The reverse, dropping to anonymous
+  # for a genuinely private repo, still yields nothing and still fails.)
+  if { [ -z "$n" ] || [ "$n" -eq 0 ]; } && [ "${#auth[@]}" -gt 0 ]; then
+    n="$(curl -sfL "$url" 2>/dev/null | head -c "$cap" | wc -c | tr -d ' ')"
+  fi
+  if [ -z "$n" ] || [ "$n" -eq 0 ]; then
+    return 1
+  fi
+  printf '%s' "$n"
 }
 
 # Collect the distinct (repo, ref) pairs across all files, remembering one
@@ -200,62 +200,62 @@ declare -a PAIRS=()
 declare -a WHERE=()
 seen=""
 for f in "${FILES[@]}"; do
-	if [ ! -f "$f" ]; then
-		echo "assert-action-archive-size: no such file: $f" >&2
-		exit 2
-	fi
-	while IFS=$'\t' read -r repo ref; do
-		[ -z "$repo" ] && continue
-		key="${repo}@${ref}"
-		case "$seen" in
-		*"|${key}|"*) continue ;;
-		esac
-		seen="${seen}|${key}|"
-		PAIRS+=("$key")
-		WHERE+=("${f#"$ROOT"/}")
-	done < <(targets_of "$f")
+  if [ ! -f "$f" ]; then
+    echo "assert-action-archive-size: no such file: $f" >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r repo ref; do
+    [ -z "$repo" ] && continue
+    key="${repo}@${ref}"
+    case "$seen" in
+    *"|${key}|"*) continue ;;
+    esac
+    seen="${seen}|${key}|"
+    PAIRS+=("$key")
+    WHERE+=("${f#"$ROOT"/}")
+  done < <(targets_of "$f")
 done
 
 if [ "${#PAIRS[@]}" -eq 0 ]; then
-	echo "assert-action-archive-size: found no \`uses:\` targets across ${#FILES[@]} file(s)." >&2
-	echo "  Either the extractor stopped matching the file format or the actions stopped" >&2
-	echo "  referencing anything. Both are guard failures, not passes." >&2
-	exit 2
+  echo "assert-action-archive-size: found no \`uses:\` targets across ${#FILES[@]} file(s)." >&2
+  echo "  Either the extractor stopped matching the file format or the actions stopped" >&2
+  echo "  referencing anything. Both are guard failures, not passes." >&2
+  exit 2
 fi
 
 rc=0
 i=0
 for key in "${PAIRS[@]}"; do
-	src="${WHERE[$i]}"
-	i=$((i + 1))
-	repo="${key%@*}"
-	ref="${key##*@}"
-	if ! size="$(archive_size "$repo" "$ref")"; then
-		echo "FAIL ${key} (from ${src}): could not download the archive to measure it."
-		echo "     https://codeload.github.com/${repo}/zip/${ref}"
-		echo "     An unmeasurable archive is not a small one. If this is a private repo,"
-		echo "     give the job a token with read access; if the ref is gone, fix the \`uses:\`."
-		rc=1
-		continue
-	fi
-	rate="$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 100 / 1048576 }')"
-	mib="$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1048576 }')"
-	if [ "$size" -gt "$MAX_BYTES" ]; then
-		echo "FAIL ${key} (from ${src}): archive is over ${MAX_BYTES} bytes (read ${size} and stopped)."
-		echo "     The runner downloads this WHOLE repository during \`Set up job\`, for every"
-		echo "     job of every consumer, before any \`if:\` is evaluated — against a fixed"
-		echo "     100-second HttpClient.Timeout. At this size the guest must sustain more"
-		echo "     than ${rate} MB/s or the job dies before its first step."
-		echo "     Do not raise the budget and do not reach for \`export-ignore\`; move the"
-		echo "     action into this repo, where it ships inside the archive the consumer is"
-		echo "     already fetching. See this script's header."
-		rc=1
-	else
-		echo "ok   ${key} (from ${src}): ${size} bytes (${mib} MiB), needs ${rate} MB/s of the 100s budget."
-	fi
+  src="${WHERE[$i]}"
+  i=$((i + 1))
+  repo="${key%@*}"
+  ref="${key##*@}"
+  if ! size="$(archive_size "$repo" "$ref")"; then
+    echo "FAIL ${key} (from ${src}): could not download the archive to measure it."
+    echo "     https://codeload.github.com/${repo}/zip/${ref}"
+    echo "     An unmeasurable archive is not a small one. If this is a private repo,"
+    echo "     give the job a token with read access; if the ref is gone, fix the \`uses:\`."
+    rc=1
+    continue
+  fi
+  rate="$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 100 / 1048576 }')"
+  mib="$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1048576 }')"
+  if [ "$size" -gt "$MAX_BYTES" ]; then
+    echo "FAIL ${key} (from ${src}): archive is over ${MAX_BYTES} bytes (read ${size} and stopped)."
+    echo "     The runner downloads this WHOLE repository during \`Set up job\`, for every"
+    echo "     job of every consumer, before any \`if:\` is evaluated — against a fixed"
+    echo "     100-second HttpClient.Timeout. At this size the guest must sustain more"
+    echo "     than ${rate} MB/s or the job dies before its first step."
+    echo "     Do not raise the budget and do not reach for \`export-ignore\`; move the"
+    echo "     action into this repo, where it ships inside the archive the consumer is"
+    echo "     already fetching. See this script's header."
+    rc=1
+  else
+    echo "ok   ${key} (from ${src}): ${size} bytes (${mib} MiB), needs ${rate} MB/s of the 100s budget."
+  fi
 done
 
 if [ "$rc" -eq 0 ]; then
-	echo "assert-action-archive-size: ${#PAIRS[@]} referenced archive(s) within budget (${MAX_BYTES} bytes)."
+  echo "assert-action-archive-size: ${#PAIRS[@]} referenced archive(s) within budget (${MAX_BYTES} bytes)."
 fi
 exit "$rc"

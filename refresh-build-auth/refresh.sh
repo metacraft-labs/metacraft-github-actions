@@ -15,5 +15,5 @@ scoped_git_auth_report
 # preserving every other host's token and unrelated configuration. Appending
 # extra-access-tokens would keep the OLD token: Nix's map uses the first value.
 if command -v nix >/dev/null 2>&1; then
-	"${REPROBUILD_BOOTSTRAP_PYTHON:-python3}" "$auth_dir/refresh-nix.py"
+  "${REPROBUILD_BOOTSTRAP_PYTHON:-python3}" "$auth_dir/refresh-nix.py"
 fi

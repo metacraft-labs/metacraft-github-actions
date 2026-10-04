@@ -47,7 +47,7 @@ static int snapshot(DWORD pid, const char *phase, const wchar_t *control, int *f
   while ((rc = PssWalkSnapshot(captured, PSS_WALK_HANDLES, marker,
                               &entry, sizeof(entry))) == ERROR_SUCCESS) {
     printf("HANDLE phase=%s value=%p flags=%u type=%u typename=", phase,
-           entry.Handle, (unsigned)entry.Flags, (unsigned)entry.ObjectType);
+            entry.Handle, (unsigned)entry.Flags, (unsigned)entry.ObjectType);
     text_utf8(entry.TypeName, entry.TypeNameLength);
     fputs(" name=", stdout);
     text_utf8(entry.ObjectName, entry.ObjectNameLength);

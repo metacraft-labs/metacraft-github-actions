@@ -67,18 +67,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 if [ "$#" -gt 0 ]; then
-	FILES=("$@")
+  FILES=("$@")
 else
-	FILES=()
-	while IFS= read -r f; do
-		FILES+=("$f")
-	done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
+  FILES=()
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$ROOT" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.git/*' | sort)
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then
-	echo "assert-no-url-embedded-credential: no action.yml found under $ROOT." >&2
-	echo "  This guard has nothing to scan, which is not the same as a pass." >&2
-	exit 2
+  echo "assert-no-url-embedded-credential: no action.yml found under $ROOT." >&2
+  echo "  This guard has nothing to scan, which is not the same as a pass." >&2
+  exit 2
 fi
 
 # `has_userinfo <line>` -- true when the line contains `<scheme>://<a>:<b>@`.
@@ -91,83 +91,83 @@ fi
 # credential in the authority from an `@` living in a path or a query string
 # (a `?ref=user@host` would otherwise match).
 has_userinfo() { # <line>
-	local line="$1" rest authority
-	case "$line" in
-	*://*) ;;
-	*) return 1 ;;
-	esac
-	while [ -n "$line" ]; do
-		rest="${line#*://}"
-		[ "$rest" = "$line" ] && return 1
-		authority="${rest%%/*}"
-		case "$authority" in
-		*:*@*) return 0 ;;
-		esac
-		line="$rest"
-	done
-	return 1
+  local line="$1" rest authority
+  case "$line" in
+  *://*) ;;
+  *) return 1 ;;
+  esac
+  while [ -n "$line" ]; do
+    rest="${line#*://}"
+    [ "$rest" = "$line" ] && return 1
+    authority="${rest%%/*}"
+    case "$authority" in
+    *:*@*) return 0 ;;
+    esac
+    line="$rest"
+  done
+  return 1
 }
 
 rc=0
 scanned=0
 hits=0
 for f in "${FILES[@]}"; do
-	if [ ! -f "$f" ]; then
-		echo "assert-no-url-embedded-credential: no such file: $f" >&2
-		rc=2
-		continue
-	fi
-	scanned=$((scanned + 1))
-	rel="${f#"$ROOT"/}"
-	lineno=0
-	file_hits=0
-	while IFS= read -r line || [ -n "$line" ]; do
-		lineno=$((lineno + 1))
-		# Skip YAML comments: a manifest is allowed to DESCRIBE the shape it no
-		# longer uses, and several of them now do exactly that.
-		stripped="${line#"${line%%[![:space:]]*}"}"
-		case "$stripped" in
-		'#'*) continue ;;
-		esac
-		if has_userinfo "$line"; then
-			file_hits=$((file_hits + 1))
-			hits=$((hits + 1))
-			echo "FAIL ${rel}:${lineno} embeds a credential in a URL."
-			rc=1
-		fi
-	done <"$f"
-	if [ "$file_hits" -eq 0 ]; then
-		echo "ok   ${rel} contains no URL with userinfo."
-	fi
+  if [ ! -f "$f" ]; then
+    echo "assert-no-url-embedded-credential: no such file: $f" >&2
+    rc=2
+    continue
+  fi
+  scanned=$((scanned + 1))
+  rel="${f#"$ROOT"/}"
+  lineno=0
+  file_hits=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    # Skip YAML comments: a manifest is allowed to DESCRIBE the shape it no
+    # longer uses, and several of them now do exactly that.
+    stripped="${line#"${line%%[![:space:]]*}"}"
+    case "$stripped" in
+    '#'*) continue ;;
+    esac
+    if has_userinfo "$line"; then
+      file_hits=$((file_hits + 1))
+      hits=$((hits + 1))
+      echo "FAIL ${rel}:${lineno} embeds a credential in a URL."
+      rc=1
+    fi
+  done <"$f"
+  if [ "$file_hits" -eq 0 ]; then
+    echo "ok   ${rel} contains no URL with userinfo."
+  fi
 done
 
 if [ "$scanned" -eq 0 ]; then
-	echo "assert-no-url-embedded-credential: scanned zero files, which is a guard failure and not a pass." >&2
-	exit 2
+  echo "assert-no-url-embedded-credential: scanned zero files, which is a guard failure and not a pass." >&2
+  exit 2
 fi
 
 if [ "$rc" -eq 1 ]; then
-	echo ""
-	echo "A URL of the form https://<user>:<token>@host/... is NOT reliably authenticated."
-	echo "Git sends userinfo only AFTER the server answers 401, so a PUBLIC repository —"
-	echo "which answers 200 on the first request — is cloned entirely anonymously, and then"
-	echo "dies on GitHub's per-IP unauthenticated download limit that this org's whole"
-	echo "ephemeral-runner fleet shares:"
-	echo ""
-	echo "    fatal: remote error: GitHub is temporarily limiting some unauthenticated"
-	echo "    downloads to protect the stability of the platform."
-	echo ""
-	echo "Use the credential-free URL plus the owner-scoped header instead — an"
-	echo "extraHeader is sent on every request, including the first:"
-	echo ""
-	echo "    . \"\${GIT_AUTH_DIR}/scoped-git-auth.sh\""
-	echo "    export TOKEN_OWNERS=metacraft-labs"
-	echo "    scoped_git_auth_build && scoped_git_auth_export"
-	echo "    bash \"\${GIT_AUTH_DIR}/authenticated-clone.sh\" \\"
-	echo "      --repo <owner/name> --dest <dir> --rev <ref> --shallow"
-	echo ""
-	echo "See git-auth/authenticated-clone.sh and this script's header."
-	exit 1
+  echo ""
+  echo "A URL of the form https://<user>:<token>@host/... is NOT reliably authenticated."
+  echo "Git sends userinfo only AFTER the server answers 401, so a PUBLIC repository —"
+  echo "which answers 200 on the first request — is cloned entirely anonymously, and then"
+  echo "dies on GitHub's per-IP unauthenticated download limit that this org's whole"
+  echo "ephemeral-runner fleet shares:"
+  echo ""
+  echo "    fatal: remote error: GitHub is temporarily limiting some unauthenticated"
+  echo "    downloads to protect the stability of the platform."
+  echo ""
+  echo "Use the credential-free URL plus the owner-scoped header instead — an"
+  echo "extraHeader is sent on every request, including the first:"
+  echo ""
+  echo "    . \"\${GIT_AUTH_DIR}/scoped-git-auth.sh\""
+  echo "    export TOKEN_OWNERS=metacraft-labs"
+  echo "    scoped_git_auth_build && scoped_git_auth_export"
+  echo "    bash \"\${GIT_AUTH_DIR}/authenticated-clone.sh\" \\"
+  echo "      --repo <owner/name> --dest <dir> --rev <ref> --shallow"
+  echo ""
+  echo "See git-auth/authenticated-clone.sh and this script's header."
+  exit 1
 fi
 
 echo "assert-no-url-embedded-credential: ${scanned} manifest(s) scanned, no URL carries a credential."

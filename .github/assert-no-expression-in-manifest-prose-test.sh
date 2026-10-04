@@ -34,26 +34,26 @@ trap 'rm -rf "$TMP"' EXIT
 failures=0
 pass() { printf 'ok   %s\n' "$1"; }
 fail() {
-	printf 'FAIL %s\n' "$1"
-	shift
-	[ "$#" -gt 0 ] && printf '     %s\n' "$@"
-	failures=$((failures + 1))
+  printf 'FAIL %s\n' "$1"
+  shift
+  [ "$#" -gt 0 ] && printf '     %s\n' "$@"
+  failures=$((failures + 1))
 }
 
 write() { # <name> <<heredoc
-	local d="$TMP/$1"
-	mkdir -p "$d"
-	cat >"$d/action.yml"
-	printf '%s\n' "$d/action.yml"
+  local d="$TMP/$1"
+  mkdir -p "$d"
+  cat >"$d/action.yml"
+  printf '%s\n' "$d/action.yml"
 }
 
 # ---------------------------------------------------------------- case 1 ----
 out="$(bash "$GUARD" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ]; then
-	pass "this repository's manifests are clean"
+  pass "this repository's manifests are clean"
 else
-	fail "this repository's manifests should be clean (exit $rc)" "$out"
+  fail "this repository's manifests should be clean (exit $rc)" "$out"
 fi
 case "$out" in
 *"manifest(s) clean"*) pass "the pass path reports a count" ;;
@@ -79,9 +79,9 @@ YAML
 out="$(bash "$GUARD" "$f" 2>&1)"
 rc=$?
 if [ "$rc" -eq 1 ]; then
-	pass "rejects an expression in a block-scalar top-level description"
+  pass "rejects an expression in a block-scalar top-level description"
 else
-	fail "must reject the shape that actually shipped (exit $rc)" "$out"
+  fail "must reject the shape that actually shipped (exit $rc)" "$out"
 fi
 case "$out" in
 *"no \`github\`"*) pass "the failure explains why the field is not a comment" ;;
@@ -106,9 +106,9 @@ YAML
 )"
 out="$(bash "$GUARD" "$f" 2>&1)"
 if [ $? -eq 1 ]; then
-	pass "rejects an expression in a single-line description"
+  pass "rejects an expression in a single-line description"
 else
-	fail "a single-line description must be checked too" "$out"
+  fail "a single-line description must be checked too" "$out"
 fi
 
 # ---------------------------------------------------------------- case 4 ----
@@ -129,9 +129,9 @@ YAML
 )"
 out="$(bash "$GUARD" "$f" 2>&1)"
 if [ $? -eq 1 ]; then
-	pass "rejects an expression in an input's description"
+  pass "rejects an expression in an input's description"
 else
-	fail "an input description must be checked too" "$out"
+  fail "an input description must be checked too" "$out"
 fi
 
 # ---------------------------------------------------------------- case 5 ----
@@ -152,9 +152,9 @@ YAML
 )"
 out="$(bash "$GUARD" "$f" 2>&1)"
 if [ $? -eq 0 ]; then
-	pass "accepts expressions under runs:, where they belong"
+  pass "accepts expressions under runs:, where they belong"
 else
-	fail "expressions under runs: must be accepted" "$out"
+  fail "expressions under runs: must be accepted" "$out"
 fi
 
 # ---------------------------------------------------------------- case 6 ----
@@ -180,23 +180,23 @@ YAML
 )"
 out="$(bash "$GUARD" "$f" 2>&1)"
 if [ $? -eq 0 ]; then
-	pass "accepts inputs.*.default and outputs.*.value expressions"
+  pass "accepts inputs.*.default and outputs.*.value expressions"
 else
-	fail "legitimate default/value expressions must not be flagged" "$out"
+  fail "legitimate default/value expressions must not be flagged" "$out"
 fi
 
 # ---------------------------------------------------------------- case 7 ----
 out="$(bash "$GUARD" "$TMP/does-not-exist/action.yml" 2>&1)"
 if [ $? -eq 2 ]; then
-	pass "exits 2 on a missing file rather than passing"
+  pass "exits 2 on a missing file rather than passing"
 else
-	fail "a missing file must exit 2" "$out"
+  fail "a missing file must exit 2" "$out"
 fi
 
 echo
 if [ "$failures" -eq 0 ]; then
-	echo "assert-no-expression-in-manifest-prose-test: all cases passed."
-	exit 0
+  echo "assert-no-expression-in-manifest-prose-test: all cases passed."
+  exit 0
 fi
 echo "assert-no-expression-in-manifest-prose-test: ${failures} case(s) failed."
 exit 1

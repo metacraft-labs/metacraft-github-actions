@@ -35,30 +35,30 @@ trap 'rm -rf "$TMP"' EXIT
 failures=0
 pass() { printf 'ok   %s\n' "$1"; }
 fail() {
-	printf 'FAIL %s\n' "$1"
-	shift
-	[ "$#" -gt 0 ] && printf '     %s\n' "$@"
-	failures=$((failures + 1))
+  printf 'FAIL %s\n' "$1"
+  shift
+  [ "$#" -gt 0 ] && printf '     %s\n' "$@"
+  failures=$((failures + 1))
 }
 
 # Build a throwaway repo root holding one synthetic action, so the guard's
 # no-argument discovery (*/action.yml at depth 2) has something to find.
 mkaction() { # <dir> <uses-line...>
-	local d="$TMP/$1"
-	shift
-	mkdir -p "$d"
-	{
-		echo "name: synthetic"
-		echo "description: fixture"
-		echo "runs:"
-		echo "  using: composite"
-		echo "  steps:"
-		local u
-		for u in "$@"; do
-			echo "    - uses: $u"
-		done
-	} >"$d/action.yml"
-	printf '%s\n' "$d/action.yml"
+  local d="$TMP/$1"
+  shift
+  mkdir -p "$d"
+  {
+    echo "name: synthetic"
+    echo "description: fixture"
+    echo "runs:"
+    echo "  using: composite"
+    echo "  steps:"
+    local u
+    for u in "$@"; do
+      echo "    - uses: $u"
+    done
+  } >"$d/action.yml"
+  printf '%s\n' "$d/action.yml"
 }
 
 # ---------------------------------------------------------------- case 1 ----
@@ -68,9 +68,9 @@ mkaction() { # <dir> <uses-line...>
 out="$(bash "$GUARD" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ]; then
-	pass "the repository's own \`uses:\` set is within budget"
+  pass "the repository's own \`uses:\` set is within budget"
 else
-	fail "the repository's own \`uses:\` set should be within budget (exit $rc)" "$out"
+  fail "the repository's own \`uses:\` set should be within budget (exit $rc)" "$out"
 fi
 
 # It must also have actually measured metacraft-github-actions itself — if the
@@ -88,9 +88,9 @@ f="$(mkaction big "metacraft-labs/reprobuild/.github/actions/setup-reprobuild@de
 out="$(bash "$GUARD" "$f" 2>&1)"
 rc=$?
 if [ "$rc" -eq 1 ]; then
-	pass "rejects metacraft-labs/reprobuild@dev at the default budget"
+  pass "rejects metacraft-labs/reprobuild@dev at the default budget"
 else
-	fail "should reject metacraft-labs/reprobuild@dev at the default budget (exit $rc)" "$out"
+  fail "should reject metacraft-labs/reprobuild@dev at the default budget (exit $rc)" "$out"
 fi
 case "$out" in
 *"FAIL metacraft-labs/reprobuild@dev"*) pass "names the offending repo@ref, not the sub-path" ;;
@@ -109,32 +109,32 @@ f="$(mkaction small "metacraft-labs/metacraft-github-actions@dev")"
 out="$(ACTION_ARCHIVE_MAX_BYTES=1024 bash "$GUARD" "$f" 2>&1)"
 rc=$?
 if [ "$rc" -eq 1 ]; then
-	pass "rejects a small archive when the budget is below its size"
+  pass "rejects a small archive when the budget is below its size"
 else
-	fail "should reject a 186 KB archive against a 1024-byte budget (exit $rc)" "$out"
+  fail "should reject a 186 KB archive against a 1024-byte budget (exit $rc)" "$out"
 fi
 
 # ---------------------------------------------------------------- case 4 ----
 # ... and accept it just above its own size. Together with case 3 this pins the
 # boundary to the archive's real size rather than to some constant.
 real="$(ACTION_ARCHIVE_MAX_BYTES=33554432 bash "$GUARD" "$f" 2>&1 |
-	sed -n 's/.*): \([0-9][0-9]*\) bytes.*/\1/p' | head -1)"
+  sed -n 's/.*): \([0-9][0-9]*\) bytes.*/\1/p' | head -1)"
 if [ -z "$real" ]; then
-	fail "could not read the measured size back out of the ok line"
+  fail "could not read the measured size back out of the ok line"
 else
-	pass "reports a concrete measured size ($real bytes)"
-	out="$(ACTION_ARCHIVE_MAX_BYTES="$real" bash "$GUARD" "$f" 2>&1)"
-	if [ $? -eq 0 ]; then
-		pass "accepts an archive exactly at the budget"
-	else
-		fail "should accept an archive exactly at the budget" "$out"
-	fi
-	out="$(ACTION_ARCHIVE_MAX_BYTES=$((real - 1)) bash "$GUARD" "$f" 2>&1)"
-	if [ $? -eq 1 ]; then
-		pass "rejects the same archive one byte below the budget"
-	else
-		fail "should reject an archive one byte over the budget" "$out"
-	fi
+  pass "reports a concrete measured size ($real bytes)"
+  out="$(ACTION_ARCHIVE_MAX_BYTES="$real" bash "$GUARD" "$f" 2>&1)"
+  if [ $? -eq 0 ]; then
+    pass "accepts an archive exactly at the budget"
+  else
+    fail "should accept an archive exactly at the budget" "$out"
+  fi
+  out="$(ACTION_ARCHIVE_MAX_BYTES=$((real - 1)) bash "$GUARD" "$f" 2>&1)"
+  if [ $? -eq 1 ]; then
+    pass "rejects the same archive one byte below the budget"
+  else
+    fail "should reject an archive one byte over the budget" "$out"
+  fi
 fi
 
 # ---------------------------------------------------------------- case 5 ----
@@ -144,9 +144,9 @@ f="$(mkaction gone "metacraft-labs/metacraft-github-actions@ref-that-does-not-ex
 out="$(bash "$GUARD" "$f" 2>&1)"
 rc=$?
 if [ "$rc" -eq 1 ]; then
-	pass "treats an unmeasurable archive as a failure"
+  pass "treats an unmeasurable archive as a failure"
 else
-	fail "an unfetchable ref must fail the guard, not pass it (exit $rc)" "$out"
+  fail "an unfetchable ref must fail the guard, not pass it (exit $rc)" "$out"
 fi
 
 # ---------------------------------------------------------------- case 6 ----
@@ -157,9 +157,9 @@ printf 'name: x\ndescription: y\nruns:\n  using: composite\n  steps: []\n' >"$d/
 out="$(bash "$GUARD" "$d/action.yml" 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-	pass "exits 2 when it extracted no targets at all"
+  pass "exits 2 when it extracted no targets at all"
 else
-	fail "measuring zero targets must exit 2, not $rc" "$out"
+  fail "measuring zero targets must exit 2, not $rc" "$out"
 fi
 
 # ---------------------------------------------------------------- case 7 ----
@@ -182,9 +182,9 @@ YAML
 out="$(bash "$GUARD" "$d/action.yml" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ]; then
-	pass "ignores a \`uses:\` that appears inside a comment"
+  pass "ignores a \`uses:\` that appears inside a comment"
 else
-	fail "a commented-out \`uses:\` must not be measured (exit $rc)" "$out"
+  fail "a commented-out \`uses:\` must not be measured (exit $rc)" "$out"
 fi
 case "$out" in
 *reprobuild*) fail "the commented reference was measured anyway" "$out" ;;
@@ -200,15 +200,15 @@ printf 'name: x\ndescription: y\nruns:\n  using: composite\n  steps:\n    - uses
 out="$(bash "$GUARD" "$d/action.yml" 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-	pass "skips local ./ references (leaving nothing to measure -> exit 2)"
+  pass "skips local ./ references (leaving nothing to measure -> exit 2)"
 else
-	fail "local ./ references must not be fetched (exit $rc)" "$out"
+  fail "local ./ references must not be fetched (exit $rc)" "$out"
 fi
 
 echo
 if [ "$failures" -eq 0 ]; then
-	echo "assert-action-archive-size-test: all cases passed."
-	exit 0
+  echo "assert-action-archive-size-test: all cases passed."
+  exit 0
 fi
 echo "assert-action-archive-size-test: ${failures} case(s) failed."
 exit 1

@@ -66,10 +66,10 @@ DECIDE="$HERE/decide-sibling-strategy.sh"
 PROVISION="$HERE/provision-siblings-from-lock.sh"
 
 for f in "$ACTION" "$DECIDE" "$PROVISION"; do
-	[[ -f $f ]] || {
-		echo "sibling-strategy-step-test: cannot find $f" >&2
-		exit 2
-	}
+  [[ -f $f ]] || {
+    echo "sibling-strategy-step-test: cannot find $f" >&2
+    exit 2
+  }
 done
 bash -n "$DECIDE" || exit 2
 bash -n "$PROVISION" || exit 2
@@ -77,28 +77,28 @@ bash -n "$PROVISION" || exit 2
 PASS=0
 FAIL=0
 ok() {
-	PASS=$((PASS + 1))
-	echo "ok   $1"
+  PASS=$((PASS + 1))
+  echo "ok   $1"
 }
 bad() {
-	FAIL=$((FAIL + 1))
-	echo "FAIL $1"
-	[[ -n ${2:-} ]] && echo "     $2"
+  FAIL=$((FAIL + 1))
+  echo "FAIL $1"
+  [[ -n ${2:-} ]] && echo "     $2"
 }
 check() { # <desc> <actual> <expected>
-	if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
+  if [[ $2 == "$3" ]]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi
 }
 contains() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) ok "$1" ;;
-	*) bad "$1" "did not contain [$3]" ;;
-	esac
+  case "$2" in
+  *"$3"*) ok "$1" ;;
+  *) bad "$1" "did not contain [$3]" ;;
+  esac
 }
 lacks() { # <desc> <haystack> <needle>
-	case "$2" in
-	*"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
-	*) ok "$1" ;;
-	esac
+  case "$2" in
+  *"$3"*) bad "$1" "unexpectedly contained [$3]" ;;
+  *) ok "$1" ;;
+  esac
 }
 
 TMPROOT="$(mktemp -d)"
@@ -116,30 +116,30 @@ RC=0
 
 # `out_of <key>` — read a single-line `key=value` from the step's GITHUB_OUTPUT.
 out_of() {
-	local k="$1" line
-	while IFS= read -r line || [[ -n $line ]]; do
-		case "$line" in
-		"$k="*)
-			printf '%s' "${line#"$k="}"
-			return 0
-			;;
-		esac
-	done <"$OUTFILE"
-	return 0
+  local k="$1" line
+  while IFS= read -r line || [[ -n $line ]]; do
+    case "$line" in
+    "$k="*)
+      printf '%s' "${line#"$k="}"
+      return 0
+      ;;
+    esac
+  done <"$OUTFILE"
+  return 0
 }
 
 # `block_of <key>` — read a heredoc-delimited multi-line output value.
 block_of() {
-	local k="$1" line inside=0 acc=""
-	while IFS= read -r line || [[ -n $line ]]; do
-		if [[ $inside -eq 1 ]]; then
-			[[ $line == "__SETUP_DEV_ENV_EOF__" ]] && break
-			acc="${acc}${line}"$'\n'
-			continue
-		fi
-		[[ $line == "$k<<__SETUP_DEV_ENV_EOF__" ]] && inside=1
-	done <"$OUTFILE"
-	printf '%s' "$acc"
+  local k="$1" line inside=0 acc=""
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $inside -eq 1 ]]; then
+      [[ $line == "__SETUP_DEV_ENV_EOF__" ]] && break
+      acc="${acc}${line}"$'\n'
+      continue
+    fi
+    [[ $line == "$k<<__SETUP_DEV_ENV_EOF__" ]] && inside=1
+  done <"$OUTFILE"
+  printf '%s' "$acc"
 }
 
 # ===========================================================================
@@ -153,54 +153,54 @@ block_of() {
 ACTION_TEXT="$(<"$ACTION")"
 
 contains "action.yml runs decide-sibling-strategy.sh" "$ACTION_TEXT" \
-	'run: bash "${GITHUB_ACTION_PATH}/decide-sibling-strategy.sh"'
+  'run: bash "${GITHUB_ACTION_PATH}/decide-sibling-strategy.sh"'
 contains "action.yml runs provision-siblings-from-lock.sh" "$ACTION_TEXT" \
-	'run: bash "${GITHUB_ACTION_PATH}/provision-siblings-from-lock.sh"'
+  'run: bash "${GITHUB_ACTION_PATH}/provision-siblings-from-lock.sh"'
 
 for v in SIBLING_STRATEGY ENV_FLAVOR SIBLINGS_INPUT; do
-	contains "decide step declares $v in env:" "$ACTION_TEXT" "        ${v}: "
+  contains "decide step declares $v in env:" "$ACTION_TEXT" "        ${v}: "
 done
 
 contains "the sibling-strategy input exists" "$ACTION_TEXT" "  sibling-strategy:"
 contains "sibling-strategy defaults to auto" "$ACTION_TEXT" '    default: "auto"'
 contains "the decide step carries the id the later ifs reference" "$ACTION_TEXT" \
-	"      id: sibling-strategy"
+  "      id: sibling-strategy"
 contains "the repro-lock step carries the id the late clone references" "$ACTION_TEXT" \
-	"      id: repro-siblings"
+  "      id: repro-siblings"
 
 # The gating expressions. A dropped `if:` here is not a test failure in this
 # repo — it is both mechanisms running in one job, or neither.
 contains "clone-siblings is skipped only on the repro path" "$ACTION_TEXT" \
-	"if: \${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}"
+  "if: \${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}"
 contains "the repro.lock step runs only on the repro path" "$ACTION_TEXT" \
-	"if: \${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' }}"
+  "if: \${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' }}"
 contains "the late clone runs only when the repro path asked for it" "$ACTION_TEXT" \
-	"steps.repro-siblings.outputs.late-clone == 'true'"
+  "steps.repro-siblings.outputs.late-clone == 'true'"
 # A forced repro-lock under a non-reprobuild flavor must still get the CLI, or
 # the step below it can only ever report "repro is not on PATH".
 contains "the repro CLI is installed for a forced repro-lock under any flavor" "$ACTION_TEXT" \
-	"if: \${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}"
+  "if: \${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}"
 
 # ===========================================================================
 # 2. Fixtures.
 # ===========================================================================
 new_ws() {
-	rm -rf "$TMPROOT/ws"
-	mkdir -p "$WS/.github"
-	: >"$OUTFILE"
-	: >"$SUMFILE"
+  rm -rf "$TMPROOT/ws"
+  mkdir -p "$WS/.github"
+  : >"$OUTFILE"
+  : >"$SUMFILE"
 }
 
 # A solved-graph lock in the shape `repro lock` writes: one `deps = [...]`
 # line of inline tables, the consumer itself carried as `path = "."`.
 put_lock() { # <deps-inline-tables>
-	{
-		printf 'schema = "reprobuild.solved-graph-lock.v2"\n\n'
-		printf '[lock]\nplatform = "amd64-linux"\noptimal = true\n'
-		printf 'inputs_digest = "fnv1a64:5f8f62ac9d7bf36c"\n'
-		printf 'packages = [{ name = "attic-client", version = "0.0.0", source = "attic-client" }]\n'
-		printf 'deps = [%s]\n' "$1"
-	} >"$WS/repro.lock"
+  {
+    printf 'schema = "reprobuild.solved-graph-lock.v2"\n\n'
+    printf '[lock]\nplatform = "amd64-linux"\noptimal = true\n'
+    printf 'inputs_digest = "fnv1a64:5f8f62ac9d7bf36c"\n'
+    printf 'packages = [{ name = "attic-client", version = "0.0.0", source = "attic-client" }]\n'
+    printf 'deps = [%s]\n' "$1"
+  } >"$WS/repro.lock"
 }
 DEP_SELF='{ name = "consumer", path = ".", coord_kind = "vcs", revision = "e2c85e9b47003153ed6df5dde66266233f961501" }'
 DEP_ISONIM='{ name = "isonim", path = "../isonim", coord_kind = "vcs", revision = "e82b819d2d05efb6023a966e886fdbec6d1660cb" }'
@@ -325,11 +325,11 @@ JSON
 # Derivations, each one field away from LIST_OK, so a contract that fires on
 # one of them names exactly the field it is about.
 mutate_list() { # <dest> <sed-free bash replacement: from> <to>
-	local dest="$1" from="$2" to="$3" line
-	: >"$dest"
-	while IFS= read -r line || [[ -n $line ]]; do
-		printf '%s\n' "${line//"$from"/"$to"}" >>"$dest"
-	done <"$LIST_OK"
+  local dest="$1" from="$2" to="$3" line
+  : >"$dest"
+  while IFS= read -r line || [[ -n $line ]]; do
+    printf '%s\n' "${line//"$from"/"$to"}" >>"$dest"
+  done <"$LIST_OK"
 }
 
 LIST_UNPINNED="$TMPROOT/list-unpinned.json"
@@ -341,17 +341,17 @@ mutate_list "$LIST_UNPINNED" '"revision": "5097adb4b6827dea2e1a7e580a496a7160507
 # line itself is identical in all five rows.
 LIST_MIXED="$TMPROOT/list-mixed.json"
 {
-	_seen=0
-	while IFS= read -r _l || [[ -n $_l ]]; do
-		if [[ $_l == '      "backend": "committed-lock",' ]]; then
-			_seen=$((_seen + 1))
-			if [[ $_seen -eq 4 ]]; then
-				printf '      "backend": "git-checkout",\n'
-				continue
-			fi
-		fi
-		printf '%s\n' "$_l"
-	done <"$LIST_OK"
+  _seen=0
+  while IFS= read -r _l || [[ -n $_l ]]; do
+    if [[ $_l == '      "backend": "committed-lock",' ]]; then
+      _seen=$((_seen + 1))
+      if [[ $_seen -eq 4 ]]; then
+        printf '      "backend": "git-checkout",\n'
+        continue
+      fi
+    fi
+    printf '%s\n' "$_l"
+  done <"$LIST_OK"
 } >"$LIST_MIXED"
 
 LIST_NO_RECORDS="$TMPROOT/list-no-records.json"
@@ -367,17 +367,17 @@ mutate_list "$LIST_BAD_SCHEMA" '"reprobuild.develop-list.v1"' '"reprobuild.devel
 # develop-list document".
 LIST_INDENT4="$TMPROOT/list-indent4.json"
 {
-	while IFS= read -r _l || [[ -n $_l ]]; do
-		_t="${_l#"${_l%%[![:space:]]*}"}"
-		_n=$((${#_l} - ${#_t}))
-		_pad=""
-		_k=0
-		while [[ $_k -lt $((_n * 2)) ]]; do
-			_pad="$_pad "
-			_k=$((_k + 1))
-		done
-		printf '%s%s\n' "$_pad" "$_t"
-	done <"$LIST_OK"
+  while IFS= read -r _l || [[ -n $_l ]]; do
+    _t="${_l#"${_l%%[![:space:]]*}"}"
+    _n=$((${#_l} - ${#_t}))
+    _pad=""
+    _k=0
+    while [[ $_k -lt $((_n * 2)) ]]; do
+      _pad="$_pad "
+      _k=$((_k + 1))
+    done
+    printf '%s%s\n' "$_pad" "$_t"
+  done <"$LIST_OK"
 } >"$LIST_INDENT4"
 
 # Not a document at all — what the CLI prints when it rejects the invocation.
@@ -417,51 +417,51 @@ chmod +x "$BIN/repro"
 # 3. Drivers.
 # ===========================================================================
 run_decide() { # <sibling-strategy> <env-flavor> <siblings-input>
-	: >"$OUTFILE"
-	: >"$SUMFILE"
-	OUT="$(
-		SIBLING_STRATEGY="$1" \
-			ENV_FLAVOR="$2" \
-			SIBLINGS_INPUT="$3" \
-			GITHUB_WORKSPACE="$WS" \
-			GITHUB_OUTPUT="$OUTFILE" \
-			GITHUB_STEP_SUMMARY="$SUMFILE" \
-			bash "$DECIDE" 2>&1
-	)"
-	RC=$?
-	[[ -n ${SHOW_STEP_OUTPUT:-} ]] && {
-		echo "--- decide strategy=$1 flavor=$2 siblings=[${3//$'\n'/ }] rc=$RC ---"
-		echo "$OUT"
-		echo "--- end ---"
-	}
-	return 0
+  : >"$OUTFILE"
+  : >"$SUMFILE"
+  OUT="$(
+    SIBLING_STRATEGY="$1" \
+      ENV_FLAVOR="$2" \
+      SIBLINGS_INPUT="$3" \
+      GITHUB_WORKSPACE="$WS" \
+      GITHUB_OUTPUT="$OUTFILE" \
+      GITHUB_STEP_SUMMARY="$SUMFILE" \
+      bash "$DECIDE" 2>&1
+  )"
+  RC=$?
+  [[ -n ${SHOW_STEP_OUTPUT:-} ]] && {
+    echo "--- decide strategy=$1 flavor=$2 siblings=[${3//$'\n'/ }] rc=$RC ---"
+    echo "$OUT"
+    echo "--- end ---"
+  }
+  return 0
 }
 
 run_provision() { # <sibling-strategy> <siblings-input> <list-json> [<list-rc>] [<all-rc>]
-	: >"$OUTFILE"
-	: >"$SUMFILE"
-	: >"$ALL_MARKER"
-	OUT="$(
-		PATH="$BIN:$PATH" \
-			SIBLING_STRATEGY="$1" \
-			SIBLINGS_INPUT="$2" \
-			GITHUB_WORKSPACE="$WS" \
-			GITHUB_OUTPUT="$OUTFILE" \
-			GITHUB_STEP_SUMMARY="$SUMFILE" \
-			RUNNER_TEMP="$TMPROOT" \
-			REPRO_FAKE_LIST_JSON="$3" \
-			REPRO_FAKE_LIST_RC="${4:-0}" \
-			REPRO_FAKE_ALL_RC="${5:-0}" \
-			REPRO_FAKE_ALL_MARKER="$ALL_MARKER" \
-			bash "$PROVISION" 2>&1
-	)"
-	RC=$?
-	[[ -n ${SHOW_STEP_OUTPUT:-} ]] && {
-		echo "--- provision strategy=$1 siblings=[${2//$'\n'/ }] rc=$RC ---"
-		echo "$OUT"
-		echo "--- end ---"
-	}
-	return 0
+  : >"$OUTFILE"
+  : >"$SUMFILE"
+  : >"$ALL_MARKER"
+  OUT="$(
+    PATH="$BIN:$PATH" \
+      SIBLING_STRATEGY="$1" \
+      SIBLINGS_INPUT="$2" \
+      GITHUB_WORKSPACE="$WS" \
+      GITHUB_OUTPUT="$OUTFILE" \
+      GITHUB_STEP_SUMMARY="$SUMFILE" \
+      RUNNER_TEMP="$TMPROOT" \
+      REPRO_FAKE_LIST_JSON="$3" \
+      REPRO_FAKE_LIST_RC="${4:-0}" \
+      REPRO_FAKE_ALL_RC="${5:-0}" \
+      REPRO_FAKE_ALL_MARKER="$ALL_MARKER" \
+      bash "$PROVISION" 2>&1
+  )"
+  RC=$?
+  [[ -n ${SHOW_STEP_OUTPUT:-} ]] && {
+    echo "--- provision strategy=$1 siblings=[${2//$'\n'/ }] rc=$RC ---"
+    echo "$OUT"
+    echo "--- end ---"
+  }
+  return 0
 }
 
 echo
@@ -570,7 +570,7 @@ contains "  and the reason names the file" "$OUT" "declares 2 of its own in .git
 new_ws
 lock_with_siblings
 printf '# Cross-repo siblings cloned by setup-dev-env at workspace-lock-pinned\n# revisions.\n' \
-	>"$WS/.github/sibling-repos"
+  >"$WS/.github/sibling-repos"
 run_decide auto reprobuild ""
 check "a comment-only .github/sibling-repos declares nothing" "$(out_of declared-siblings)" "0"
 check "  so the repro path is taken" "$(out_of strategy)" "repro-lock"
@@ -659,36 +659,36 @@ check "  with no follow-on clone" "$(out_of late-clone)" "false"
 # partial.
 # ===========================================================================
 provision_case() { # <desc> <list-json> <list-rc> <needle>
-	new_ws
-	lock_with_siblings
-	run_provision auto "" "$2" "$3"
-	check "auto falls back: $1" "$(out_of late-clone)" "true"
-	check "  exiting 0, because auto must not turn a green fleet red" "$RC" "0"
-	contains "  with a ::warning:: naming the reason" "$OUT" "::warning::setup-dev-env: falling back to clone-siblings"
-	contains "  the reason being: $1" "$OUT" "$4"
-	contains "  and one line saying which path ran" "$OUT" "sibling provisioning = clone-siblings (auto fell back:"
-	lacks "  and repro develop --all was not run" "$(<"$ALL_MARKER")" "develop --all"
+  new_ws
+  lock_with_siblings
+  run_provision auto "" "$2" "$3"
+  check "auto falls back: $1" "$(out_of late-clone)" "true"
+  check "  exiting 0, because auto must not turn a green fleet red" "$RC" "0"
+  contains "  with a ::warning:: naming the reason" "$OUT" "::warning::setup-dev-env: falling back to clone-siblings"
+  contains "  the reason being: $1" "$OUT" "$4"
+  contains "  and one line saying which path ran" "$OUT" "sibling provisioning = clone-siblings (auto fell back:"
+  lacks "  and repro develop --all was not run" "$(<"$ALL_MARKER")" "develop --all"
 
-	new_ws
-	lock_with_siblings
-	run_provision repro-lock "" "$2" "$3"
-	check "forced repro-lock fails instead: $1" "$RC" "1"
-	contains "  with an ::error::" "$OUT" "::error::setup-dev-env: sibling-strategy: repro-lock was requested, but"
-	contains "  refusing the silent fallback" "$OUT" "will not silently fall back to clone-siblings"
+  new_ws
+  lock_with_siblings
+  run_provision repro-lock "" "$2" "$3"
+  check "forced repro-lock fails instead: $1" "$RC" "1"
+  contains "  with an ::error::" "$OUT" "::error::setup-dev-env: sibling-strategy: repro-lock was requested, but"
+  contains "  refusing the silent fallback" "$OUT" "will not silently fall back to clone-siblings"
 }
 
 provision_case "no committed lock (the real infra document)" "$LIST_NO_LOCK" 1 \
-	"the workspace lock set at /w/consumer is EMPTY"
+  "the workspace lock set at /w/consumer is EMPTY"
 provision_case "a dependency named but not pinned to a commit" "$LIST_UNPINNED" 0 \
-	"'nim-acp' is not pinned to a commit SHA by the committed lock (revision 'dev')"
+  "'nim-acp' is not pinned to a commit SHA by the committed lock (revision 'dev')"
 provision_case "a pin supplied by a routed store, not this repo's lock" "$LIST_MIXED" 0 \
-	"'nim-agents' is pinned by the 'git-checkout' backend"
+  "'nim-agents' is pinned by the 'git-checkout' backend"
 provision_case "the committed-lock backend contributed no records" "$LIST_NO_RECORDS" 0 \
-	"no reachable committed-lock backend contributed a record"
+  "no reachable committed-lock backend contributed a record"
 provision_case "an unrecognised document schema" "$LIST_BAD_SCHEMA" 0 \
-	"reported schemaId 'reprobuild.develop-list.v9'"
+  "reported schemaId 'reprobuild.develop-list.v9'"
 provision_case "output that is not a document at all" "$LIST_GARBAGE" 1 \
-	"could not read as a develop-list document"
+  "could not read as a develop-list document"
 
 # The CLI absent entirely — the case a nix-flavor job would hit if the install
 # steps' `if:` ever stopped covering a forced repro-lock.
@@ -703,9 +703,9 @@ lock_with_siblings
 mkdir -p "$TMPROOT/empty-bin"
 REAL_BASH="$(command -v bash)"
 OUT="$(
-	PATH="$TMPROOT/empty-bin" SIBLING_STRATEGY=auto SIBLINGS_INPUT="" \
-		GITHUB_WORKSPACE="$WS" GITHUB_OUTPUT="$OUTFILE" GITHUB_STEP_SUMMARY="$SUMFILE" \
-		RUNNER_TEMP="$TMPROOT" "$REAL_BASH" "$PROVISION" 2>&1
+  PATH="$TMPROOT/empty-bin" SIBLING_STRATEGY=auto SIBLINGS_INPUT="" \
+    GITHUB_WORKSPACE="$WS" GITHUB_OUTPUT="$OUTFILE" GITHUB_STEP_SUMMARY="$SUMFILE" \
+    RUNNER_TEMP="$TMPROOT" "$REAL_BASH" "$PROVISION" 2>&1
 )"
 RC=$?
 check "auto falls back when the repro CLI is absent" "$(out_of late-clone)" "true"
@@ -742,15 +742,15 @@ lock_with_siblings
 run_provision repro-lock "isonim"$'\n'"codetracer-trace-format" "$LIST_OK"
 check "a mixed declared list still provisions from the lock" "$RC" "0"
 contains "  the locked entry is reported redundant, with its locked revision" "$OUT" \
-	"'isonim' (from the 'siblings' input) is redundant under sibling-strategy: repro-lock — repro.lock pins isonim at e82b819d2d05efb6023a966e886fdbec6d1660cb"
+  "'isonim' (from the 'siblings' input) is redundant under sibling-strategy: repro-lock — repro.lock pins isonim at e82b819d2d05efb6023a966e886fdbec6d1660cb"
 contains "  and reported as dropped" "$OUT" "this entry is dropped"
 contains "  the unlocked entry is reported as outside the lock" "$OUT" \
-	"'codetracer-trace-format' (from the 'siblings' input) is NOT in repro.lock"
+  "'codetracer-trace-format' (from the 'siblings' input) is NOT in repro.lock"
 check "  and a follow-on clone is requested" "$(out_of late-clone)" "true"
 check "  carrying only the entry the lock cannot supply" "$(block_of late-siblings)" \
-	"codetracer-trace-format"
+  "codetracer-trace-format"
 contains "  with the tally on the one-line report" "$OUT" \
-	"1 declared entries dropped as redundant; 1 declared entries outside the lock handed to clone-siblings"
+  "1 declared entries dropped as redundant; 1 declared entries outside the lock handed to clone-siblings"
 
 # `name=ref` on a repo the lock pins: the ref goes too, and is named. This is
 # the exact shape that silently un-pinned four correctly-locked repos.
@@ -758,7 +758,7 @@ new_ws
 lock_with_siblings
 run_provision repro-lock "isonim=dev" "$LIST_OK"
 contains "an entry's =ref is dropped with it, and the locked SHA is named" "$OUT" \
-	"repro.lock pins isonim at e82b819d2d05efb6023a966e886fdbec6d1660cb"
+  "repro.lock pins isonim at e82b819d2d05efb6023a966e886fdbec6d1660cb"
 check "  and nothing is handed to clone-siblings" "$(out_of late-clone)" "false"
 
 # A declared list read from the file rather than the input.
@@ -767,7 +767,7 @@ lock_with_siblings
 printf 'nim-acp\nrepo-workspaces\n' >"$WS/.github/sibling-repos"
 run_provision repro-lock "" "$LIST_OK"
 contains "the file is reconciled the same way as the input" "$OUT" \
-	"'repo-workspaces' (from .github/sibling-repos) is NOT in repro.lock"
+  "'repo-workspaces' (from .github/sibling-repos) is NOT in repro.lock"
 check "  and only the uncovered entry is handed on" "$(block_of late-siblings)" "repo-workspaces"
 
 # ===========================================================================

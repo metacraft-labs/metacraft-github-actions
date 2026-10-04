@@ -46,7 +46,7 @@ else:
     print("ARM: full capture still requires the deferred raw-syscall backend.")
 for program in programs:
     assert run("compile-" + program,
-               ["nim", "c", "--hints:off", "tests/linux/" + program + ".nim"]) == 0
+                ["nim", "c", "--hints:off", "tests/linux/" + program + ".nim"]) == 0
 
 try:
     config.write_bytes(original.replace(flag, b""))
@@ -55,7 +55,7 @@ try:
     config.write_bytes(original)
     (evidence / "local-binding.nim.cfg").write_bytes(original)
     fixed = [run("local-binding-" + program, [str(root / "tests/linux" / program)])
-             for program in programs]
+              for program in programs]
 finally:
     config.write_bytes(original)
 

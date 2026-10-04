@@ -98,7 +98,7 @@ runs:
         [[ -d "$MCL_S3_PATH" ]] && cp_flag="--recursive"
         # shellcheck disable=SC2086
         if $aws_cmd --endpoint-url "$MCL_S3_ENDPOINT" --region "${MCL_S3_REGION:-garage}" \
-             s3 cp $cp_flag "$MCL_S3_PATH" "$dest"; then
+              s3 cp $cp_flag "$MCL_S3_PATH" "$dest"; then
           echo "Mirrored '$MCL_S3_PATH' to $dest"
         else
           echo "::warning title=S3 artifact mirror::upload failed (non-blocking); GitHub artifact retained"

@@ -1,0 +1,2 @@
+# Repository-local nix-direnv activation cache.
+.direnv/

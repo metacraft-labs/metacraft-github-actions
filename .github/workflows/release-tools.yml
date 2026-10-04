@@ -124,7 +124,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-          SCOPED_GIT_AUTH_REWRITES: '1'
+          SCOPED_GIT_AUTH_REWRITES: "1"
         run: |
           source "$RELEASE_TOOLS/../git-auth/scoped-git-auth.sh"
           scoped_git_auth_build
@@ -217,7 +217,7 @@ jobs:
     if: >-
       always() && needs.plan.result == 'success' && needs.build.result == 'success' &&
       (needs.verify-msi.result == 'success' ||
-       (needs.plan.outputs.has-msi == 'false' && needs.verify-msi.result == 'skipped'))
+        (needs.plan.outputs.has-msi == 'false' && needs.verify-msi.result == 'skipped'))
     runs-on: ${{ needs.choose.outputs.hosted == 'true' && fromJSON(needs.choose.outputs.runs_on) || 'eph-linux-x64-release' }}
     timeout-minutes: 20
     permissions:

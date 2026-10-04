@@ -1,60 +1,91 @@
 // Package and verify the product's explicit install tree. No build-tree globbing.
-const fs = require('node:fs');
-const path = require('node:path');
-const cp = require('node:child_process');
-const os = require('node:os');
-const {plan, digest} = require('./release.cjs');
+const fs = require("node:fs");
+const path = require("node:path");
+const cp = require("node:child_process");
+const os = require("node:os");
+const { plan, digest } = require("./release.cjs");
 function run(exe, args, opts = {}) {
-  return cp.execFileSync(exe, args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts}).trim();
+  return cp
+    .execFileSync(exe, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      ...opts,
+    })
+    .trim();
 }
-const fail = message => { throw new Error(message); };
+const fail = (message) => {
+  throw new Error(message);
+};
 function glibcRequirements(symbols) {
   // A preload shim can PROVIDE a new GLIBC symbol version without requiring
   // that version from libc. Only undefined dynamic symbols constrain users.
-  return [...symbols.split('\n').filter(line => /\bUND\b/.test(line)).join('\n')
-    .matchAll(/GLIBC_(\d+)\.(\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+  return [
+    ...symbols
+      .split("\n")
+      .filter((line) => /\bUND\b/.test(line))
+      .join("\n")
+      .matchAll(/GLIBC_(\d+)\.(\d+)/g),
+  ].map((m) => [Number(m[1]), Number(m[2])]);
 }
 function files(dir) {
-  return fs.readdirSync(dir, {withFileTypes: true}).flatMap(e => {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     return e.isDirectory() ? files(p) : e.isFile() ? [p] : [];
   });
 }
 function architecture(file, target) {
   const b = fs.readFileSync(file);
-  const arm = target.endsWith('aarch64');
+  const arm = target.endsWith("aarch64");
   if (b.subarray(0, 4).equals(Buffer.from([0x7f, 69, 76, 70]))) {
-    if (b[4] !== 2 || b.readUInt16LE(18) !== (arm ? 183 : 62)) fail(`ELF architecture mismatch: ${file}`);
-    return 'elf';
+    if (b[4] !== 2 || b.readUInt16LE(18) !== (arm ? 183 : 62))
+      fail(`ELF architecture mismatch: ${file}`);
+    return "elf";
   }
-  if (b.subarray(0, 2).toString() === 'MZ') {
+  if (b.subarray(0, 2).toString() === "MZ") {
     const off = b.readUInt32LE(60);
-    if (b.toString('ascii', off, off + 4) !== 'PE\0\0' || b.readUInt16LE(off + 4) !== (arm ? 0xaa64 : 0x8664)) {
+    if (
+      b.toString("ascii", off, off + 4) !== "PE\0\0" ||
+      b.readUInt16LE(off + 4) !== (arm ? 0xaa64 : 0x8664)
+    ) {
       fail(`PE architecture mismatch: ${file}`);
     }
-    return 'pe';
+    return "pe";
   }
-  if (target.startsWith('darwin') && /Mach-O/.test(run('file', ['-Lb', file]))) {
-    const arch = arm ? 'arm64' : 'x86_64';
-    run('lipo', [file, '-verify_arch', arch]);
-    return 'macho';
+  if (
+    target.startsWith("darwin") &&
+    /Mach-O/.test(run("file", ["-Lb", file]))
+  ) {
+    const arch = arm ? "arm64" : "x86_64";
+    run("lipo", [file, "-verify_arch", arch]);
+    return "macho";
   }
-  return '';
+  return "";
 }
 function relocateLinux(tree, target) {
-  const libdir = path.join(tree, 'lib');
-  const system = /^(libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|ld-linux|linux-vdso)/;
-  let todo = files(tree).filter(f => architecture(f, target) === 'elf');
+  const libdir = path.join(tree, "lib");
+  const system =
+    /^(libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|ld-linux|linux-vdso)/;
+  let todo = files(tree).filter((f) => architecture(f, target) === "elf");
   const seen = new Set();
   while (todo.length) {
     const file = todo.shift();
     if (seen.has(file)) continue;
     seen.add(file);
     fs.chmodSync(file, fs.statSync(file).mode | 0o200);
-    const versions = glibcRequirements(run('readelf', ['--dyn-syms', '--wide', file]));
-    if (versions.some(([major, minor]) => major > 2 || (major === 2 && minor > 28))) fail(`glibc > 2.28 required by ${file}: ${versions.map(v => v.join('.')).join(', ')}`);
-    const deps = run('ldd', [file]);
-    if (/not found/.test(deps)) fail(`unresolved runtime dependency in ${file}: ${deps}`);
+    const versions = glibcRequirements(
+      run("readelf", ["--dyn-syms", "--wide", file]),
+    );
+    if (
+      versions.some(
+        ([major, minor]) => major > 2 || (major === 2 && minor > 28),
+      )
+    )
+      fail(
+        `glibc > 2.28 required by ${file}: ${versions.map((v) => v.join(".")).join(", ")}`,
+      );
+    const deps = run("ldd", [file]);
+    if (/not found/.test(deps))
+      fail(`unresolved runtime dependency in ${file}: ${deps}`);
     for (const m of deps.matchAll(/^\s*(\S+) => (\/\S+) /gm)) {
       const leaf = path.basename(m[1]);
       if (system.test(leaf)) continue;
@@ -62,218 +93,422 @@ function relocateLinux(tree, target) {
       if (!fs.existsSync(dest)) {
         fs.copyFileSync(m[2], dest);
         todo.push(dest);
-      } else if (digest(m[2]) !== digest(dest) && !seen.has(dest)) fail(`runtime library collision: ${m[1]}`);
+      } else if (digest(m[2]) !== digest(dest) && !seen.has(dest))
+        fail(`runtime library collision: ${m[1]}`);
     }
     // Zig already supplies a system interpreter. Enforce it for every binary.
-    const header = run('readelf', ['-l', file]);
+    const header = run("readelf", ["-l", file]);
     if (/Requesting program interpreter:/.test(header)) {
-      run('patchelf', ['--set-interpreter', target.endsWith('aarch64') ? '/lib/ld-linux-aarch64.so.1' : '/lib64/ld-linux-x86-64.so.2', file]);
+      run("patchelf", [
+        "--set-interpreter",
+        target.endsWith("aarch64")
+          ? "/lib/ld-linux-aarch64.so.1"
+          : "/lib64/ld-linux-x86-64.so.2",
+        file,
+      ]);
     }
-    run('patchelf', ['--set-rpath', '$ORIGIN/../lib:$ORIGIN', file]);
+    run("patchelf", ["--set-rpath", "$ORIGIN/../lib:$ORIGIN", file]);
   }
 }
 function verifyDarwin(tree, target) {
   for (const file of files(tree)) {
-    if (architecture(file, target) !== 'macho') continue;
-    if (file.endsWith('.dylib')) {
-      run('install_name_tool', ['-id', '@rpath/' + path.basename(file), file]);
+    if (architecture(file, target) !== "macho") continue;
+    if (file.endsWith(".dylib")) {
+      run("install_name_tool", ["-id", "@rpath/" + path.basename(file), file]);
     }
-    const dependencies = run('otool', ['-L', file]).split('\n').slice(1);
+    const dependencies = run("otool", ["-L", file]).split("\n").slice(1);
     for (const line of dependencies) {
-      const dep = line.trim().split(' ')[0];
-      if (dep.startsWith('/') && !dep.startsWith('/usr/lib/') && !dep.startsWith('/System/')) {
+      const dep = line.trim().split(" ")[0];
+      if (
+        dep.startsWith("/") &&
+        !dep.startsWith("/usr/lib/") &&
+        !dep.startsWith("/System/")
+      ) {
         fail(`non-system absolute Mach-O dependency in ${file}: ${dep}`);
       }
     }
     // Ad-hoc signing makes modified local payloads executable. This is never
     // recorded as Developer ID signing or notarization in the release evidence.
-    run('/usr/bin/codesign', ['--force', '--sign', '-', file]);
-    run('/usr/bin/codesign', ['--verify', '--strict', file]);
+    run("/usr/bin/codesign", ["--force", "--sign", "-", file]);
+    run("/usr/bin/codesign", ["--verify", "--strict", file]);
   }
 }
 function verifyWindows(tree, target) {
-  const system = /^(api-ms-win-|ext-ms-win-|kernel32\.dll$|advapi32\.dll$|ntdll\.dll$|msvcrt\.dll$|ucrtbase\.dll$|user32\.dll$|shell32\.dll$|ws2_32\.dll$|bcrypt\.dll$|crypt32\.dll$|ole32\.dll$|oleaut32\.dll$|iphlpapi\.dll$|psapi\.dll$|userenv\.dll$|secur32\.dll$|version\.dll$|shlwapi\.dll$|winmm\.dll$|dbghelp\.dll$|rpcrt4\.dll$)/i;
+  const system =
+    /^(api-ms-win-|ext-ms-win-|kernel32\.dll$|advapi32\.dll$|ntdll\.dll$|msvcrt\.dll$|ucrtbase\.dll$|user32\.dll$|shell32\.dll$|ws2_32\.dll$|bcrypt\.dll$|crypt32\.dll$|ole32\.dll$|oleaut32\.dll$|iphlpapi\.dll$|psapi\.dll$|userenv\.dll$|secur32\.dll$|version\.dll$|shlwapi\.dll$|winmm\.dll$|dbghelp\.dll$|rpcrt4\.dll$)/i;
   const payload = files(tree);
-  for (const file of payload.filter(f => /\.(exe|dll)$/i.test(f))) {
-    if (architecture(file, target) !== 'pe') fail(`invalid Windows image ${file}`);
-    const imports = run('llvm-readobj', ['--coff-imports', file]);
+  for (const file of payload.filter((f) => /\.(exe|dll)$/i.test(f))) {
+    if (architecture(file, target) !== "pe")
+      fail(`invalid Windows image ${file}`);
+    const imports = run("llvm-readobj", ["--coff-imports", file]);
     for (const match of imports.matchAll(/^\s*Name: (\S+)$/gm)) {
       if (system.test(match[1])) continue;
-      if (!fs.existsSync(path.join(path.dirname(file), match[1])) &&
-          !fs.existsSync(path.join(tree, 'bin', match[1]))) fail(`missing adjacent Windows library ${match[1]} for ${file}`);
+      if (
+        !fs.existsSync(path.join(path.dirname(file), match[1])) &&
+        !fs.existsSync(path.join(tree, "bin", match[1]))
+      )
+        fail(`missing adjacent Windows library ${match[1]} for ${file}`);
     }
   }
 }
 function configurationFiles(spec) {
   const entries = spec.configurationFiles ?? [];
-  if (!Array.isArray(entries)) fail('configurationFiles must be an array');
+  if (!Array.isArray(entries)) fail("configurationFiles must be an array");
   const destinations = new Set();
-  return entries.map(entry => {
+  return entries.map((entry) => {
     const dest = entry.destination;
     // These names also enter package metadata. Require a canonical /etc path
     // without whitespace, traversal or RPM macro characters.
-    if (typeof dest !== 'string' || !/^\/etc\/[A-Za-z0-9._/-]+$/.test(dest) ||
-        dest.endsWith('/') || path.posix.normalize(dest) !== dest ||
-        dest.split('/').some(part => part === '.' || part === '..')) {
+    if (
+      typeof dest !== "string" ||
+      !/^\/etc\/[A-Za-z0-9._/-]+$/.test(dest) ||
+      dest.endsWith("/") ||
+      path.posix.normalize(dest) !== dest ||
+      dest.split("/").some((part) => part === "." || part === "..")
+    ) {
       fail(`invalid configuration destination: ${dest}`);
     }
-    if (destinations.has(dest)) fail(`duplicate configuration destination: ${dest}`);
+    if (destinations.has(dest))
+      fail(`duplicate configuration destination: ${dest}`);
     destinations.add(dest);
-    if (typeof entry.source !== 'string' || !fs.lstatSync(entry.source).isFile()) {
+    if (
+      typeof entry.source !== "string" ||
+      !fs.lstatSync(entry.source).isFile()
+    ) {
       fail(`configuration source is not a regular file: ${entry.source}`);
     }
-    return {source: entry.source, destination: dest};
+    return { source: entry.source, destination: dest };
   });
 }
 function nativePackages(tree, target, spec, p, dist) {
   const configs = configurationFiles(spec);
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-packages-'));
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tool-packages-"));
   try {
-    const root = path.join(temp, 'root');
+    const root = path.join(temp, "root");
     const prefix = `/usr/lib/${p.product}`;
-    fs.mkdirSync(path.join(root, prefix), {recursive: true});
-    fs.cpSync(tree, path.join(root, prefix), {recursive: true, dereference: false, verbatimSymlinks: true});
-    fs.mkdirSync(path.join(root, 'usr/bin'), {recursive: true});
+    fs.mkdirSync(path.join(root, prefix), { recursive: true });
+    fs.cpSync(tree, path.join(root, prefix), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+    fs.mkdirSync(path.join(root, "usr/bin"), { recursive: true });
     for (const cmd of spec.commands) {
-      const wrapper = path.join(root, 'usr/bin', cmd);
-      fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${prefix}/bin/${cmd} "$@"\n`, {mode: 0o755});
+      const wrapper = path.join(root, "usr/bin", cmd);
+      fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${prefix}/bin/${cmd} "$@"\n`, {
+        mode: 0o755,
+      });
     }
     // The product owns service semantics. Copy its service metadata verbatim.
     if (spec.systemdUnit) {
-      const dest = path.join(root, 'usr/lib/systemd/system');
-      fs.mkdirSync(dest, {recursive: true});
-      fs.copyFileSync(spec.systemdUnit, path.join(dest, `${spec.serviceName}.service`));
+      const dest = path.join(root, "usr/lib/systemd/system");
+      fs.mkdirSync(dest, { recursive: true });
+      fs.copyFileSync(
+        spec.systemdUnit,
+        path.join(dest, `${spec.serviceName}.service`),
+      );
     }
     for (const config of configs) {
       const dest = path.join(root, config.destination);
       let directory = root;
-      for (const part of config.destination.split('/').slice(1, -1)) {
+      for (const part of config.destination.split("/").slice(1, -1)) {
         directory = path.join(directory, part);
-        fs.mkdirSync(directory, {recursive: true, mode: 0o755});
+        fs.mkdirSync(directory, { recursive: true, mode: 0o755 });
         fs.chmodSync(directory, 0o755);
       }
       fs.copyFileSync(config.source, dest);
       fs.chmodSync(dest, 0o644);
     }
-    const debArch = target.endsWith('aarch64') ? 'arm64' : 'amd64';
-    const rpmArch = target.endsWith('aarch64') ? 'aarch64' : 'x86_64';
-    const deb = p.matrix.find(t => t.id === target).assets.find(a => a.endsWith('.deb'));
-    const rpm = p.matrix.find(t => t.id === target).assets.find(a => a.endsWith('.rpm'));
+    const debArch = target.endsWith("aarch64") ? "arm64" : "amd64";
+    const rpmArch = target.endsWith("aarch64") ? "aarch64" : "x86_64";
+    const deb = p.matrix
+      .find((t) => t.id === target)
+      .assets.find((a) => a.endsWith(".deb"));
+    const rpm = p.matrix
+      .find((t) => t.id === target)
+      .assets.find((a) => a.endsWith(".rpm"));
     if (deb) {
-      fs.mkdirSync(path.join(root, 'DEBIAN'));
-      fs.writeFileSync(path.join(root, 'DEBIAN/control'),
+      fs.mkdirSync(path.join(root, "DEBIAN"));
+      fs.writeFileSync(
+        path.join(root, "DEBIAN/control"),
         `Package: ${spec.packageName}\nVersion: ${p.version}-1\nArchitecture: ${debArch}\nMaintainer: Metacraft Labs <info@metacraft-labs.com>\nDepends: libc6 (>= 2.28)\n` +
-        (spec.recommends?.length ? `Recommends: ${spec.recommends.join(', ')}\n` : '') +
-        `Description: ${spec.summary}\n`);
-      if (configs.length) fs.writeFileSync(path.join(root, 'DEBIAN/conffiles'),
-        configs.map(c => c.destination).join('\n') + '\n');
-      run('dpkg-deb', ['--root-owner-group', '--build', root, path.join(dist, deb)]);
-      if (run('dpkg-deb', ['-f', path.join(dist, deb), 'Architecture']) !== debArch) fail('deb architecture mismatch');
-      fs.rmSync(path.join(root, 'DEBIAN'), {recursive: true});
+          (spec.recommends?.length
+            ? `Recommends: ${spec.recommends.join(", ")}\n`
+            : "") +
+          `Description: ${spec.summary}\n`,
+      );
+      if (configs.length)
+        fs.writeFileSync(
+          path.join(root, "DEBIAN/conffiles"),
+          configs.map((c) => c.destination).join("\n") + "\n",
+        );
+      run("dpkg-deb", [
+        "--root-owner-group",
+        "--build",
+        root,
+        path.join(dist, deb),
+      ]);
+      if (
+        run("dpkg-deb", ["-f", path.join(dist, deb), "Architecture"]) !==
+        debArch
+      )
+        fail("deb architecture mismatch");
+      fs.rmSync(path.join(root, "DEBIAN"), { recursive: true });
     }
     if (rpm) {
-      const rpmdir = path.join(temp, 'rpm');
+      const rpmdir = path.join(temp, "rpm");
       fs.mkdirSync(rpmdir);
-      const specfile = path.join(temp, 'package.spec');
-      fs.writeFileSync(specfile,
+      const specfile = path.join(temp, "package.spec");
+      fs.writeFileSync(
+        specfile,
         `Name: ${spec.packageName}\nVersion: ${p.version}\nRelease: 1\nSummary: ${spec.summary}\nLicense: ${spec.license}\nBuildArch: ${rpmArch}\nRequires: glibc >= 2.28\nAutoReqProv: no\n` +
-        `%description\n${spec.summary}\n%install\nmkdir -p %{buildroot}\ncp -a '${root}/.' %{buildroot}/\n%files\n%defattr(-,root,root,-)\n/usr/bin/*\n${prefix}\n` +
-        (spec.systemdUnit ? `/usr/lib/systemd/system/${spec.serviceName}.service\n` : '') +
-        configs.map(c => `%config(noreplace) ${c.destination}\n`).join(''));
-      run('rpmbuild', ['-bb', '--target', rpmArch, '--define', `_topdir ${rpmdir}`,
-        '--define', '__os_install_post %{nil}', '--define', '_build_id_links none', specfile]);
-      const built = files(rpmdir).filter(f => f.endsWith('.rpm'));
-      if (built.length !== 1) fail('expected exactly one rpm');
+          `%description\n${spec.summary}\n%install\nmkdir -p %{buildroot}\ncp -a '${root}/.' %{buildroot}/\n%files\n%defattr(-,root,root,-)\n/usr/bin/*\n${prefix}\n` +
+          (spec.systemdUnit
+            ? `/usr/lib/systemd/system/${spec.serviceName}.service\n`
+            : "") +
+          configs.map((c) => `%config(noreplace) ${c.destination}\n`).join(""),
+      );
+      run("rpmbuild", [
+        "-bb",
+        "--target",
+        rpmArch,
+        "--define",
+        `_topdir ${rpmdir}`,
+        "--define",
+        "__os_install_post %{nil}",
+        "--define",
+        "_build_id_links none",
+        specfile,
+      ]);
+      const built = files(rpmdir).filter((f) => f.endsWith(".rpm"));
+      if (built.length !== 1) fail("expected exactly one rpm");
       fs.copyFileSync(built[0], path.join(dist, rpm));
-      if (run('rpm', ['-qp', '--qf', '%{ARCH}', path.join(dist, rpm)]) !== rpmArch) fail('rpm architecture mismatch');
+      if (
+        run("rpm", ["-qp", "--qf", "%{ARCH}", path.join(dist, rpm)]) !== rpmArch
+      )
+        fail("rpm architecture mismatch");
     }
-    const arch = p.matrix.find(t => t.id === target).assets.find(a => a.endsWith('.pkg.tar.gz'));
+    const arch = p.matrix
+      .find((t) => t.id === target)
+      .assets.find((a) => a.endsWith(".pkg.tar.gz"));
     if (arch) {
-      if (!spec.archMetadata) fail('Arch package requires product distribution metadata');
+      if (!spec.archMetadata)
+        fail("Arch package requires product distribution metadata");
       const size = files(root).reduce((n, f) => n + fs.statSync(f).size, 0);
-      const info = fs.readFileSync(spec.archMetadata, 'utf8').replace('@INSTALLED_SIZE@', String(size));
-      if (!info.includes(`arch = ${rpmArch}\n`) || !info.includes(`pkgver = ${p.version}-1\n`)) fail('Arch metadata differs');
+      const info = fs
+        .readFileSync(spec.archMetadata, "utf8")
+        .replace("@INSTALLED_SIZE@", String(size));
+      if (
+        !info.includes(`arch = ${rpmArch}\n`) ||
+        !info.includes(`pkgver = ${p.version}-1\n`)
+      )
+        fail("Arch metadata differs");
       for (const config of configs) {
-        if (!info.split('\n').includes(`backup = ${config.destination.slice(1)}`)) {
-          fail(`Arch metadata lacks configuration preservation: ${config.destination}`);
+        if (
+          !info.split("\n").includes(`backup = ${config.destination.slice(1)}`)
+        ) {
+          fail(
+            `Arch metadata lacks configuration preservation: ${config.destination}`,
+          );
         }
       }
-      fs.writeFileSync(path.join(root, '.PKGINFO'), info);
-      const mtree = cp.execFileSync('bsdtar', ['--uid', '0', '--gid', '0', '-c', '--format=mtree',
-        '--options=!all,type,uid,gid,mode,time,size,sha256,link', '-f', '-', '-C', root, '.']);
-      fs.writeFileSync(path.join(root, '.MTREE'), require('node:zlib').gzipSync(mtree));
-      run('bsdtar', ['--uid', '0', '--gid', '0', '-czf', path.join(dist, arch),
-        '-C', root, '.PKGINFO', '.MTREE', 'usr', ...(configs.length ? ['etc'] : [])]);
-      const members = run('bsdtar', ['-tf', path.join(dist, arch)]);
-      for (const member of ['.PKGINFO', '.MTREE', 'usr/bin/runquota', 'usr/bin/runquotad',
-        ...configs.map(c => c.destination.slice(1))]) {
-        if (!members.split('\n').includes(member)) fail(`Arch package lacks ${member}`);
+      fs.writeFileSync(path.join(root, ".PKGINFO"), info);
+      const mtree = cp.execFileSync("bsdtar", [
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "-c",
+        "--format=mtree",
+        "--options=!all,type,uid,gid,mode,time,size,sha256,link",
+        "-f",
+        "-",
+        "-C",
+        root,
+        ".",
+      ]);
+      fs.writeFileSync(
+        path.join(root, ".MTREE"),
+        require("node:zlib").gzipSync(mtree),
+      );
+      run("bsdtar", [
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "-czf",
+        path.join(dist, arch),
+        "-C",
+        root,
+        ".PKGINFO",
+        ".MTREE",
+        "usr",
+        ...(configs.length ? ["etc"] : []),
+      ]);
+      const members = run("bsdtar", ["-tf", path.join(dist, arch)]);
+      for (const member of [
+        ".PKGINFO",
+        ".MTREE",
+        "usr/bin/runquota",
+        "usr/bin/runquotad",
+        ...configs.map((c) => c.destination.slice(1)),
+      ]) {
+        if (!members.split("\n").includes(member))
+          fail(`Arch package lacks ${member}`);
       }
     }
-  } finally { fs.rmSync(temp, {recursive: true, force: true}); }
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 }
 function packagePayload(tree, target) {
-  const spec = JSON.parse(fs.readFileSync('.github/release.json'));
+  const spec = JSON.parse(fs.readFileSync(".github/release.json"));
   const p = plan();
-  if (spec.distributionMetadata && !target.startsWith('darwin')) {
+  if (spec.distributionMetadata && !target.startsWith("darwin")) {
     const metadata = JSON.parse(fs.readFileSync(spec.distributionMetadata));
-    if (metadata.name !== spec.packageName || metadata.version !== p.version) fail('distribution and release metadata differ');
+    if (metadata.name !== spec.packageName || metadata.version !== p.version)
+      fail("distribution and release metadata differ");
     spec.summary = metadata.summary;
     spec.license = metadata.license;
     spec.configurationFiles = metadata.configurationFiles;
   }
-  const t = p.matrix.find(t => t.id === target);
+  const t = p.matrix.find((t) => t.id === target);
   if (!t) fail(`unknown target ${target}`);
-  const windows = target.startsWith('windows');
+  const windows = target.startsWith("windows");
   for (const cmd of spec.commands) {
-    const exe = path.join(tree, 'bin', cmd + (windows ? '.exe' : ''));
+    const exe = path.join(tree, "bin", cmd + (windows ? ".exe" : ""));
     if (!fs.existsSync(exe)) fail(`missing command ${exe}`);
     const kind = architecture(exe, target);
-    const expectedKind = windows ? 'pe' : target.startsWith('linux') ? 'elf' : 'macho';
+    const expectedKind = windows
+      ? "pe"
+      : target.startsWith("linux")
+        ? "elf"
+        : "macho";
     if (kind !== expectedKind) fail(`command is not a target binary: ${exe}`);
   }
-  if (target.startsWith('linux')) relocateLinux(tree, target);
-  if (target.startsWith('darwin')) verifyDarwin(tree, target);
+  if (target.startsWith("linux")) relocateLinux(tree, target);
+  if (target.startsWith("darwin")) verifyDarwin(tree, target);
   if (windows) verifyWindows(tree, target);
-  const dist = path.resolve('dist');
-  fs.mkdirSync(dist, {recursive: true});
+  const dist = path.resolve("dist");
+  fs.mkdirSync(dist, { recursive: true });
   const name = `${p.product}-${p.version}-${target}`;
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'release-extraction-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "release-extraction-"));
   try {
-    fs.cpSync(tree, path.join(work, name), {recursive: true, dereference: false, verbatimSymlinks: true});
-    const archive = t.assets.find(a => /\.(tar\.gz|zip)$/.test(a));
+    fs.cpSync(tree, path.join(work, name), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+    const archive = t.assets.find((a) => /\.(tar\.gz|zip)$/.test(a));
     if (!archive) fail(`no archive for ${target}`);
     if (windows) {
       // PowerShell receives paths through environment variables, never script interpolation.
-      run('pwsh', ['-NoProfile', '-Command', 'Compress-Archive -LiteralPath $env:PAYLOAD -DestinationPath $env:ARCHIVE -Force'],
-        {env: {...process.env, PAYLOAD: path.join(work, name), ARCHIVE: path.join(dist, archive)}});
-    } else run('tar', ['-czf', path.join(dist, archive), '-C', work, name]);
-    fs.rmSync(path.join(work, name), {recursive: true});
-    if (windows) run('pwsh', ['-NoProfile', '-Command', 'Expand-Archive -LiteralPath $env:ARCHIVE -DestinationPath $env:UNPACK'],
-      {env: {...process.env, ARCHIVE: path.join(dist, archive), UNPACK: work}});
-    else run('tar', ['-xzf', path.join(dist, archive), '-C', work]);
+      run(
+        "pwsh",
+        [
+          "-NoProfile",
+          "-Command",
+          "Compress-Archive -LiteralPath $env:PAYLOAD -DestinationPath $env:ARCHIVE -Force",
+        ],
+        {
+          env: {
+            ...process.env,
+            PAYLOAD: path.join(work, name),
+            ARCHIVE: path.join(dist, archive),
+          },
+        },
+      );
+    } else run("tar", ["-czf", path.join(dist, archive), "-C", work, name]);
+    fs.rmSync(path.join(work, name), { recursive: true });
+    if (windows)
+      run(
+        "pwsh",
+        [
+          "-NoProfile",
+          "-Command",
+          "Expand-Archive -LiteralPath $env:ARCHIVE -DestinationPath $env:UNPACK",
+        ],
+        {
+          env: {
+            ...process.env,
+            ARCHIVE: path.join(dist, archive),
+            UNPACK: work,
+          },
+        },
+      );
+    else run("tar", ["-xzf", path.join(dist, archive), "-C", work]);
     // Smoke the extracted bytes, with a new working directory and a minimal environment.
-    const smoke = path.resolve('scripts/release/smoke.cjs');
-    const env = {PATH: windows ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}` : '/usr/bin:/bin:/usr/sbin:/sbin', HOME: work, TMPDIR: work, TEMP: work,
-      SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR};
-    if (target.startsWith('linux')) {
+    const smoke = path.resolve("scripts/release/smoke.cjs");
+    const env = {
+      PATH: windows
+        ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}`
+        : "/usr/bin:/bin:/usr/sbin:/sbin",
+      HOME: work,
+      TMPDIR: work,
+      TEMP: work,
+      SystemRoot: process.env.SystemRoot,
+      WINDIR: process.env.WINDIR,
+    };
+    if (target.startsWith("linux")) {
       // NixOS builders need not carry the distribution's ELF loader path.
       // The following required container job executes these exact bytes.
       nativePackages(path.join(work, name), target, spec, p, dist);
-    } else run(process.execPath, [smoke, path.join(work, name), target, process.env.RELEASE_SMOKE_PROBE || ''], {cwd: work, env});
-  } finally { fs.rmSync(work, {recursive: true, force: true}); }
-  if (fs.existsSync('scripts/release/packages.cjs')) {
-    require(path.resolve('scripts/release/packages.cjs'))({tree, target, dist, plan: p, run, digest});
+    } else
+      run(
+        process.execPath,
+        [
+          smoke,
+          path.join(work, name),
+          target,
+          process.env.RELEASE_SMOKE_PROBE || "",
+        ],
+        { cwd: work, env },
+      );
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
-  const evidence = {product: p.product, version: p.version, target,
-    sourceCommit: run('git', ['rev-parse', 'HEAD']),
-    dependencies: Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync('flake.lock')).nodes)
-      .filter(([, n]) => n.locked?.rev).map(([name, n]) => [name, n.locked.rev])),
+  if (fs.existsSync("scripts/release/packages.cjs")) {
+    require(path.resolve("scripts/release/packages.cjs"))({
+      tree,
+      target,
+      dist,
+      plan: p,
+      run,
+      digest,
+    });
+  }
+  const evidence = {
+    product: p.product,
+    version: p.version,
+    target,
+    sourceCommit: run("git", ["rev-parse", "HEAD"]),
+    dependencies: Object.fromEntries(
+      Object.entries(JSON.parse(fs.readFileSync("flake.lock")).nodes)
+        .filter(([, n]) => n.locked?.rev)
+        .map(([name, n]) => [name, n.locked.rev]),
+    ),
     runtimeSources: spec.runtimeSources || {},
-    binarySigningVerified: false, smoke: target.startsWith('linux') ? 'pending-container' : 'passed',
-    artifacts: Object.fromEntries(fs.readdirSync(dist).filter(n => !n.endsWith('.json')).map(n => [n, digest(path.join(dist, n))]))};
-  fs.writeFileSync(path.join(dist, name + '.json'), JSON.stringify(evidence, null, 2) + '\n');
+    binarySigningVerified: false,
+    smoke: target.startsWith("linux") ? "pending-container" : "passed",
+    artifacts: Object.fromEntries(
+      fs
+        .readdirSync(dist)
+        .filter((n) => !n.endsWith(".json"))
+        .map((n) => [n, digest(path.join(dist, n))]),
+    ),
+  };
+  fs.writeFileSync(
+    path.join(dist, name + ".json"),
+    JSON.stringify(evidence, null, 2) + "\n",
+  );
   console.log(`Verified ${name} at ${evidence.sourceCommit}`);
 }
-module.exports = {architecture, packagePayload, glibcRequirements, configurationFiles, nativePackages};
-if (require.main === module) packagePayload(path.resolve(process.argv[2]), process.argv[3]);
+module.exports = {
+  architecture,
+  packagePayload,
+  glibcRequirements,
+  configurationFiles,
+  nativePackages,
+};
+if (require.main === module)
+  packagePayload(path.resolve(process.argv[2]), process.argv[3]);

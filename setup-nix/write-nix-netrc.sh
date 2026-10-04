@@ -86,10 +86,10 @@ EXTRA_SUBSTITUTERS="${EXTRA_SUBSTITUTERS-}"
 NETRC_PATH="${NETRC_PATH:-${HOME}/.config/nix/netrc}"
 
 die() { # <exit-code> <message...>
-	local rc="$1"
-	shift
-	echo "$ME: $*" >&2
-	exit "$rc"
+  local rc="$1"
+  shift
+  echo "$ME: $*" >&2
+  exit "$rc"
 }
 
 [ -n "$GH_TOKEN" ] || die 2 "GH_TOKEN is empty. nix fetches every private flake input in this org through this file; writing it without the github.com credential would unauthenticate all of them."
@@ -109,37 +109,37 @@ die() { # <exit-code> <message...>
 # the missing-credential defect this script exists to fix.
 # ---------------------------------------------------------------------------
 attic_host_of() { # <url>
-	local u="$1" authority
+  local u="$1" authority
 
-	case "$u" in
-	*://*) ;;
-	*) die 1 "attic-endpoint must be an absolute URL with a scheme (e.g. https://cache.example.com/); got '$u'. Without one, whether the text is a host or a path is a guess." ;;
-	esac
+  case "$u" in
+  *://*) ;;
+  *) die 1 "attic-endpoint must be an absolute URL with a scheme (e.g. https://cache.example.com/); got '$u'. Without one, whether the text is a host or a path is a guess." ;;
+  esac
 
-	authority="${u#*://}"
-	authority="${authority%%/*}" # path
-	authority="${authority%%\?*}" # query, if an endpoint ever carries one
-	authority="${authority%%#*}"  # fragment, likewise
-	authority="${authority##*@}"  # userinfo
+  authority="${u#*://}"
+  authority="${authority%%/*}" # path
+  authority="${authority%%\?*}" # query, if an endpoint ever carries one
+  authority="${authority%%#*}"  # fragment, likewise
+  authority="${authority##*@}"  # userinfo
 
-	case "$authority" in
-	"["*)
-		die 1 "attic-endpoint '$u' names an IPv6 literal. curl and netrc disagree about whether the brackets belong in a 'machine' name, and filing this credential under the wrong spelling would be silently indistinguishable from not filing it at all. Give the cache a DNS name."
-		;;
-	esac
+  case "$authority" in
+  "["*)
+    die 1 "attic-endpoint '$u' names an IPv6 literal. curl and netrc disagree about whether the brackets belong in a 'machine' name, and filing this credential under the wrong spelling would be silently indistinguishable from not filing it at all. Give the cache a DNS name."
+    ;;
+  esac
 
-	authority="${authority%%:*}" # port
+  authority="${authority%%:*}" # port
 
-	case "$authority" in
-	"") die 1 "attic-endpoint '$u' has no host component." ;;
-	esac
-	case "$authority" in
-	*[!0-9A-Za-z._-]*)
-		die 1 "the host of attic-endpoint '$u' contains a character that is not [0-9A-Za-z._-]. netrc is whitespace-separated and has no quoting, so such a name cannot be written as a 'machine' token."
-		;;
-	esac
+  case "$authority" in
+  "") die 1 "attic-endpoint '$u' has no host component." ;;
+  esac
+  case "$authority" in
+  *[!0-9A-Za-z._-]*)
+    die 1 "the host of attic-endpoint '$u' contains a character that is not [0-9A-Za-z._-]. netrc is whitespace-separated and has no quoting, so such a name cannot be written as a 'machine' token."
+    ;;
+  esac
 
-	ATTIC_HOST="$authority"
+  ATTIC_HOST="$authority"
 }
 
 # ---------------------------------------------------------------------------
@@ -171,29 +171,29 @@ printf 'machine github.com login x-access-token password %s\n' "$GH_TOKEN" >"$NE
 HOSTS="github.com"
 
 if [ -n "$ATTIC_TOKEN" ]; then
-	case "$ATTIC_TOKEN" in
-	*[[:space:]]*)
-		# Deliberately never echoes the value. The overwhelmingly likely cause
-		# is a trailing newline in the stored secret, and silently trimming a
-		# credential is worse than refusing it: it would write a DIFFERENT
-		# token than the one the owner set and report success.
-		die 1 "attic-token contains whitespace. netrc has no quoting, so the password token ends at the first space and the entry would carry a truncated credential. Re-add the secret without a trailing newline."
-		;;
-	esac
+  case "$ATTIC_TOKEN" in
+  *[[:space:]]*)
+    # Deliberately never echoes the value. The overwhelmingly likely cause
+    # is a trailing newline in the stored secret, and silently trimming a
+    # credential is worse than refusing it: it would write a DIFFERENT
+    # token than the one the owner set and report success.
+    die 1 "attic-token contains whitespace. netrc has no quoting, so the password token ends at the first space and the entry would carry a truncated credential. Re-add the secret without a trailing newline."
+    ;;
+  esac
 
-	[ -n "$ATTIC_ENDPOINT" ] || die 1 "attic-token was supplied but attic-endpoint is empty, so there is no host to file the credential under. nix would go on reading the private cache anonymously, which is the exact defect this entry exists to fix."
+  [ -n "$ATTIC_ENDPOINT" ] || die 1 "attic-token was supplied but attic-endpoint is empty, so there is no host to file the credential under. nix would go on reading the private cache anonymously, which is the exact defect this entry exists to fix."
 
-	attic_host_of "$ATTIC_ENDPOINT"
+  attic_host_of "$ATTIC_ENDPOINT"
 
-	# `machine github.com` above is a separate entry and keeps its own
-	# credential: netrc entries do not inherit from one another, so the GitHub
-	# token is never presented to the cache and the cache token is never
-	# presented to github.com. The suite observes both directions on the wire.
-	#
-	# No `login`: `attic use` writes none, and curl sends Basic auth with an
-	# empty username, which is what the Attic server expects.
-	printf 'machine %s password %s\n' "$ATTIC_HOST" "$ATTIC_TOKEN" >>"$NETRC_TMP"
-	HOSTS="$HOSTS, $ATTIC_HOST"
+  # `machine github.com` above is a separate entry and keeps its own
+  # credential: netrc entries do not inherit from one another, so the GitHub
+  # token is never presented to the cache and the cache token is never
+  # presented to github.com. The suite observes both directions on the wire.
+  #
+  # No `login`: `attic use` writes none, and curl sends Basic auth with an
+  # empty username, which is what the Attic server expects.
+  printf 'machine %s password %s\n' "$ATTIC_HOST" "$ATTIC_TOKEN" >>"$NETRC_TMP"
+  HOSTS="$HOSTS, $ATTIC_HOST"
 fi
 
 mv -f "$NETRC_TMP" "$NETRC_PATH" || die 2 "cannot install $NETRC_PATH"
@@ -202,9 +202,9 @@ trap - EXIT
 echo "$ME: wrote $NETRC_PATH with credentials for: $HOSTS"
 
 if [ -z "$ATTIC_TOKEN" ] && [ -n "$EXTRA_SUBSTITUTERS" ]; then
-	# Named, not warned. This is true in the majority of jobs in this org today
-	# and an annotation on every one of them would be noise; a line in the log
-	# of the job that pays for it is what was missing when a fleet-wide
-	# source-build cascade had to be diagnosed from crate fetch errors.
-	echo "$ME: NOTE: extra substituter(s) were declared ($EXTRA_SUBSTITUTERS) but no attic-token was supplied, so nix will read them ANONYMOUSLY. A private cache answers 401 to that, and nix then disables it and builds from source. Pass attic-token (and attic-cache) to make the cache readable."
+  # Named, not warned. This is true in the majority of jobs in this org today
+  # and an annotation on every one of them would be noise; a line in the log
+  # of the job that pays for it is what was missing when a fleet-wide
+  # source-build cascade had to be diagnosed from crate fetch errors.
+  echo "$ME: NOTE: extra substituter(s) were declared ($EXTRA_SUBSTITUTERS) but no attic-token was supplied, so nix will read them ANONYMOUSLY. A private cache answers 401 to that, and nix then disables it and builds from source. Pass attic-token (and attic-cache) to make the cache readable."
 fi

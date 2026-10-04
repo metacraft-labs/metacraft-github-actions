@@ -132,8 +132,8 @@ jobs:
           original = source[start:end]
           mutated = original
           for live, cached in [('uint64(c_getpid())', 'currentPid()'),
-                               ('uint64(c_getppid())', 'currentPpid()'),
-                               ('uint64(c_gettid())', 'currentThreadId()')]:
+                                ('uint64(c_getppid())', 'currentPpid()'),
+                                ('uint64(c_gettid())', 'currentThreadId()')]:
               assert mutated.count(live) == 1
               mutated = mutated.replace(live, cached)
           path.write_text(source[:start] + mutated + source[end:])
@@ -788,7 +788,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   io-mon-repro-dlopen:
     if: inputs.product == 'io-mon' && inputs.checks == 'io-mon-repro-dlopen'
     runs-on: ubuntu-24.04
@@ -865,7 +864,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   gosti-repro-shutdown:
     if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-shutdown'
     runs-on: ubuntu-24.04-arm
@@ -934,7 +932,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-
   runquota-linux-arm-bootstrap:
     if: inputs.product == 'runquota' && inputs.checks == 'runquota-linux-arm-bootstrap'
     # Supplemental diagnosis of the source-closure issue. Normal CI stays required.
@@ -998,7 +995,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
-
 
   gosti-repro-concurrency:
     if: inputs.product == 'gosti' && inputs.checks == 'gosti-repro-concurrency'
@@ -1185,7 +1181,6 @@ jobs:
           path: test-logs/repro-frame/
           if-no-files-found: warn
           retention-days: 14
-
 
   windows-thread-snapshots:
     if: inputs.checks == 'windows-thread-snapshots'

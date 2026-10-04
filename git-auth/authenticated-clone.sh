@@ -57,54 +57,54 @@ COMMIT_GITMODULES=0
 URL_BASE="${GIT_AUTH_URL_BASE:-https://github.com/}"
 
 while [ $# -gt 0 ]; do
-	case "$1" in
-	--repo)
-		REPO="$2"
-		shift 2
-		;;
-	--dest)
-		DEST="$2"
-		shift 2
-		;;
-	--rev)
-		REV="$2"
-		shift 2
-		;;
-	--url-base)
-		URL_BASE="$2"
-		shift 2
-		;;
-	--shallow)
-		SHALLOW=1
-		shift
-		;;
-	--submodules)
-		SUBMODULES=1
-		shift
-		;;
-	--submodules-optional)
-		SUBMODULES=1
-		SUBMODULES_OPTIONAL=1
-		shift
-		;;
-	--commit-https-gitmodules)
-		COMMIT_GITMODULES=1
-		shift
-		;;
-	*)
-		echo "authenticated-clone: unknown argument '$1'" >&2
-		exit 2
-		;;
-	esac
+  case "$1" in
+  --repo)
+    REPO="$2"
+    shift 2
+    ;;
+  --dest)
+    DEST="$2"
+    shift 2
+    ;;
+  --rev)
+    REV="$2"
+    shift 2
+    ;;
+  --url-base)
+    URL_BASE="$2"
+    shift 2
+    ;;
+  --shallow)
+    SHALLOW=1
+    shift
+    ;;
+  --submodules)
+    SUBMODULES=1
+    shift
+    ;;
+  --submodules-optional)
+    SUBMODULES=1
+    SUBMODULES_OPTIONAL=1
+    shift
+    ;;
+  --commit-https-gitmodules)
+    COMMIT_GITMODULES=1
+    shift
+    ;;
+  *)
+    echo "authenticated-clone: unknown argument '$1'" >&2
+    exit 2
+    ;;
+  esac
 done
 
 [ -n "$REPO" ] || {
-	echo "authenticated-clone: --repo is required" >&2
-	exit 2
+  echo "authenticated-clone: --repo is required" >&2
+  exit 2
 }
 [ -n "$DEST" ] || {
-	echo "authenticated-clone: --dest is required" >&2
-	exit 2
+  echo "authenticated-clone: --dest is required" >&2
+  exit 2
 }
 
 OWNER="${REPO%%/*}"
@@ -117,11 +117,11 @@ URL="${URL_BASE}${REPO}.git"
 # printing the token into a public Actions log is not an acceptable way to find
 # out.
 scrub() {
-	local text="$1"
-	if [ -n "${GH_TOKEN:-}" ]; then
-		text="${text//${GH_TOKEN}/\*\*\*}"
-	fi
-	printf '%s' "$text"
+  local text="$1"
+  if [ -n "${GH_TOKEN:-}" ]; then
+    text="${text//${GH_TOKEN}/\*\*\*}"
+  fi
+  printf '%s' "$text"
 }
 
 # `run_git <describe> <args...>` -- run git quietly, and on failure print what
@@ -133,23 +133,23 @@ scrub() {
 # credential the auth-denied case is reachable by a plain configuration
 # mismatch, so it has to be the loudest thing in the log, not the quietest.
 run_git() {
-	local what="$1"
-	shift
-	local out rc=0
-	out="$(git "$@" 2>&1)" || rc=$?
-	if [ "$rc" -ne 0 ]; then
-		echo "::error::${what} failed for ${REPO} (git exit ${rc})." >&2
-		echo "--- git output ---" >&2
-		scrub "$out" >&2
-		printf '\n------------------\n' >&2
-		if [ -z "${GH_TOKEN:-}" ]; then
-			echo "No token was supplied to this action, so only public repositories can be cloned. If ${REPO} is private, pass 'gh-token'." >&2
-		else
-			echo "A token WAS supplied. It is installed as an owner-scoped 'http.<url>.extraHeader', so it authenticates ${URL_BASE}<owner>/ for the owners in 'token-owner' and nothing else. If ${OWNER} is not one of them, GitHub answers 404 for a private repository -- indistinguishable from a wrong name. Check that '${OWNER}' is covered." >&2
-		fi
-		return "$rc"
-	fi
-	return 0
+  local what="$1"
+  shift
+  local out rc=0
+  out="$(git "$@" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "::error::${what} failed for ${REPO} (git exit ${rc})." >&2
+    echo "--- git output ---" >&2
+    scrub "$out" >&2
+    printf '\n------------------\n' >&2
+    if [ -z "${GH_TOKEN:-}" ]; then
+      echo "No token was supplied to this action, so only public repositories can be cloned. If ${REPO} is private, pass 'gh-token'." >&2
+    else
+      echo "A token WAS supplied. It is installed as an owner-scoped 'http.<url>.extraHeader', so it authenticates ${URL_BASE}<owner>/ for the owners in 'token-owner' and nothing else. If ${OWNER} is not one of them, GitHub answers 404 for a private repository -- indistinguishable from a wrong name. Check that '${OWNER}' is covered." >&2
+    fi
+    return "$rc"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -221,21 +221,21 @@ run_git() {
 # git applies the pairs in order and the last value of a single-valued key wins,
 # so an inherited `core.longpaths=false` cannot defeat it.
 git_longpaths_export() {
-	local n="${GIT_CONFIG_COUNT:-0}" j kn vn last=""
-	for ((j = 0; j < n; j++)); do
-		kn="GIT_CONFIG_KEY_${j}"
-		vn="GIT_CONFIG_VALUE_${j}"
-		if [ "${!kn-}" = "core.longpaths" ]; then
-			last="${!vn-}"
-		fi
-	done
-	# Already in force: adding a second identical pair would be a no-op that
-	# grows the environment on every nested invocation.
-	[ "$last" = "true" ] && return 0
-	printf -v "GIT_CONFIG_KEY_${n}" '%s' "core.longpaths"
-	printf -v "GIT_CONFIG_VALUE_${n}" '%s' "true"
-	export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
-	export GIT_CONFIG_COUNT="$((n + 1))"
+  local n="${GIT_CONFIG_COUNT:-0}" j kn vn last=""
+  for ((j = 0; j < n; j++)); do
+    kn="GIT_CONFIG_KEY_${j}"
+    vn="GIT_CONFIG_VALUE_${j}"
+    if [ "${!kn-}" = "core.longpaths" ]; then
+      last="${!vn-}"
+    fi
+  done
+  # Already in force: adding a second identical pair would be a no-op that
+  # grows the environment on every nested invocation.
+  [ "$last" = "true" ] && return 0
+  printf -v "GIT_CONFIG_KEY_${n}" '%s' "core.longpaths"
+  printf -v "GIT_CONFIG_VALUE_${n}" '%s' "true"
+  export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
+  export GIT_CONFIG_COUNT="$((n + 1))"
 }
 
 git_longpaths_export
@@ -243,87 +243,87 @@ git_longpaths_export
 rm -rf "$DEST"
 
 if [ "$SHALLOW" = 1 ] && [ -n "$REV" ]; then
-	# `--shallow` WITH A PINNED REVISION: fetch that revision and nothing else.
-	#
-	# WHAT THIS REPLACED, AND WHY IT WAS NOT SHALLOW. The previous shape was
-	#
-	#     git clone --no-checkout <url> <dest>
-	#     git -C <dest> fetch --depth 1 origin <rev>
-	#
-	# under a comment claiming it was economical because `clone-siblings` only
-	# ever wants one revision. It is not. `--no-checkout` suppresses the WORKING
-	# TREE, not the transfer: that clone carries no `--depth`, no `--filter` and
-	# no `--single-branch`, so it downloads the complete object graph and every
-	# branch. The `--depth 1` then applies to a FETCH, which ADDS objects and
-	# subtracts none -- it arrives after the whole repository is already on disk.
-	# So the pair paid for all of history and then threw it away: the `--depth 1`
-	# fetch writes a `.git/shallow` grafting HEAD at <rev>, after which
-	# `rev-list --count HEAD` is 1 and `describe` fails. The history was bought
-	# and then made unreachable in the same breath.
-	#
-	# `git init` + a depth-1 fetch of the exact revision transfers only what the
-	# checkout needs. Measured over the real network against this org's own
-	# repositories, the saving is real but strongly repo-shaped -- from about
-	# nothing on a repo with almost no history, through ~1.7x on `isonim`, to
-	# ~16x on one with a long history of small edits. No single headline ratio
-	# would be honest, so the suite asserts the PROPERTY (history that the pinned
-	# revision does not reach is not transferred) rather than a number, and
-	# asserts separately that the resulting tree is byte-identical.
-	#
-	# WHAT A CONSUMER CAN SEE IS UNCHANGED, which is what makes this safe to do
-	# org-wide. The old shape already left a depth-1 `.git/shallow`, no tags and
-	# an unwalkable history, so nothing that works today stops working: a build
-	# that could not run `git describe` in the sibling before still cannot, and
-	# one that only reads the checked-out tree sees the same bytes. The one
-	# genuine difference is that no `origin/<other-branch>` remote-tracking refs
-	# are created, because they were never reachable from the pinned revision and
-	# nothing in this org's dev-env setup reads them.
-	#
-	# WHY THE FALLBACK IS NOT OPTIONAL. Asking a server for an object by SHA is a
-	# capability, not a guarantee: it needs protocol v2, or v0 plus
-	# `uploadpack.allow*SHA1InWant`. github.com has it; a server that does not is
-	# not an error condition, it is an older server. This is the same
-	# graceful-degradation shape `publish-workspace-lock` already uses for its
-	# partial clone -- try the economical form, and on refusal retry the whole
-	# form rather than fail. The first attempt is therefore deliberately QUIET:
-	# a routine degradation must not print `::error::`. A genuine failure (a
-	# private repo the credential does not cover, a revision that does not exist)
-	# still reaches the loud `run_git` diagnostic below, because the fallback
-	# hits the same wall and reports it.
-	#
-	# The fallback does NOT repeat the old `fetch --depth 1`. A server that
-	# refused the direct want will refuse it again, and it is pointless anyway:
-	# the clone has already brought the object down, so the revision is checked
-	# out from what is on disk. That also makes the fallback strictly more
-	# capable than the shape it replaces, which failed outright in exactly this
-	# case despite holding every object it needed.
-	SHALLOW_FETCH_OK=0
-	if git init --quiet "$DEST" >/dev/null 2>&1 &&
-		git -C "$DEST" remote add origin "$URL" >/dev/null 2>&1 &&
-		git -C "$DEST" fetch --quiet --depth 1 origin "$REV" >/dev/null 2>&1; then
-		SHALLOW_FETCH_OK=1
-	fi
-	if [ "$SHALLOW_FETCH_OK" = 1 ]; then
-		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach FETCH_HEAD || exit 1
-	else
-		echo "Fetching ${REV} directly from ${REPO} was refused; falling back to a whole-repository clone. This is slower, not broken." >&2
-		rm -rf "$DEST"
-		run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
-		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach "$REV" || exit 1
-	fi
+  # `--shallow` WITH A PINNED REVISION: fetch that revision and nothing else.
+  #
+  # WHAT THIS REPLACED, AND WHY IT WAS NOT SHALLOW. The previous shape was
+  #
+  #     git clone --no-checkout <url> <dest>
+  #     git -C <dest> fetch --depth 1 origin <rev>
+  #
+  # under a comment claiming it was economical because `clone-siblings` only
+  # ever wants one revision. It is not. `--no-checkout` suppresses the WORKING
+  # TREE, not the transfer: that clone carries no `--depth`, no `--filter` and
+  # no `--single-branch`, so it downloads the complete object graph and every
+  # branch. The `--depth 1` then applies to a FETCH, which ADDS objects and
+  # subtracts none -- it arrives after the whole repository is already on disk.
+  # So the pair paid for all of history and then threw it away: the `--depth 1`
+  # fetch writes a `.git/shallow` grafting HEAD at <rev>, after which
+  # `rev-list --count HEAD` is 1 and `describe` fails. The history was bought
+  # and then made unreachable in the same breath.
+  #
+  # `git init` + a depth-1 fetch of the exact revision transfers only what the
+  # checkout needs. Measured over the real network against this org's own
+  # repositories, the saving is real but strongly repo-shaped -- from about
+  # nothing on a repo with almost no history, through ~1.7x on `isonim`, to
+  # ~16x on one with a long history of small edits. No single headline ratio
+  # would be honest, so the suite asserts the PROPERTY (history that the pinned
+  # revision does not reach is not transferred) rather than a number, and
+  # asserts separately that the resulting tree is byte-identical.
+  #
+  # WHAT A CONSUMER CAN SEE IS UNCHANGED, which is what makes this safe to do
+  # org-wide. The old shape already left a depth-1 `.git/shallow`, no tags and
+  # an unwalkable history, so nothing that works today stops working: a build
+  # that could not run `git describe` in the sibling before still cannot, and
+  # one that only reads the checked-out tree sees the same bytes. The one
+  # genuine difference is that no `origin/<other-branch>` remote-tracking refs
+  # are created, because they were never reachable from the pinned revision and
+  # nothing in this org's dev-env setup reads them.
+  #
+  # WHY THE FALLBACK IS NOT OPTIONAL. Asking a server for an object by SHA is a
+  # capability, not a guarantee: it needs protocol v2, or v0 plus
+  # `uploadpack.allow*SHA1InWant`. github.com has it; a server that does not is
+  # not an error condition, it is an older server. This is the same
+  # graceful-degradation shape `publish-workspace-lock` already uses for its
+  # partial clone -- try the economical form, and on refusal retry the whole
+  # form rather than fail. The first attempt is therefore deliberately QUIET:
+  # a routine degradation must not print `::error::`. A genuine failure (a
+  # private repo the credential does not cover, a revision that does not exist)
+  # still reaches the loud `run_git` diagnostic below, because the fallback
+  # hits the same wall and reports it.
+  #
+  # The fallback does NOT repeat the old `fetch --depth 1`. A server that
+  # refused the direct want will refuse it again, and it is pointless anyway:
+  # the clone has already brought the object down, so the revision is checked
+  # out from what is on disk. That also makes the fallback strictly more
+  # capable than the shape it replaces, which failed outright in exactly this
+  # case despite holding every object it needed.
+  SHALLOW_FETCH_OK=0
+  if git init --quiet "$DEST" >/dev/null 2>&1 &&
+    git -C "$DEST" remote add origin "$URL" >/dev/null 2>&1 &&
+    git -C "$DEST" fetch --quiet --depth 1 origin "$REV" >/dev/null 2>&1; then
+    SHALLOW_FETCH_OK=1
+  fi
+  if [ "$SHALLOW_FETCH_OK" = 1 ]; then
+    run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach FETCH_HEAD || exit 1
+  else
+    echo "Fetching ${REV} directly from ${REPO} was refused; falling back to a whole-repository clone. This is slower, not broken." >&2
+    rm -rf "$DEST"
+    run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
+    run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach "$REV" || exit 1
+  fi
 elif [ "$SHALLOW" = 1 ]; then
-	# `--shallow` with no revision. There is nothing to be economical ABOUT: no
-	# revision means no `--depth` target, and this branch is preserved exactly as
-	# it was rather than improved, because no caller reaches it -- `clone-repo`
-	# never passes `--shallow`, and `clone-siblings` fails the job before PASS 2
-	# when a sibling resolves to no revision (`clone-siblings.sh`, the MISSING
-	# check). Changing an unreachable branch is a change nothing can test.
-	run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
+  # `--shallow` with no revision. There is nothing to be economical ABOUT: no
+  # revision means no `--depth` target, and this branch is preserved exactly as
+  # it was rather than improved, because no caller reaches it -- `clone-repo`
+  # never passes `--shallow`, and `clone-siblings` fails the job before PASS 2
+  # when a sibling resolves to no revision (`clone-siblings.sh`, the MISSING
+  # check). Changing an unreachable branch is a change nothing can test.
+  run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
 else
-	run_git "clone" clone --quiet "$URL" "$DEST" || exit 1
-	if [ -n "$REV" ]; then
-		run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet "$REV" || exit 1
-	fi
+  run_git "clone" clone --quiet "$URL" "$DEST" || exit 1
+  if [ -n "$REV" ]; then
+    run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet "$REV" || exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -348,47 +348,47 @@ fi
 # `.gitmodules` is a credential in a git object, which is the one place a later
 # `git push` or a packed artifact carries it off the machine.
 if [ "$COMMIT_GITMODULES" = 1 ] && [ -f "$DEST/.gitmodules" ]; then
-	gm="$(<"$DEST/.gitmodules")"
-	# The rewrite target is $URL_BASE, not a literal, for the same reason the
-	# clone URL is: it is the one https base this run is talking to. In
-	# production it IS `https://github.com/`; in the contract suite it is the
-	# suite's own server, which is what lets the suite check that the rewritten
-	# file is actually fetchable rather than merely differently spelled.
-	gm="${gm//git@github.com:/${URL_BASE}}"
-	gm="${gm//ssh:\/\/git@github.com\//${URL_BASE}}"
-	case "$gm" in
-	*x-access-token* | *://*:*@*)
-		echo "::error::refusing to commit .gitmodules for ${REPO}: it carries a credential. This is the invariant this action exists to keep; nothing is committed." >&2
-		exit 1
-		;;
-	esac
-	printf '%s\n' "$gm" >"$DEST/.gitmodules"
-	run_git "staging .gitmodules" -C "$DEST" add .gitmodules || exit 1
-	# `|| true`: an unchanged .gitmodules makes `commit` exit 1 with "nothing to
-	# commit", which is the common case and not a failure.
-	git -C "$DEST" -c user.name="CI" -c user.email="ci@local" commit --quiet \
-		--no-gpg-sign -m "CI: rewrite submodule URLs to HTTPS" >/dev/null 2>&1 || true
+  gm="$(<"$DEST/.gitmodules")"
+  # The rewrite target is $URL_BASE, not a literal, for the same reason the
+  # clone URL is: it is the one https base this run is talking to. In
+  # production it IS `https://github.com/`; in the contract suite it is the
+  # suite's own server, which is what lets the suite check that the rewritten
+  # file is actually fetchable rather than merely differently spelled.
+  gm="${gm//git@github.com:/${URL_BASE}}"
+  gm="${gm//ssh:\/\/git@github.com\//${URL_BASE}}"
+  case "$gm" in
+  *x-access-token* | *://*:*@*)
+    echo "::error::refusing to commit .gitmodules for ${REPO}: it carries a credential. This is the invariant this action exists to keep; nothing is committed." >&2
+    exit 1
+    ;;
+  esac
+  printf '%s\n' "$gm" >"$DEST/.gitmodules"
+  run_git "staging .gitmodules" -C "$DEST" add .gitmodules || exit 1
+  # `|| true`: an unchanged .gitmodules makes `commit` exit 1 with "nothing to
+  # commit", which is the common case and not a failure.
+  git -C "$DEST" -c user.name="CI" -c user.email="ci@local" commit --quiet \
+    --no-gpg-sign -m "CI: rewrite submodule URLs to HTTPS" >/dev/null 2>&1 || true
 fi
 
 # ---------------------------------------------------------------------------
 # Submodules, at every depth, on the inherited scoped credential.
 # ---------------------------------------------------------------------------
 if [ "$SUBMODULES" = 1 ]; then
-	# `--submodules-optional` preserves `clone-siblings`' long-standing
-	# tolerance here (its `submodule update` ended in `|| true`). What it does
-	# NOT preserve is the silence: the same line also sent stderr to /dev/null,
-	# so a sibling whose private submodule failed to authenticate produced an
-	# empty directory and not one word about it, and the job failed later
-	# somewhere unrelated. Changing tolerance into a hard failure org-wide is a
-	# separate decision from removing a credential from disk, so this change
-	# only makes the failure visible.
-	if ! run_git "submodule update" -C "$DEST" submodule update --init --recursive --quiet; then
-		if [ "$SUBMODULES_OPTIONAL" = 1 ]; then
-			echo "::warning::submodules of ${REPO} could not be updated; continuing with them missing. If a build later fails on an empty submodule directory, this is why." >&2
-		else
-			exit 1
-		fi
-	fi
+  # `--submodules-optional` preserves `clone-siblings`' long-standing
+  # tolerance here (its `submodule update` ended in `|| true`). What it does
+  # NOT preserve is the silence: the same line also sent stderr to /dev/null,
+  # so a sibling whose private submodule failed to authenticate produced an
+  # empty directory and not one word about it, and the job failed later
+  # somewhere unrelated. Changing tolerance into a hard failure org-wide is a
+  # separate decision from removing a credential from disk, so this change
+  # only makes the failure visible.
+  if ! run_git "submodule update" -C "$DEST" submodule update --init --recursive --quiet; then
+    if [ "$SUBMODULES_OPTIONAL" = 1 ]; then
+      echo "::warning::submodules of ${REPO} could not be updated; continuing with them missing. If a build later fails on an empty submodule directory, this is why." >&2
+    else
+      exit 1
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -403,32 +403,32 @@ fi
 CRED_FILES=""
 
 check_file() {
-	[ -f "$1" ] || return 0
-	local content
-	content="$(<"$1")"
-	case "$content" in
-	*x-access-token*) CRED_FILES="${CRED_FILES} $1" ;;
-	esac
-	if [ -n "${GH_TOKEN:-}" ]; then
-		case "$content" in
-		*"${GH_TOKEN}"*) CRED_FILES="${CRED_FILES} $1" ;;
-		esac
-	fi
+  [ -f "$1" ] || return 0
+  local content
+  content="$(<"$1")"
+  case "$content" in
+  *x-access-token*) CRED_FILES="${CRED_FILES} $1" ;;
+  esac
+  if [ -n "${GH_TOKEN:-}" ]; then
+    case "$content" in
+    *"${GH_TOKEN}"*) CRED_FILES="${CRED_FILES} $1" ;;
+    esac
+  fi
 }
 
 # Pure-bash recursive walk: `find` is not assumed present, and bash 3.2 has no
 # globstar.
 walk_configs() {
-	local d="$1" e
-	[ -d "$d" ] || return 0
-	for e in "$d"/*; do
-		[ -e "$e" ] || continue
-		if [ -d "$e" ]; then
-			walk_configs "$e"
-		elif [ "${e##*/}" = "config" ]; then
-			check_file "$e"
-		fi
-	done
+  local d="$1" e
+  [ -d "$d" ] || return 0
+  for e in "$d"/*; do
+    [ -e "$e" ] || continue
+    if [ -d "$e" ]; then
+      walk_configs "$e"
+    elif [ "${e##*/}" = "config" ]; then
+      check_file "$e"
+    fi
+  done
 }
 
 check_file "$DEST/.gitmodules"
@@ -436,9 +436,9 @@ check_file "$DEST/.git/config"
 walk_configs "$DEST/.git/modules"
 
 if [ -n "$CRED_FILES" ]; then
-	echo "::error::authenticated-clone wrote a credential to disk in ${DEST}. This must never happen; the clone has been removed. Offending file(s):${CRED_FILES}" >&2
-	rm -rf "$DEST"
-	exit 1
+  echo "::error::authenticated-clone wrote a credential to disk in ${DEST}. This must never happen; the clone has been removed. Offending file(s):${CRED_FILES}" >&2
+  rm -rf "$DEST"
+  exit 1
 fi
 
 exit 0

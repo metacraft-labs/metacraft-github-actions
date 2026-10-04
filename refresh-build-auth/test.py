@@ -54,7 +54,7 @@ for isolated_path in [False, True]:
 
         assert nix_settings(environment)["access-tokens"]["value"]["github.com"] == "old-fixture-token"
         subprocess.run(["bash", str(root / "refresh.sh")], env=environment,
-                       check=True, capture_output=True, text=True)
+                        check=True, capture_output=True, text=True)
         lines = iter(environment_file.read_text().splitlines())
         for line in lines:
             if "<<" in line:
@@ -76,11 +76,11 @@ for isolated_path in [False, True]:
         assert effective["http-connections"]["value"] == 7
         command = ["git", "config", "--get-urlmatch", "http.extraHeader"]
         header = subprocess.check_output(command + ["https://github.com/metacraft-labs/runquota"],
-                                         env=environment, cwd=temporary, text=True).strip()
+                                          env=environment, cwd=temporary, text=True).strip()
         expected = base64.b64encode(b"x-access-token:fresh-fixture-token").decode()
         assert header == "AUTHORIZATION: basic " + expected
         third_party = subprocess.run(command + ["https://github.com/NixOS/nixpkgs"],
-                                     env=environment, cwd=temporary, capture_output=True)
+                                      env=environment, cwd=temporary, capture_output=True)
         assert third_party.returncode == 1 and not third_party.stdout
         assert empty.read_text() == ""
 print("Real Git and Nix use fresh credentials; other settings and scopes survive")

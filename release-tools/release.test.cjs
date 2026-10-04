@@ -1,220 +1,432 @@
 // No mocks. These checks create real release directories and exercise transfer
 // verification with missing, unexpected, corrupt and non-regular artifacts.
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const {seal, assemble, verifyDirectory, digest, plan} = require('./release.cjs');
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const {
+  seal,
+  assemble,
+  verifyDirectory,
+  digest,
+  plan,
+} = require("./release.cjs");
 function fixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-gate-'));
-  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
-  for (const n of ['linux.tar.gz', 'windows.zip']) fs.writeFileSync(path.join(dir, n), `payload ${n}`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-gate-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const n of ["linux.tar.gz", "windows.zip"])
+    fs.writeFileSync(path.join(dir, n), `payload ${n}`);
   return dir;
 }
-const expected = ['linux.tar.gz', 'windows.zip'];
-test('configuration inputs reject escaped, duplicate and non-file destinations', t => {
-  const {configurationFiles} = require('./payload.cjs');
+const expected = ["linux.tar.gz", "windows.zip"];
+test("configuration inputs reject escaped, duplicate and non-file destinations", (t) => {
+  const { configurationFiles } = require("./payload.cjs");
   const root = fixture(t);
   const source = path.join(root, expected[0]);
-  const entry = {source, destination: '/etc/example/config.toml'};
-  assert.deepEqual(configurationFiles({configurationFiles: [entry]}), [entry]);
+  const entry = { source, destination: "/etc/example/config.toml" };
+  assert.deepEqual(configurationFiles({ configurationFiles: [entry] }), [
+    entry,
+  ]);
   assert.deepEqual(configurationFiles({}), []);
-  for (const destination of ['/usr/example', '/etc/../tmp/config', '/etc//example', '/etc/example/', '/etc/%macro', '/etc/a b']) {
-    assert.throws(() => configurationFiles({configurationFiles: [{source, destination}]}));
+  for (const destination of [
+    "/usr/example",
+    "/etc/../tmp/config",
+    "/etc//example",
+    "/etc/example/",
+    "/etc/%macro",
+    "/etc/a b",
+  ]) {
+    assert.throws(() =>
+      configurationFiles({ configurationFiles: [{ source, destination }] }),
+    );
   }
-  assert.throws(() => configurationFiles({configurationFiles: [entry, entry]}), /duplicate/);
-  assert.throws(() => configurationFiles({configurationFiles: [{...entry, source: root}]}), /regular file/);
-  assert.throws(() => configurationFiles({configurationFiles: [{...entry, source: path.join(root, 'missing')}]}));
+  assert.throws(
+    () => configurationFiles({ configurationFiles: [entry, entry] }),
+    /duplicate/,
+  );
+  assert.throws(
+    () =>
+      configurationFiles({ configurationFiles: [{ ...entry, source: root }] }),
+    /regular file/,
+  );
+  assert.throws(() =>
+    configurationFiles({
+      configurationFiles: [{ ...entry, source: path.join(root, "missing") }],
+    }),
+  );
 });
-test('a shim providing GLIBC_2.34 does not require GLIBC_2.34', () => {
-  const {glibcRequirements} = require('./payload.cjs');
-  assert.deepEqual(glibcRequirements(`
+test("a shim providing GLIBC_2.34 does not require GLIBC_2.34", () => {
+  const { glibcRequirements } = require("./payload.cjs");
+  assert.deepEqual(
+    glibcRequirements(`
     12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND memcpy@GLIBC_2.14 (3)
     34: 0000000000001230 42 FUNC GLOBAL DEFAULT 12 dlsym@@GLIBC_2.34
     35: 0000000000000000 0 FUNC GLOBAL DEFAULT UND pthread_create@GLIBC_2.17 (5)
-  `), [[2, 14], [2, 17]]);
-  assert.deepEqual(glibcRequirements('12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND stat@GLIBC_2.33 (8)'), [[2, 33]]);
+  `),
+    [
+      [2, 14],
+      [2, 17],
+    ],
+  );
+  assert.deepEqual(
+    glibcRequirements(
+      "12: 0000000000000000 0 FUNC GLOBAL DEFAULT UND stat@GLIBC_2.33 (8)",
+    ),
+    [[2, 33]],
+  );
 });
-test('every shared runner job has an explicit timeout', () => {
-  const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/release-tools.yml'), 'utf8');
-  const jobs = workflow.split(/^  [a-z][a-z-]*:\s*$/m).slice(1).filter(s => /^    runs-on:/m.test(s));
+test("every shared runner job has an explicit timeout", () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, "../.github/workflows/release-tools.yml"),
+    "utf8",
+  );
+  const jobs = workflow
+    .split(/^  [a-z][a-z-]*:\s*$/m)
+    .slice(1)
+    .filter((s) => /^    runs-on:/m.test(s));
   assert(jobs.length >= 4);
   for (const job of jobs) {
     const timeout = job.match(/^    timeout-minutes: (\d+)$/m);
-    assert(timeout && +timeout[1] > 0 && +timeout[1] <= 120, 'unbounded release job');
+    assert(
+      timeout && +timeout[1] > 0 && +timeout[1] <= 120,
+      "unbounded release job",
+    );
   }
 });
-test('assembly checks transferred bytes and produces a sorted manifest', t => {
+test("assembly checks transferred bytes and produces a sorted manifest", (t) => {
   const dir = fixture(t);
   seal(dir, expected);
   assemble(dir, expected);
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['SHA256SUMS', ...expected]);
-  assert.equal(fs.readFileSync(path.join(dir, 'SHA256SUMS'), 'utf8'),
-    expected.map(n => `${digest(path.join(dir, n))}  ${n}\n`).join(''));
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["SHA256SUMS", ...expected]);
+  assert.equal(
+    fs.readFileSync(path.join(dir, "SHA256SUMS"), "utf8"),
+    expected.map((n) => `${digest(path.join(dir, n))}  ${n}\n`).join(""),
+  );
 });
 for (const [name, mutate] of [
-  ['missing payload', d => fs.unlinkSync(path.join(d, expected[0]))],
-  ['unexpected payload', d => fs.writeFileSync(path.join(d, 'debug.zip'), 'debug')],
-  ['corrupted payload', d => fs.appendFileSync(path.join(d, expected[0]), 'changed')],
-  ['missing checksum', d => fs.unlinkSync(path.join(d, expected[0] + '.sha256'))],
-  ['unexpected checksum', d => fs.writeFileSync(path.join(d, 'debug.sha256'), 'oops')],
-  ['empty payload', d => fs.writeFileSync(path.join(d, expected[0]), '')],
-  ['symlink payload', d => { fs.unlinkSync(path.join(d, expected[0])); fs.symlinkSync(expected[1], path.join(d, expected[0])); }],
-]) test(`rejects ${name} before assembly`, t => {
-  const dir = fixture(t);
-  seal(dir, expected);
-  mutate(dir);
-  assert.throws(() => assemble(dir, expected));
-  assert(!fs.existsSync(path.join(dir, 'SHA256SUMS')));
-});
-test('the target matrix has unique, safe asset names and an authoritative version', t => {
+  ["missing payload", (d) => fs.unlinkSync(path.join(d, expected[0]))],
+  [
+    "unexpected payload",
+    (d) => fs.writeFileSync(path.join(d, "debug.zip"), "debug"),
+  ],
+  [
+    "corrupted payload",
+    (d) => fs.appendFileSync(path.join(d, expected[0]), "changed"),
+  ],
+  [
+    "missing checksum",
+    (d) => fs.unlinkSync(path.join(d, expected[0] + ".sha256")),
+  ],
+  [
+    "unexpected checksum",
+    (d) => fs.writeFileSync(path.join(d, "debug.sha256"), "oops"),
+  ],
+  ["empty payload", (d) => fs.writeFileSync(path.join(d, expected[0]), "")],
+  [
+    "symlink payload",
+    (d) => {
+      fs.unlinkSync(path.join(d, expected[0]));
+      fs.symlinkSync(expected[1], path.join(d, expected[0]));
+    },
+  ],
+])
+  test(`rejects ${name} before assembly`, (t) => {
+    const dir = fixture(t);
+    seal(dir, expected);
+    mutate(dir);
+    assert.throws(() => assemble(dir, expected));
+    assert(!fs.existsSync(path.join(dir, "SHA256SUMS")));
+  });
+test("the target matrix has unique, safe asset names and an authoritative version", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const spec = {product: 'example', versionFile: 'version.txt', targets: [
-    {id: 'linux-x86_64', runner: ['self-hosted', 'linux', 'x64'], assets: ['{product}-{version}.tar.gz']},
-  ]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    targets: [
+      {
+        id: "linux-x86_64",
+        runner: ["self-hosted", "linux", "x64"],
+        assets: ["{product}-{version}.tar.gz"],
+      },
+    ],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
-  assert.deepEqual(plan(root).expected, ['example-0.1.0.tar.gz']);
-  spec.targets.push(spec.targets[0]); write();
+  assert.deepEqual(plan(root).expected, ["example-0.1.0.tar.gz"]);
+  spec.targets.push(spec.targets[0]);
+  write();
   assert.throws(() => plan(root), /duplicate/);
-  spec.targets.pop(); spec.targets[0].assets = ['../escape']; write();
+  spec.targets.pop();
+  spec.targets[0].assets = ["../escape"];
+  write();
   assert.throws(() => plan(root), /unsafe/);
 });
-test('MSI verification is derived from assets and cannot be disabled in metadata', t => {
+test("MSI verification is derived from assets and cannot be disabled in metadata", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const spec = {product: 'example', versionFile: 'version.txt', hasMsi: false, targets: [
-    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], assets: ['example.msi', 'example.zip']},
-  ]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    hasMsi: false,
+    targets: [
+      {
+        id: "windows-x86_64",
+        runner: ["self-hosted", "windows", "x64"],
+        assets: ["example.msi", "example.zip"],
+      },
+    ],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
   assert.equal(plan(root).hasMsi, true);
-  spec.targets[0].id = 'linux-x86_64'; write();
+  spec.targets[0].id = "linux-x86_64";
+  write();
   assert.throws(() => plan(root), /MSI requires a Windows target/);
-  spec.targets[0].assets = ['example.tar.gz']; write();
+  spec.targets[0].assets = ["example.tar.gz"];
+  write();
   assert.equal(plan(root).hasMsi, false);
 });
-test('unsigned publication requires an exception for the exact source version', t => {
+test("unsigned publication requires an exception for the exact source version", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const spec = {product: 'example', versionFile: 'version.txt', targets: [
-    {id: 'linux-x86_64', runner: ['self-hosted', 'linux', 'x64'], assets: ['example.tar.gz']},
-  ]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    targets: [
+      {
+        id: "linux-x86_64",
+        runner: ["self-hosted", "linux", "x64"],
+        assets: ["example.tar.gz"],
+      },
+    ],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
   assert.equal(plan(root).unsignedRelease, false);
-  spec.unsignedReleaseVersion = '0.1.0'; write();
+  spec.unsignedReleaseVersion = "0.1.0";
+  write();
   assert.equal(plan(root).unsignedRelease, true);
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.1\n');
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.1\n");
   assert.throws(() => plan(root), /exception does not cover this version/);
 });
-test('legacy routing is limited to the documented Linux ARM64 scale set', t => {
+test("legacy routing is limited to the documented Linux ARM64 scale set", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const target = {id: 'linux-aarch64', runner: 'eph-linux-arm64', assets: ['example.tar.gz']};
-  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const target = {
+    id: "linux-aarch64",
+    runner: "eph-linux-arm64",
+    assets: ["example.tar.gz"],
+  };
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    targets: [target],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
   assert.throws(() => plan(root), /routing needs a reason/);
-  target.runnerReason = 'Tart pool is deferred; use the live scale set'; write();
-  assert.equal(plan(root).matrix[0].runner, 'eph-linux-arm64');
-  target.runner = 'ubuntu-latest'; write();
-  assert.throws(() => plan(root), /self-hosted runner required/);
-  target.runner = 'ubuntu-24.04-arm'; write();
-  assert.throws(() => plan(root), /version-scoped migration/);
-  target.runnerMigration = {version: '0.1.0', owner: 'zah',
-    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-28-release-linux-arm64-runner-migration.md'};
+  target.runnerReason = "Tart pool is deferred; use the live scale set";
   write();
-  assert.equal(plan(root).matrix[0].runner, 'ubuntu-24.04-arm');
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.1\n');
+  assert.equal(plan(root).matrix[0].runner, "eph-linux-arm64");
+  target.runner = "ubuntu-latest";
+  write();
+  assert.throws(() => plan(root), /self-hosted runner required/);
+  target.runner = "ubuntu-24.04-arm";
+  write();
+  assert.throws(() => plan(root), /version-scoped migration/);
+  target.runnerMigration = {
+    version: "0.1.0",
+    owner: "zah",
+    followup:
+      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-28-release-linux-arm64-runner-migration.md",
+  };
+  write();
+  assert.equal(plan(root).matrix[0].runner, "ubuntu-24.04-arm");
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.1\n");
   assert.throws(() => plan(root), /version-scoped migration/);
 });
-test('the dedicated release lane accepts only Linux x64 and its exact scale-set name', t => {
+test("the dedicated release lane accepts only Linux x64 and its exact scale-set name", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const target = {id: 'linux-x86_64', runner: 'eph-linux-x64-release', assets: ['example.tar.gz']};
-  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const target = {
+    id: "linux-x86_64",
+    runner: "eph-linux-x64-release",
+    assets: ["example.tar.gz"],
+  };
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    targets: [target],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
-  assert.equal(plan(root).matrix[0].runner, 'eph-linux-x64-release');
-  target.id = 'linux-aarch64'; write();
+  assert.equal(plan(root).matrix[0].runner, "eph-linux-x64-release");
+  target.id = "linux-aarch64";
+  write();
   assert.throws(() => plan(root), /self-hosted runner required/);
-  target.id = 'linux-x86_64'; target.runner = 'eph-linux-x64-release-typo'; write();
+  target.id = "linux-x86_64";
+  target.runner = "eph-linux-x64-release-typo";
+  write();
   assert.throws(() => plan(root), /self-hosted runner required/);
 });
 
-test('Windows ARM64 hosted migration is version-scoped and drives MSI verification', t => {
+test("Windows ARM64 hosted migration is version-scoped and drives MSI verification", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const target = {id: 'windows-aarch64', runner: 'windows-11-arm', assets: ['example.msi']};
-  const spec = {product: 'example', versionFile: 'version.txt', targets: [target]};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const target = {
+    id: "windows-aarch64",
+    runner: "windows-11-arm",
+    assets: ["example.msi"],
+  };
+  const spec = {
+    product: "example",
+    versionFile: "version.txt",
+    targets: [target],
+  };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
   assert.throws(() => plan(root), /version-scoped migration/);
-  target.runnerMigration = {version: '0.1.0', owner: 'zah',
-    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-29-windows-arm64-release-runner-migration.md'};
+  target.runnerMigration = {
+    version: "0.1.0",
+    owner: "zah",
+    followup:
+      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-29-windows-arm64-release-runner-migration.md",
+  };
   write();
-  assert.equal(plan(root).msiRunner, 'windows-11-arm');
+  assert.equal(plan(root).msiRunner, "windows-11-arm");
   assert.equal(plan(root).hasMsi, true);
-  target.id = 'windows-x86_64'; write();
+  target.id = "windows-x86_64";
+  write();
   assert.throws(() => plan(root), /version-scoped migration/);
-  target.id = 'windows-aarch64';
-  target.runnerMigration.version = '0.0.9'; write();
+  target.id = "windows-aarch64";
+  target.runnerMigration.version = "0.0.9";
+  write();
   assert.throws(() => plan(root), /version-scoped migration/);
   delete target.runnerMigration;
-  target.runner = ['self-hosted', 'windows', 'arm64']; write();
+  target.runner = ["self-hosted", "windows", "arm64"];
+  write();
   assert.deepEqual(plan(root).msiRunner, target.runner);
 });
 
-test('runner selection keeps native alternatives version-scoped and preserves the payload contract', t => {
+test("runner selection keeps native alternatives version-scoped and preserves the payload contract", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, '.github'));
-  fs.writeFileSync(path.join(root, 'version.txt'), '0.1.0\n');
-  const migration = {version: '0.1.0', owner: 'zah',
-    followup: 'https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md'};
+  fs.mkdirSync(path.join(root, ".github"));
+  fs.writeFileSync(path.join(root, "version.txt"), "0.1.0\n");
+  const migration = {
+    version: "0.1.0",
+    owner: "zah",
+    followup:
+      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md",
+  };
   const targets = [
-    {id: 'linux-x86_64', runner: 'eph-linux-x64-release', hostedRunner: 'ubuntu-24.04',
-      runnerMigration: {...migration}, assets: ['example-linux.tar.gz']},
-    {id: 'darwin-aarch64', runner: ['self-hosted', 'macos', 'arm64'], hostedRunner: 'macos-26',
-      runnerMigration: {...migration}, assets: ['example-macos.tar.gz']},
-    {id: 'windows-x86_64', runner: ['self-hosted', 'windows', 'x64'], hostedRunner: 'windows-2025',
-      runnerMigration: {...migration}, assets: ['example.zip']},
+    {
+      id: "linux-x86_64",
+      runner: "eph-linux-x64-release",
+      hostedRunner: "ubuntu-24.04",
+      runnerMigration: { ...migration },
+      assets: ["example-linux.tar.gz"],
+    },
+    {
+      id: "darwin-aarch64",
+      runner: ["self-hosted", "macos", "arm64"],
+      hostedRunner: "macos-26",
+      runnerMigration: { ...migration },
+      assets: ["example-macos.tar.gz"],
+    },
+    {
+      id: "windows-x86_64",
+      runner: ["self-hosted", "windows", "x64"],
+      hostedRunner: "windows-2025",
+      runnerMigration: { ...migration },
+      assets: ["example.zip"],
+    },
   ];
-  const spec = {product: 'example', versionFile: 'version.txt', targets};
-  const write = () => fs.writeFileSync(path.join(root, '.github/release.json'), JSON.stringify(spec));
+  const spec = { product: "example", versionFile: "version.txt", targets };
+  const write = () =>
+    fs.writeFileSync(
+      path.join(root, ".github/release.json"),
+      JSON.stringify(spec),
+    );
   write();
   const fallback = plan(root);
   const hosted = plan(root, true);
-  assert.deepEqual(fallback.matrix.map(t => t.runner), targets.map(t => t.runner));
-  assert.deepEqual(hosted.matrix.map(t => t.runner), ['ubuntu-24.04', 'macos-26', 'windows-2025']);
+  assert.deepEqual(
+    fallback.matrix.map((t) => t.runner),
+    targets.map((t) => t.runner),
+  );
+  assert.deepEqual(
+    hosted.matrix.map((t) => t.runner),
+    ["ubuntu-24.04", "macos-26", "windows-2025"],
+  );
   assert.deepEqual(hosted.expected, fallback.expected);
-  assert.deepEqual(hosted.matrix.map(t => t.id), fallback.matrix.map(t => t.id));
-  for (const [field, value] of [['version', '0.1.1'], ['owner', ''], ['followup', 'https://example.com/']]) {
-    targets[0].runnerMigration = {...migration, [field]: value}; write();
-    for (const selected of [false, true]) assert.throws(() => plan(root, selected), /version-scoped migration/);
+  assert.deepEqual(
+    hosted.matrix.map((t) => t.id),
+    fallback.matrix.map((t) => t.id),
+  );
+  for (const [field, value] of [
+    ["version", "0.1.1"],
+    ["owner", ""],
+    ["followup", "https://example.com/"],
+  ]) {
+    targets[0].runnerMigration = { ...migration, [field]: value };
+    write();
+    for (const selected of [false, true])
+      assert.throws(() => plan(root, selected), /version-scoped migration/);
   }
-  targets[0].runnerMigration = {...migration};
-  for (const runner of ['ubuntu-latest', 'ubuntu-24.04-arm', 'macos-26']) {
-    targets[0].hostedRunner = runner; write();
+  targets[0].runnerMigration = { ...migration };
+  for (const runner of ["ubuntu-latest", "ubuntu-24.04-arm", "macos-26"]) {
+    targets[0].hostedRunner = runner;
+    write();
     assert.throws(() => plan(root, true), /native standard runner/);
   }
-  targets[0].hostedRunner = 'ubuntu-24.04';
-  targets[1].hostedRunner = 'macos-26-xlarge'; write();
+  targets[0].hostedRunner = "ubuntu-24.04";
+  targets[1].hostedRunner = "macos-26-xlarge";
+  write();
   assert.throws(() => plan(root, true), /native standard runner/);
-  targets[1].hostedRunner = 'macos-26';
-  for (const runner of ['windows-latest', 'windows-11-arm', 'windows-2025-16core']) {
-    targets[2].hostedRunner = runner; write();
+  targets[1].hostedRunner = "macos-26";
+  for (const runner of [
+    "windows-latest",
+    "windows-11-arm",
+    "windows-2025-16core",
+  ]) {
+    targets[2].hostedRunner = runner;
+    write();
     assert.throws(() => plan(root, true), /native standard runner/);
   }
-  targets[2].hostedRunner = 'windows-2025';
-  delete targets[0].runnerMigration; write();
+  targets[2].hostedRunner = "windows-2025";
+  delete targets[0].runnerMigration;
+  write();
   assert.throws(() => plan(root, true), /version-scoped migration/);
 });

@@ -47,7 +47,7 @@ static int process_snapshot(unsigned *count) {
     HPSS snapshot = NULL;
     HPSSWALK marker = NULL;
     DWORD error = PssCaptureSnapshot(GetCurrentProcess(), PSS_CAPTURE_THREADS,
-                                     0, &snapshot);
+                                      0, &snapshot);
     if (error != ERROR_SUCCESS) return 20;
     error = PssWalkMarkerCreate(NULL, &marker);
     unsigned found = 0;
@@ -75,13 +75,13 @@ int main(int argc, char **argv) {
     SYSTEM_INFO system;
     GetNativeSystemInfo(&system);
     printf("PE machine=0x%x native processor architecture=%u\n",
-           header->FileHeader.Machine, system.wProcessorArchitecture);
+            header->FileHeader.Machine, system.wProcessorArchitecture);
     USHORT process_machine = 0, native_machine = 0;
     if (!IsWow64Process2(GetCurrentProcess(), &process_machine, &native_machine)) return 34;
     printf("IsWow64Process2 process=0x%x native=0x%x\n", process_machine, native_machine);
     if (argc != 2 ||
         (strcmp(argv[1], "ARM64") == 0 ? native_machine != IMAGE_FILE_MACHINE_ARM64 :
-         strcmp(argv[1], "X64") != 0 || native_machine != IMAGE_FILE_MACHINE_AMD64)) return 35;
+          strcmp(argv[1], "X64") != 0 || native_machine != IMAGE_FILE_MACHINE_AMD64)) return 35;
     stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!stop_event) return 31;
     HANDLE workers[4] = {0};
@@ -100,9 +100,9 @@ int main(int argc, char **argv) {
             result = mode ? process_snapshot(&count) : toolhelp(&count);
             QueryPerformanceCounter(&end);
             printf("round=%u api=%s own_threads=%u milliseconds=%.6f result=%d\n",
-                   round, mode ? "PSS" : "Toolhelp", count,
-                   1000.0 * (double)(end.QuadPart - start.QuadPart) /
-                   (double)frequency.QuadPart, result);
+                    round, mode ? "PSS" : "Toolhelp", count,
+                    1000.0 * (double)(end.QuadPart - start.QuadPart) /
+                    (double)frequency.QuadPart, result);
             if (result) goto cleanup;
         }
     }
