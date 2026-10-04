@@ -27,6 +27,7 @@ on:
           - gosti-repro-shutdown
           - gosti-repro-concurrency
           - windows-thread-snapshots
+          - windows-hook-pages
           - runquota-windows-handles
           - runquota-linux-arm-bootstrap
           - io-mon-windows-cleanup
@@ -49,7 +50,7 @@ permissions:
 
 jobs:
   test:
-    if: inputs.checks != 'windows-thread-snapshots' && inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
+    if: inputs.checks != 'windows-hook-pages' && inputs.checks != 'windows-thread-snapshots' && inputs.checks != 'io-mon-repro-frame' && inputs.checks != 'io-mon-linux-runtime' && inputs.product != 'reprobuild' && inputs.checks != 'gosti-windows-process-timing' && inputs.checks != 'gosti-repro-process-timing' && inputs.checks != 'gosti-repro-shutdown' && inputs.checks != 'gosti-repro-concurrency' && inputs.checks != 'runquota-windows-handles' && inputs.checks != 'runquota-linux-arm-bootstrap' && inputs.checks != 'io-mon-windows-cleanup' && inputs.checks != 'io-mon-windows-debug-cleanup' && inputs.checks != 'io-mon-repro-cleanup' && inputs.checks != 'io-mon-windows-unlink' && inputs.checks != 'io-mon-dlopen-elf' && inputs.checks != 'io-mon-repro-dlopen' && !startsWith(inputs.checks, 'runquota-windows-checkout')
     name: ${{ matrix.product }} — ${{ inputs.checks || 'complete' }}
     runs-on: ${{ inputs.checks == 'runquota-macos-authority' && fromJSON('["self-hosted", "macos", "arm64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
@@ -1200,4 +1201,43 @@ jobs:
             test-logs/thread-snapshots/*.log
             test-logs/thread-snapshots/*.txt
           if-no-files-found: warn
+          retention-days: 14
+
+  windows-hook-pages:
+    if: inputs.checks == 'windows-hook-pages'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Mint installation token
+        id: ci-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+      - uses: actions/checkout@v4
+        with:
+          repository: metacraft-labs/nim-stackable-hooks
+          ref: 10ed82a4bc5bd8c5fccbbe3f3aaaed53ef7d6485
+          fetch-depth: 2
+          token: ${{ steps.ci-token.outputs.token }}
+          persist-credentials: false
+          path: .hooks
+      - name: Exercise real x64 and x86 hook transactions and the old-source control
+        shell: pwsh
+        run: ./diagnostics/windows-hook-pages.ps1
+      - name: Preserve native page and peer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hook-pages-${{ matrix.runner }}
+          path: test-logs/hook-pages/
           retention-days: 14

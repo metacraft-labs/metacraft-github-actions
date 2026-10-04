@@ -89,6 +89,10 @@ try {
             -not $actionOutput.Contains('hook-profile')) {
             throw 'The test did not prove the selected monitor image and phase coverage'
         }
+        if (-not $actionOutput.Contains('clock-errors=0') -or
+            $actionOutput -match 'clock-errors=[1-9]' -or $actionOutput -match 'frequency=0') {
+            throw 'The unhooked diagnostic clock failed; API timings are invalid'
+        }
         if ($actions[0].status -ne 'asSucceeded' -or $actions[0].exitCode -ne 0 -or ([regex]::Matches($actions[0].stdout, '\[OK\]')).Count -ne 2) {
             $failed = $true
         }
