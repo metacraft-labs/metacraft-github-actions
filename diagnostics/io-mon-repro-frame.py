@@ -29,6 +29,8 @@ def run(name, args, env=None, timeout=1200):
     results.append({"name": name, "exitCode": code, "argv": args})
     (evidence / "results.json").write_text(json.dumps(results, indent=2))
     print(name, code, flush=True)
+    if code:
+        print("\n".join((evidence / (name + ".log")).read_text(errors="replace").splitlines()[-25:]), flush=True)
     return code
 
 
@@ -71,6 +73,7 @@ try:
     run("monitored", ["dev-exec", "repro", "build", ".#diagnostic-frame",
         "--tool-provisioning=nix", "--force-rebuild", "--write-report=" + str(evidence / "report.json")])
     backtraces()
+    assert (evidence / "report.json").exists(), "Provider failed before the frame action; inspect monitored.log"
     report = json.loads((evidence / "report.json").read_text())
     actions = [a for a in report["actions"] if a["id"].startswith("io-mon.test_execute.")]
     assert len(actions) == 1 and actions[0]["launched"], actions

@@ -1162,7 +1162,11 @@ jobs:
           owner: metacraft-labs
       - name: Compare the actual probe with its enclosing-monitor run
         shell: bash
-        run: dev-exec python3 .diagnostic-tools/diagnostics/io-mon-repro-frame.py
+        # The orchestrator must retain the ordinary build step's bootstrap
+        # environment. The script invokes every actual build via dev-exec.
+        # Wrapping Python itself activates the product Nix shell first and
+        # changes the provider compiler/runtime before that ordinary command.
+        run: python3 .diagnostic-tools/diagnostics/io-mon-repro-frame.py
       - name: Preserve exact probe and argument-free backtrace evidence
         if: always()
         uses: actions/upload-artifact@v4
