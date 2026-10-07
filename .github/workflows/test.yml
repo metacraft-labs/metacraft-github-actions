@@ -48,6 +48,16 @@ jobs:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Real Git and Nix credential-refresh contract
         run: python3 refresh-build-auth/test.py
+      - name: Real runner masking boundary with noncredential sentinels
+        env:
+          GH_TOKEN: fresh-masking-fixture-not-a-credential
+          NIX_CONFIG: "access-tokens = github.com=old-masking-fixture-not-a-credential gitlab.com=inherited-masking-fixture-not-a-credential"
+        run: |
+          printf '%s\n' 'inherited-masking-fixture-not-a-credential'
+          python3 refresh-build-auth/refresh-nix.py
+      - name: Observe registered sentinel redaction
+        run: |
+          printf '%s\n' 'inherited-masking-fixture-not-a-credential' 'fresh-masking-fixture-not-a-credential'
 
   release-gates:
     # Like the other policy guards below, this uses only Node and real local

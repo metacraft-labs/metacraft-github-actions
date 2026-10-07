@@ -12,6 +12,12 @@ settings = subprocess.run(
     text=True,
 )
 tokens = json.loads(settings.stdout)["access-tokens"]["value"]
+# Register every credential carried into job environment metadata before export.
+# Escaping follows the runner workflow-command data protocol; no config change.
+for value in set(tokens.values()) | {os.environ["GH_TOKEN"]}:
+    if value:
+        escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::add-mask::" + escaped, flush=True)
 tokens["github.com"] = os.environ["GH_TOKEN"]
 for owner in os.environ.get("TOKEN_OWNERS", "metacraft-labs").split():
     prefix = "github.com/" + owner
