@@ -20,6 +20,10 @@ let
     prettier
     shellcheck
     actionlint
+    nodejs
+    dpkg
+    rpm
+    libarchive
   ];
 in
 pkgs.mkShell {
