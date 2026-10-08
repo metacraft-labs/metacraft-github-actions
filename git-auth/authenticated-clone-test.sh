@@ -171,8 +171,16 @@ for _ in $(seq 1 100); do
   [[ -s $TMPROOT/port ]] && break
   sleep 0.1
 done
-PORT="$(while IFS=' ' read -r _tag _p; do printf '%s' "$_p"; done <"$TMPROOT/port")"
-[[ -n $PORT ]] || {
+PORT=""
+_port_tag=""
+_port_extra=""
+_port_complete=0
+if IFS=' ' read -r _port_tag PORT _port_extra <"$TMPROOT/port"; then
+  _port_complete=1
+  PORT="${PORT%$'\r'}"
+fi
+[[ "$_port_complete" == 1 && "$_port_tag" == PORT && -z "$_port_extra" && "$PORT" =~ ^[0-9]{1,5}$ ]] \
+  && (( 10#$PORT >= 1 && 10#$PORT <= 65535 )) || {
   echo "authenticated-clone-test: server did not start" >&2
   cat "$TMPROOT/server.err" >&2
   exit 2
