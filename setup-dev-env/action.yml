@@ -445,7 +445,7 @@ runs:
       # other caller reaches this step exactly as it did before this input
       # existed.
       if: ${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@ec9322d65b54bd1bafe8b517108f35e09fee4dc5
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@8bf2459ca4a2f95c39b2bd3fa4f927ff1005ae90
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -709,7 +709,7 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@ec9322d65b54bd1bafe8b517108f35e09fee4dc5
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@8bf2459ca4a2f95c39b2bd3fa4f927ff1005ae90
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -721,7 +721,7 @@ runs:
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@ec9322d65b54bd1bafe8b517108f35e09fee4dc5
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@8bf2459ca4a2f95c39b2bd3fa4f927ff1005ae90
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -772,7 +772,7 @@ runs:
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@ec9322d65b54bd1bafe8b517108f35e09fee4dc5
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@8bf2459ca4a2f95c39b2bd3fa4f927ff1005ae90
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
