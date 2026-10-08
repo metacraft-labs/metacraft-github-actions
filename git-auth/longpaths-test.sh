@@ -387,7 +387,7 @@ check "the submodule update invocation was traced" "$([[ $IDX_SUB_A -ge 0 ]] && 
 TRACE_A="$TMPROOT/logs/a/trace-$IDX_SUB_A.json"
 [[ -s $TRACE_A ]] && ok "the submodule update produced a trace to read" ||
   bad "the submodule update produced a trace to read" "no events in $TRACE_A"
-ROOT_A="$(cd "$DEST_A" && pwd -P)"
+ROOT_A="$("$REAL_GIT" -C "$DEST_A" rev-parse --show-toplevel)"
 at_least "git processes resolving core.longpaths=true during the submodule update" \
   "$(total_resolvers "$TRACE_A")" 3
 at_least "level-1 submodule-only git processes resolving core.longpaths=true" \
@@ -436,7 +436,7 @@ IDX_SUB_B="$(idx_of "$LOG_B" "submodule update")"
 TRACE_B="$TMPROOT/logs/b/trace-$IDX_SUB_B.json"
 [[ -s $TRACE_B ]] && ok "the shallow submodule update produced a trace to read" ||
   bad "the shallow submodule update produced a trace to read" "no events in $TRACE_B"
-ROOT_B="$(cd "$DEST_B" && pwd -P)"
+ROOT_B="$("$REAL_GIT" -C "$DEST_B" rev-parse --show-toplevel)"
 at_least "git processes resolving core.longpaths=true during the shallow submodule update" \
   "$(total_resolvers "$TRACE_B")" 3
 at_least "level-1 submodule-only git processes resolving core.longpaths=true (shallow)" \
@@ -483,7 +483,7 @@ IDX_SUB_C="$(idx_of "$LOG_C" "submodule update")"
 TRACE_C="$TMPROOT/logs/control/trace-$IDX_SUB_C.json"
 [[ -s $TRACE_C ]] && ok "the control submodule update produced a trace to read" ||
   bad "the control submodule update produced a trace to read" "no events in $TRACE_C"
-ROOT_C="$(cd "$DEST_C" && pwd -P)"
+ROOT_C="$("$REAL_GIT" -C "$DEST_C" rev-parse --show-toplevel)"
 check "control: NO git process resolves core.longpaths at all" \
   "$(total_resolvers "$TRACE_C")" 0
 # The worktree correlation itself must be working in the control, or the two
