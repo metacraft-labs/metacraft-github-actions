@@ -182,8 +182,9 @@ def find_http_backend():
     exec_path = subprocess.run(
         ["git", "--exec-path"], stdout=subprocess.PIPE, check=True
     ).stdout.decode().strip()
+    backend_name = "git-http-backend.exe" if os.name == "nt" else "git-http-backend"
     for candidate in (
-        os.path.join(exec_path, "git-http-backend"),
+        os.path.join(exec_path, backend_name),
         "/usr/lib/git-core/git-http-backend",
     ):
         if os.path.exists(candidate):

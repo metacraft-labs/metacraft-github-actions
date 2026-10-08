@@ -53,7 +53,7 @@ if [[ -n "${MCL_TEST_PYTHON_EXECUTABLE:-}" ]]; then
     printf '%s\n' 'Explicit test Python is not a regular executable' >&2
     exit 1
   fi
-  if ! "$TEST_PYTHON" -I -c 'import sys; sys.exit(0 if sys.version_info.major == 3 else 1)'; then
+  if ! "$TEST_PYTHON" -B -I -c 'import sys; sys.exit(0 if sys.version_info.major == 3 else 1)'; then
     printf '%s\n' 'Explicit test Python is not Python 3' >&2
     exit 1
   fi
