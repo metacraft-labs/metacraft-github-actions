@@ -31,6 +31,9 @@
 # 3.2, so no associative arrays and no `declare -n`.
 set -euo pipefail
 
+# shellcheck source=../ci-roots/route.sh
+. "${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../ci-roots/route.sh"
+
 RESOLVER="${GITHUB_ACTION_PATH}/resolve-sibling-rev.sh"
 
 # ---------------------------------------------------------------------------
@@ -99,7 +102,7 @@ esac
 if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
   RAW="${SIBLINGS_INPUT}"
 else
-  SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
+  SIBS_FILE="${MCL_CONSUMER_ROOT}/.github/sibling-repos"
   if [ ! -f "${SIBS_FILE}" ]; then
     echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
     exit 0
@@ -474,7 +477,7 @@ lock_unavailable() { # <reason>
 # why). The per-sibling lookup reports the resolver's exit-code vocabulary so
 # PASS 1 treats both stores alike: 0 found, 4 not pinned, 5 malformed entry.
 # ---------------------------------------------------------------------------
-CL_FILE="${GITHUB_WORKSPACE}/repro.lock"
+CL_FILE="${MCL_CONSUMER_ROOT}/repro.lock"
 CL_STATE=""
 CL_WHY=""
 CL_NAMES=()
@@ -928,7 +931,7 @@ for i in "${!NAMES[@]}"; do
   name="${NAMES[$i]}"
   owner="${OWNERS[$i]}"
   rev="${REVS[$i]}"
-  WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
+  WORKSPACE_NORM="${MCL_CONSUMER_ROOT//\\//}"
   dest="${WORKSPACE_NORM}/../${name}"
   # Credential-free URL; the scoped extraHeader in this step's environment
   # authenticates it, and `git submodule update --recursive` inherits that

@@ -115,6 +115,14 @@ description: >
   codetracer-specs/Testing/Cross-Repo-CI-Integration.md.
 
 inputs:
+  consumer-directory:
+    description: Relative consumer checkout directory under the physical GitHub workspace.
+    required: false
+    default: "."
+  workspace-directory:
+    description: Relative containing SDK workspace; opt-in consumer must be its direct child.
+    required: false
+    default: "."
   gh-token:
     description: >
       GitHub token (CI App token) used to clone private siblings and the private
@@ -285,6 +293,8 @@ runs:
     - name: Clone cross-repo siblings from the workspace lock
       shell: bash
       env:
+        MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
+        MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
         SIBLING_OWNER: ${{ inputs.sibling-owner }}
