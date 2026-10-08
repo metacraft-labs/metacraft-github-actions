@@ -309,7 +309,29 @@ if [ "$SHALLOW" = 1 ] && [ -n "$REV" ]; then
     echo "Fetching ${REV} directly from ${REPO} was refused; falling back to a whole-repository clone. This is slower, not broken." >&2
     rm -rf "$DEST"
     run_git "clone" clone --no-checkout --quiet "$URL" "$DEST" || exit 1
-    run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach "$REV" || exit 1
+    # Detach a verified commit, not a branch name that checkout may DWIM into
+    # an incompatible implicit tracking-branch creation.
+    detached_commit=$(git -C "$DEST" rev-parse --verify --end-of-options "$REV^{commit}" 2>/dev/null) || detached_commit=''
+    if [ -z "$detached_commit" ]; then
+      remote_revision="$REV"
+      case "$REV" in
+        refs/heads/*) remote_revision="${REV#refs/heads/}" ;;
+        refs/*) remote_revision='' ;;
+        *)
+          if [[ "$REV" =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]]; then
+            remote_revision=''
+          fi
+          ;;
+      esac
+      if [ -n "$remote_revision" ] && git check-ref-format "refs/remotes/origin/$remote_revision" >/dev/null 2>&1; then
+        detached_commit=$(git -C "$DEST" rev-parse --verify --end-of-options "refs/remotes/origin/$remote_revision^{commit}" 2>/dev/null) || detached_commit=''
+      fi
+    fi
+    if [[ ! "$detached_commit" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+      echo "::error::requested revision ${REV} does not resolve to a commit in the fallback clone" >&2
+      exit 1
+    fi
+    run_git "checkout of revision ${REV}" -C "$DEST" checkout --quiet --detach "$detached_commit" || exit 1
   fi
 elif [ "$SHALLOW" = 1 ]; then
   # `--shallow` with no revision. There is nothing to be economical ABOUT: no

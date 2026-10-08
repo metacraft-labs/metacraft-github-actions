@@ -74,7 +74,7 @@ set -euo pipefail
 
 STRATEGY_INPUT="${SIBLING_STRATEGY:-auto}"
 FLAVOR="${ENV_FLAVOR:-}"
-WS="${GITHUB_WORKSPACE:-$PWD}"
+WS="${MCL_CONSUMER_ROOT:-${GITHUB_WORKSPACE:-$PWD}}"
 LOCK="${WS}/repro.lock"
 SIBS_FILE="${WS}/.github/sibling-repos"
 

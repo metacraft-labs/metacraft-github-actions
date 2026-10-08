@@ -1,8 +1,9 @@
 # Build the real, selected RunQuota source with the source bootstrap toolchain.
 # No service configuration is changed; Reprobuild owns daemon discovery/startup.
 $ErrorActionPreference = 'Stop'
-$source = Join-Path $env:GITHUB_WORKSPACE 'runquota'
-$leaseSource = Join-Path $env:GITHUB_WORKSPACE 'nim-shm-lease/src'
+$workspaceRoot = if ($env:MCL_WORKSPACE_ROOT) { $env:MCL_WORKSPACE_ROOT } else { $env:GITHUB_WORKSPACE }
+$source = Join-Path $workspaceRoot 'runquota'
+$leaseSource = Join-Path $workspaceRoot 'nim-shm-lease/src'
 if (-not (Test-Path (Join-Path $source 'apps/runquotad/runquotad.nim'))) {
     throw "RunQuota source is missing from $source"
 }

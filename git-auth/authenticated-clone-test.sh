@@ -41,6 +41,24 @@
 # Run: bash git-auth/authenticated-clone-test.sh
 set -uo pipefail
 
+# Optional genuine interpreter path for native Windows NuGet Python.
+# Unix callers retain the original python3 selection; no executable alias.
+TEST_PYTHON="${MCL_TEST_PYTHON_EXECUTABLE:-python3}"
+if [[ -n "${MCL_TEST_PYTHON_EXECUTABLE:-}" ]]; then
+  case "$TEST_PYTHON" in
+    /* | [A-Za-z]:/*) ;;
+    *) printf '%s\n' 'Explicit test Python must be an absolute executable' >&2; exit 1 ;;
+  esac
+  if [[ ! -f "$TEST_PYTHON" || ! -x "$TEST_PYTHON" || -L "$TEST_PYTHON" ]]; then
+    printf '%s\n' 'Explicit test Python is not a regular executable' >&2
+    exit 1
+  fi
+  if ! "$TEST_PYTHON" -B -I -c 'import sys; sys.exit(0 if sys.version_info.major == 3 else 1)'; then
+    printf '%s\n' 'Explicit test Python is not Python 3' >&2
+    exit 1
+  fi
+fi
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LIB="$HERE/scoped-git-auth.sh"
@@ -145,16 +163,31 @@ THIRD_SHA="$(mk_repo third-party/dep.git)"
 # not, and journals whether one turned up anyway.
 # ---------------------------------------------------------------------------
 JOURNAL="$TMPROOT/journal"
-python3 "$SERVER" --root "$SRV" --journal "$JOURNAL" \
-  --auth-prefix /metacraft-labs/ --auth-file "$TMPROOT/token" \
+# The HTTP route is not a filesystem path. Preserve inherited MSYS argument
+# policy and exclude only this named route argument for the native server.
+_server_arg_conv_excl="${MSYS2_ARG_CONV_EXCL:-}"
+if [[ "$_server_arg_conv_excl" != "*" ]]; then
+  _server_arg_conv_excl="${_server_arg_conv_excl:+$_server_arg_conv_excl;}--auth-prefix="
+fi
+MSYS2_ARG_CONV_EXCL="$_server_arg_conv_excl" \
+  "$TEST_PYTHON" "$SERVER" --root "$SRV" --journal "$JOURNAL" \
+  --auth-prefix=/metacraft-labs/ --auth-file "$TMPROOT/token" \
   >"$TMPROOT/port" 2>"$TMPROOT/server.err" &
 SRV_PID=$!
 for _ in $(seq 1 100); do
   [[ -s $TMPROOT/port ]] && break
   sleep 0.1
 done
-PORT="$(while IFS=' ' read -r _tag _p; do printf '%s' "$_p"; done <"$TMPROOT/port")"
-[[ -n $PORT ]] || {
+PORT=""
+_port_tag=""
+_port_extra=""
+_port_complete=0
+if IFS=' ' read -r _port_tag PORT _port_extra <"$TMPROOT/port"; then
+  _port_complete=1
+  PORT="${PORT%$'\r'}"
+fi
+[[ "$_port_complete" == 1 && "$_port_tag" == PORT && -z "$_port_extra" && "$PORT" =~ ^[0-9]{1,5}$ ]] \
+  && (( 10#$PORT >= 1 && 10#$PORT <= 65535 )) || {
   echo "authenticated-clone-test: server did not start" >&2
   cat "$TMPROOT/server.err" >&2
   exit 2
@@ -504,7 +537,7 @@ HIST_WORK="$TMPROOT/build/history"
 git_q init --bare -b main "$SRV/metacraft-labs/history.git"
 mkdir -p "$HIST_WORK"
 git_q -C "$HIST_WORK" init -b main .
-python3 -c "
+"$TEST_PYTHON" -c "
 import random, sys
 r = random.Random(20260906)
 sys.stdout.buffer.write(bytes(r.getrandbits(8) for _ in range(1 << 20)))
