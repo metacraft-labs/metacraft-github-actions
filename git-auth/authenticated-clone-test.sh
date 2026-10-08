@@ -163,8 +163,15 @@ THIRD_SHA="$(mk_repo third-party/dep.git)"
 # not, and journals whether one turned up anyway.
 # ---------------------------------------------------------------------------
 JOURNAL="$TMPROOT/journal"
-"$TEST_PYTHON" "$SERVER" --root "$SRV" --journal "$JOURNAL" \
-  --auth-prefix /metacraft-labs/ --auth-file "$TMPROOT/token" \
+# The HTTP route is not a filesystem path. Preserve inherited MSYS argument
+# policy and exclude only this named route argument for the native server.
+_server_arg_conv_excl="${MSYS2_ARG_CONV_EXCL:-}"
+if [[ "$_server_arg_conv_excl" != "*" ]]; then
+  _server_arg_conv_excl="${_server_arg_conv_excl:+$_server_arg_conv_excl;}--auth-prefix="
+fi
+MSYS2_ARG_CONV_EXCL="$_server_arg_conv_excl" \
+  "$TEST_PYTHON" "$SERVER" --root "$SRV" --journal "$JOURNAL" \
+  --auth-prefix=/metacraft-labs/ --auth-file "$TMPROOT/token" \
   >"$TMPROOT/port" 2>"$TMPROOT/server.err" &
 SRV_PID=$!
 for _ in $(seq 1 100); do
