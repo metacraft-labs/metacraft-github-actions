@@ -108,6 +108,9 @@ jobs:
       - name: Windows hook source stays pinned as mainline advances
         run: python3 reprobuild-provision/test-windows-hooks-pin.py
 
+      - name: status-im/nim-bearssl clone carries the declared credential scope
+        run: python3 reprobuild-provision/test-bearssl-auth.py
+
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
