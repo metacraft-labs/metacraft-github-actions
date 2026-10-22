@@ -31,6 +31,9 @@
 # 3.2, so no associative arrays and no `declare -n`.
 set -euo pipefail
 
+# shellcheck source=../ci-roots/route.sh
+. "${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../ci-roots/route.sh"
+
 RESOLVER="${GITHUB_ACTION_PATH}/resolve-sibling-rev.sh"
 
 # ---------------------------------------------------------------------------
@@ -99,7 +102,7 @@ esac
 if [ -n "${SIBLINGS_INPUT//[[:space:]]/}" ]; then
   RAW="${SIBLINGS_INPUT}"
 else
-  SIBS_FILE="${GITHUB_WORKSPACE}/.github/sibling-repos"
+  SIBS_FILE="${MCL_CONSUMER_ROOT}/.github/sibling-repos"
   if [ ! -f "${SIBS_FILE}" ]; then
     echo "No 'siblings' input and no .github/sibling-repos; no cross-repo siblings to clone."
     exit 0
@@ -459,7 +462,7 @@ lock_unavailable() { # <reason>
 # `repro lock refresh` writes one `deps` inline table per develop-set sibling
 # into the repo's committed `repro.lock`, on ONE line:
 #
-#   deps = [{ name = "x", path = "../x", coord_kind = "vcs", url = "…",
+#   deps = [{ name = "x", coord_kind = "vcs", url = "…",
 #             ref = "dev", revision = "<commit>", integrity = "git-sha1:<commit>",
 #             … }, { … }]
 #
@@ -474,11 +477,11 @@ lock_unavailable() { # <reason>
 # why). The per-sibling lookup reports the resolver's exit-code vocabulary so
 # PASS 1 treats both stores alike: 0 found, 4 not pinned, 5 malformed entry.
 # ---------------------------------------------------------------------------
-CL_FILE="${GITHUB_WORKSPACE}/repro.lock"
+CL_FILE="${MCL_CONSUMER_ROOT}/repro.lock"
 CL_STATE=""
 CL_WHY=""
 CL_NAMES=()
-CL_PATHS=()
+CL_SELF=()
 CL_REVS=()
 CL_INTEGS=()
 
@@ -493,7 +496,7 @@ cl_field() { # <inline-table-body> <key> -> value on stdout; rc 1 when absent
 }
 
 load_committed_lock() {
-  local line deps entry body schema_ok=0
+  local line deps entry body schema_ok=0 legacy=0 self
   if [ ! -f "${CL_FILE}" ]; then
     CL_STATE="absent"
     return 0
@@ -502,13 +505,14 @@ load_committed_lock() {
   while IFS= read -r line || [ -n "${line}" ]; do
     line="${line%$'\r'}"
     case "${line}" in
-    'schema = "reprobuild.solved-graph-lock.v2"') schema_ok=1 ;;
+    'schema = "reprobuild.solved-graph-lock.v2"') schema_ok=1; legacy=1 ;;
+    'schema = "reprobuild.solved-graph-lock.v3"') schema_ok=1 ;;
     'deps = ['*) deps="${line#deps = [}" ;;
     esac
   done <"${CL_FILE}"
   if [ "${schema_ok}" -ne 1 ]; then
     CL_STATE="unreadable"
-    CL_WHY="it does not declare schema = \"reprobuild.solved-graph-lock.v2\" (regenerate it with 'repro lock refresh')"
+    CL_WHY="it does not declare a supported solved-graph-lock schema (v2 or v3) (regenerate it with 'repro lock refresh')"
     return 0
   fi
   deps="${deps%]}"
@@ -527,7 +531,12 @@ load_committed_lock() {
     deps="${deps#"${entry} }"}"
     deps="${deps#", "}"
     CL_NAMES+=("$(cl_field "${body}" name)")
-    CL_PATHS+=("$(cl_field "${body}" path)")
+    self="$(cl_field "${body}" self || true)"
+    # Only v2's root marker survives migration; sibling paths are not identities.
+    if [ "${legacy}" -eq 1 ] && [ "$(cl_field "${body}" path || true)" = "." ]; then
+      self="true"
+    fi
+    CL_SELF+=("${self}")
     CL_REVS+=("$(cl_field "${body}" revision)")
     CL_INTEGS+=("$(cl_field "${body}" integrity)")
   done
@@ -552,8 +561,8 @@ is_commit_id() { # <rev>: a full 40-hex (sha1) or 64-hex (sha256) object id
 committed_lock_rev() {
   local name="$1" i rev integ
   for i in "${!CL_NAMES[@]}"; do
-    [ "${CL_PATHS[$i]}" = "." ] && continue
-    if [ "${CL_NAMES[$i]}" = "${name}" ] || [ "${CL_PATHS[$i]}" = "../${name}" ]; then
+    [ "${CL_SELF[$i]}" = "true" ] && continue
+    if [ "${CL_NAMES[$i]}" = "${name}" ]; then
       rev="${CL_REVS[$i]}"
       integ="${CL_INTEGS[$i]}"
       if ! is_commit_id "${rev}"; then
@@ -928,7 +937,7 @@ for i in "${!NAMES[@]}"; do
   name="${NAMES[$i]}"
   owner="${OWNERS[$i]}"
   rev="${REVS[$i]}"
-  WORKSPACE_NORM="${GITHUB_WORKSPACE//\\//}"
+  WORKSPACE_NORM="${MCL_CONSUMER_ROOT//\\//}"
   dest="${WORKSPACE_NORM}/../${name}"
   # Credential-free URL; the scoped extraHeader in this step's environment
   # authenticates it, and `git submodule update --recursive` inherits that

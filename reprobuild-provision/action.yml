@@ -47,6 +47,14 @@ description: >
   so in the log rather than pretending otherwise.
 
 inputs:
+  consumer-directory:
+    description: Relative consumer checkout directory under the physical GitHub workspace.
+    required: false
+    default: "."
+  workspace-directory:
+    description: Relative containing SDK workspace; opt-in consumer must be its direct child.
+    required: false
+    default: "."
   gh-token:
     description: GitHub token (CI App token) for cloning private metacraft-labs repos.
     required: false
@@ -84,6 +92,8 @@ runs:
     - name: Provision reprobuild dependency siblings
       shell: bash
       env:
+        MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
+        MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLING_OWNER: ${{ inputs.sibling-owner }}
         RUNQUOTA_REF: ${{ inputs.runquota-ref }}

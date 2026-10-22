@@ -77,7 +77,8 @@ that has a `repro.lock` should be resolving from it.
 `sibling-strategy: auto` (the default) picks `repro-lock` only when **all** of:
 
 1. `$GITHUB_WORKSPACE/repro.lock` exists and declares a solved-graph-lock schema;
-2. it pins at least one **sibling** dependency (a dep whose `path` is not `"."`);
+2. it pins at least one **sibling** dependency (excluding `self = "true"` or the
+   legacy root marker `path = "."`);
 3. `env-flavor` is `reprobuild` — the one flavor where the `repro` CLI this path
    needs is installed anyway;
 4. the repo declares **no** sibling list of its own (neither `siblings:` nor a

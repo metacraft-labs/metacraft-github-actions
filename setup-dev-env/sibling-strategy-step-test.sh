@@ -517,7 +517,25 @@ lock_root_only
 run_decide auto reprobuild ""
 check "a root-only repro.lock chooses clone-siblings" "$(out_of strategy)" "clone-siblings"
 check "  and counts zero siblings" "$(out_of lock-siblings)" "0"
-contains "  and says every dep is the consumer itself" "$OUT" 'every dep is path = "."'
+contains "  and says every dep is the consumer itself" "$OUT" 'every dep is the consumer itself'
+
+# Path-free v3 locks still route to repro develop; self is not a sibling.
+new_ws
+printf 'schema = "reprobuild.solved-graph-lock.v3"\ndeps = [{ name = "consumer", self = "true" }, { name = "isonim" }, { name = "nim-acp" }]\n' >"$WS/repro.lock"
+run_decide auto reprobuild ""
+check "v3: a path-free lock chooses repro-lock" "$(out_of strategy)" "repro-lock"
+check "v3: only named non-self dependencies count" "$(out_of lock-siblings)" "2"
+
+new_ws
+printf 'schema = "reprobuild.solved-graph-lock.v3"\ndeps = [{ name = "consumer", self = "true" }, { name = "isonim", path = "." }]\n' >"$WS/repro.lock"
+run_decide auto reprobuild ""
+check "v3: a legacy path cannot mark a named sibling as self" "$(out_of lock-siblings)" "1"
+
+new_ws
+printf 'schema = "reprobuild.solved-graph-lock.v3"\ndeps = [{ name = "consumer", self = "true" }]\n' >"$WS/repro.lock"
+run_decide auto reprobuild ""
+check "v3: a self-only lock chooses clone-siblings" "$(out_of strategy)" "clone-siblings"
+check "v3: self-only lock counts zero siblings" "$(out_of lock-siblings)" "0"
 
 # ===========================================================================
 # 6. `auto` will not take the repro path under a flavor that has no repro CLI.

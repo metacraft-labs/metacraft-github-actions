@@ -84,6 +84,9 @@
 # contract exists to prevent.
 set -uo pipefail
 
+# shellcheck source=../ci-roots/route.sh
+. "${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../ci-roots/route.sh" || exit 1
+
 GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}"
 # shellcheck source=../git-auth/scoped-git-auth.sh
 . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
@@ -91,7 +94,7 @@ GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" 
 # `//\\//` -- normalise the Windows separator, exactly as `clone-siblings.sh`
 # does: this script runs under bash on the Windows runners too, where
 # $GITHUB_WORKSPACE arrives backslashed.
-WS="${GITHUB_WORKSPACE//\\//}"
+WS="${MCL_WORKSPACE_ROOT//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
 RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 IO_MON_REF="${IO_MON_REF:-dev}"

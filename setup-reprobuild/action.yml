@@ -45,6 +45,14 @@ description: >
   left the critical path.
 
 inputs:
+  consumer-directory:
+    description: Relative consumer checkout under the physical GitHub workspace.
+    required: false
+    default: "."
+  workspace-directory:
+    description: Relative containing SDK workspace for source dependencies.
+    required: false
+    default: "."
   gh-token:
     description: GitHub token (CI App token) for cloning private metacraft-labs repos and Nix flake inputs.
     required: false
@@ -129,6 +137,15 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Resolve explicit checkout and SDK roots
+      id: roots
+      shell: bash
+      env:
+        MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
+        MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
+      run: |
+        . "${GITHUB_ACTION_PATH}/../ci-roots/route.sh"
+        printf 'workspace-directory=%s\nlegacy-layout=%s\n' "$MCL_WORKSPACE_ROOT" "$MCL_LEGACY_LAYOUT" >> "$GITHUB_OUTPUT"
     # Idempotency probe: if a `repro` CLI is already on PATH (e.g. baked into
     # the runner image, or installed by an earlier invocation of this action in
     # the same job), skip everything below. This makes the action a cheap no-op
@@ -137,6 +154,9 @@ runs:
       id: probe
       if: ${{ inputs.from-source != 'true' }}
       shell: bash
+      env:
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
         # `command -v` finds `repro` on Linux/macOS and, under the bash shell
@@ -179,6 +199,8 @@ runs:
         # this action reads as "cannot resolve latest" and turns into a silent,
         # much slower source build.
         REPRO_GITHUB_TOKEN: ${{ inputs.gh-token }}
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -uo pipefail
         install_dir="${RUNNER_TEMP}/reprobuild-release"
@@ -222,6 +244,8 @@ runs:
         ALREADY_PRESENT: ${{ steps.probe.outputs.already-present }}
         RELEASE_INSTALLED: ${{ steps.release.outputs.installed }}
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
         if [ "${ALREADY_PRESENT}" = "true" ]; then
@@ -257,6 +281,8 @@ runs:
         REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
         GH_TOKEN: ${{ inputs.gh-token }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         # Reprobuild's CI matrix builds `repro` on every push, so the
         # default-branch tip is always a known-good source tree. Honour an
@@ -279,7 +305,7 @@ runs:
         # output, scrubbed, naming the repository.
         set -uo pipefail
         REF="${REPRO_BUILD_PIN:-dev}"
-        DEST="${GITHUB_WORKSPACE}/.reprobuild-src"
+        DEST="${MCL_WORKSPACE_ROOT}/.reprobuild-src"
         . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
         export TOKEN_OWNERS="metacraft-labs"
         export SCOPED_GIT_AUTH_MASK=1
@@ -305,9 +331,11 @@ runs:
       shell: bash
       env:
         IO_MON_PIN: ${{ inputs.io-mon-pin }}
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
-        cd "${GITHUB_WORKSPACE}/.reprobuild-src"
+        cd "${MCL_WORKSPACE_ROOT}/.reprobuild-src"
         # Bash 3.2 treats an empty array as unset under nounset. Keep the
         # command itself in the array so the default path is nonempty too.
         nix_develop_args=(develop)
@@ -323,8 +351,8 @@ runs:
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
         nix "${nix_develop_args[@]}" \
           --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
-          --override-input codetracer-native-recorder "path:${GITHUB_WORKSPACE}/codetracer-native-recorder" \
-          --override-input runquota-src "path:${GITHUB_WORKSPACE}/runquota" \
+          --override-input codetracer-native-recorder "path:${MCL_WORKSPACE_ROOT}/codetracer-native-recorder" \
+          --override-input runquota-src "path:${MCL_WORKSPACE_ROOT}/runquota" \
           --command bash -c '
             set -euo pipefail
             just build
@@ -400,9 +428,12 @@ runs:
     - name: Relocate reprobuild + build repro CLI (Windows)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os == 'Windows' }}
       shell: bash
+      env:
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
-        WS="${GITHUB_WORKSPACE}"
+        WS="${MCL_WORKSPACE_ROOT}"
         # Move reprobuild from .reprobuild-src to a sibling location so env.ps1
         # finds codetracer et al. (cloned by reprobuild-provision) at ../<name>.
         if [ -d "${WS}/.reprobuild-src" ] && [ ! -d "${WS}/reprobuild" ]; then
@@ -418,12 +449,15 @@ runs:
     - name: Build repro CLI (Windows)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os == 'Windows' }}
       shell: pwsh
+      env:
+        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
+        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         # Windows-side: replay reprobuild's own DIY contract. Source its env.ps1
         # (which pulls in the toolchain managed by windows/bootstrap-toolchain.ps1)
         # and compile the apps via scripts/build_apps.sh. The build drops
         # `repro.exe` under build\bin\ which we add to GITHUB_PATH.
-        Set-Location "$env:GITHUB_WORKSPACE\reprobuild"
+        Set-Location "$env:MCL_WORKSPACE_ROOT\reprobuild"
         $initialEnv = @{}
         Get-ChildItem env: | ForEach-Object { $initialEnv[$_.Name] = $_.Value }
         . .\env.ps1
@@ -481,9 +515,9 @@ runs:
         }
         # Ensure siblings cloned under GITHUB_WORKSPACE are also accessible from the parent directory
         # (where consumer repro.nim files with ../<sibling> relative imports expect them).
-        $ws = $env:GITHUB_WORKSPACE
+        $ws = $env:MCL_WORKSPACE_ROOT
         $parentWs = Split-Path -Parent $ws
-        if ($parentWs -and (Test-Path -LiteralPath $parentWs)) {
+        if ($env:MCL_LEGACY_LAYOUT -eq "true" -and $parentWs -and (Test-Path -LiteralPath $parentWs)) {
           Get-ChildItem -Path $ws -Directory | ForEach-Object {
             $siblingName = $_.Name
             $target = $_.FullName

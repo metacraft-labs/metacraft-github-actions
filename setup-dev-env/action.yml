@@ -32,6 +32,14 @@ description: >
   https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md
 
 inputs:
+  consumer-directory:
+    description: Relative consumer checkout under the physical GitHub workspace.
+    required: false
+    default: "."
+  workspace-directory:
+    description: Relative containing SDK workspace; nested consumer must be its direct child.
+    required: false
+    default: "."
   env-flavor:
     description: >
       Which env flavor to materialise:
@@ -316,8 +324,20 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Validate env-flavor
+    - name: Resolve explicit consumer and SDK roots
+      id: roots
       shell: bash
+      env:
+        MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
+        MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
+      run: |
+        . "${GITHUB_ACTION_PATH}/../ci-roots/route.sh"
+        printf 'consumer-directory=%s\nworkspace-directory=%s\n' "$MCL_CONSUMER_ROOT" "$MCL_WORKSPACE_ROOT" >> "$GITHUB_OUTPUT"
+    - name: Validate env-flavor
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
+      shell: bash
+      env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: |
         case "${{ inputs.env-flavor }}" in
           nix|windows-diy|reprobuild) ;;
@@ -361,8 +381,10 @@ runs:
 
     - name: Decide which reprobuild store this job builds into
       id: store-root
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         SHARED_STORE_PATH: ${{ inputs.shared-store-path }}
       run: bash "${GITHUB_ACTION_PATH}/decide-store-root.sh"
 
@@ -392,8 +414,10 @@ runs:
 
     - name: Decide the sibling-provisioning strategy
       id: sibling-strategy
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
         ENV_FLAVOR: ${{ inputs.env-flavor }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
@@ -421,8 +445,10 @@ runs:
       # other caller reaches this step exactly as it did before this input
       # existed.
       if: ${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@dev
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@8a77e8e6b5f46349026c06211c47f0e720b11f0a
       with:
+        consumer-directory: ${{ inputs.consumer-directory }}
+        workspace-directory: ${{ inputs.workspace-directory }}
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
         # ONE value reaching both inputs. `sibling-owner` selects the remote
@@ -457,8 +483,10 @@ runs:
 
     - name: Install dev-exec wrapper (nix)
       if: ${{ inputs.env-flavor == 'nix' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         FLAKE_OVERRIDE_INPUTS: ${{ inputs.flake-override-inputs }}
         NIX_ATTR: ${{ inputs.nix-attr }}
         NIX_DEVELOP_ARGS: ${{ inputs.nix-develop-args }}
@@ -517,8 +545,10 @@ runs:
 
     - name: Source env.ps1 + persist env (windows-diy)
       if: ${{ inputs.env-flavor == 'windows-diy' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: pwsh
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         ENV_PS1_PATH: ${{ inputs.env-ps1-path }}
       run: |
         # Source the project's env.ps1 in a fresh PowerShell so we
@@ -572,7 +602,10 @@ runs:
 
     - name: Install dev-exec wrapper (windows-diy)
       if: ${{ inputs.env-flavor == 'windows-diy' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: pwsh
+      env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: |
         # On Windows the env from env.ps1 is already in
         # $GITHUB_ENV / $GITHUB_PATH thanks to the previous step,
@@ -676,8 +709,10 @@ runs:
 
     - name: Provision reprobuild dependencies (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@c2b603a08e9ad68096761074951395d1875bb289
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@8a77e8e6b5f46349026c06211c47f0e720b11f0a
       with:
+        consumer-directory: ${{ inputs.consumer-directory }}
+        workspace-directory: ${{ inputs.workspace-directory }}
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.token-owner }}
         runquota-ref: ${{ inputs.repro-runquota-pin }}
@@ -686,8 +721,10 @@ runs:
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@58da84d5af27408ca598ce69caa83b133e054592
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@8a77e8e6b5f46349026c06211c47f0e720b11f0a
       with:
+        consumer-directory: ${{ inputs.consumer-directory }}
+        workspace-directory: ${{ inputs.workspace-directory }}
         gh-token: ${{ inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
@@ -714,8 +751,10 @@ runs:
     - name: Provision cross-repo siblings from the committed repro.lock
       id: repro-siblings
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
       run: bash "${GITHUB_ACTION_PATH}/provision-siblings-from-lock.sh"
@@ -733,8 +772,10 @@ runs:
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@dev
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@8a77e8e6b5f46349026c06211c47f0e720b11f0a
       with:
+        consumer-directory: ${{ inputs.consumer-directory }}
+        workspace-directory: ${{ inputs.workspace-directory }}
         gh-token: ${{ inputs.gh-token }}
         siblings: ${{ steps.repro-siblings.outputs.late-siblings }}
         sibling-owner: ${{ inputs.token-owner }}
@@ -747,8 +788,10 @@ runs:
 
     - name: Configure reprobuild binary-cache publishing (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.repro-publish-key != '' && inputs.repro-publish-cert != '' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
       env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         REPRO_PUBLISH_KEY: ${{ inputs.repro-publish-key }}
         REPRO_PUBLISH_CERT: ${{ inputs.repro-publish-cert }}
       run: |
@@ -778,12 +821,18 @@ runs:
     # Windows is excluded: its tar is bsdtar, which decompresses in-process.
     - name: Ensure the archive tools repro shells out to (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
+      env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: bash "${GITHUB_ACTION_PATH}/ensure-host-decompressors.sh"
 
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
+      env:
+        MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: |
         set -euo pipefail
         # dev-exec is the policy-mandated indirection so calling
