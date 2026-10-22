@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # Run the existing six workflow shellcheck inventories and real workflow lint.
 set -eu
+# Real-engine integration is explicit: CI's no-argument lint has no Repro
+# dependency, and this script must not guess one from the ambient PATH.
+repro=
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != "--repro" ]; then
+    echo "usage: tools/lint.sh [--repro /absolute/measured/repro]" >&2
+    exit 2
+  fi
+  case "$2" in
+    /*) ;;
+    *) echo "--repro requires an absolute measured executable path" >&2; exit 2 ;;
+  esac
+  if [ ! -f "$2" ] || [ ! -x "$2" ]; then
+    echo "--repro requires an existing executable" >&2
+    exit 2
+  fi
+  repro=$2
+fi
 shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh .github/assert-no-persisted-credential.sh
 shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/publish-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
 shellcheck -S warning refresh-workspace-lock/refresh-workspace-lock.sh refresh-workspace-lock/refresh-workspace-lock-test.sh
@@ -17,3 +35,7 @@ for name in sorted(files):
   compile(path.read_bytes(), name, "exec")
 PYTHON
 actionlint
+
+if [ -n "$repro" ]; then
+  python3 tools/test-install-canonical-hooks.py --repro "$repro"
+fi
