@@ -103,12 +103,24 @@ class ReleaseSelection(unittest.TestCase):
                         r'metacraft-github-actions/setup-reprobuild@[0-9a-f]{40}$')
         for child, source in [('repro-version', 'repro-version'),
                               ('repro-build-pin', 'repro-build-pin'),
-                              ('from-source', 'repro-from-source')]:
+                              ('from-source', 'repro-from-source'),
+                              ('sibling-owner', 'token-owner'),
+                              ('runquota-ref', 'repro-runquota-pin'),
+                              ('io-mon-ref', 'repro-io-mon-pin'),
+                              ('stackable-hooks-pin', 'repro-stackable-hooks-pin')]:
             self.assertIn('        ' + child + ': ${{ inputs.' + source + ' }}\n', step)
         parent_input = re.search(r'^  repro-version:\n(.*?)(?=^  [a-z])',
                                 parent, re.MULTILINE | re.DOTALL)
         self.assertIsNotNone(parent_input)
         self.assertIn('    default: "latest"\n', parent_input.group(1))
+
+    def test_parent_has_no_unconditional_sdk_dependency_provisioner(self):
+        parent = (HERE.parent / 'setup-dev-env' / 'action.yml').read_text()
+        self.assertNotRegex(parent, r'(?m)^\s+uses: metacraft-labs/'
+                            r'metacraft-github-actions/reprobuild-provision@')
+        # Consumer siblings remain independent of SDK source selection.
+        self.assertIn('    - name: Clone cross-repo siblings from the workspace lock\n', parent)
+        self.assertIn('    - name: Provision cross-repo siblings from the committed repro.lock\n', parent)
 
     def test_requested_release_installs_despite_misleading_ambient_cli(self):
         self.archive()
