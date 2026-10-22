@@ -401,10 +401,18 @@ ${bad_link}"
   # Prove the thing actually runs before declaring success. A downloaded archive
   # that cannot exec (missing loader, wrong arch, absent runtime library) should
   # fail here, loudly, rather than three steps later inside somebody's build.
-  if ! "${repro_bin}" --version >/dev/null 2>&1; then
+  local actual_version
+  if ! actual_version="$("${repro_bin}" --version)"; then
     die "installed ${repro_bin} does not execute (missing runtime dependency, or wrong architecture)"
   fi
-  log "installed $("${repro_bin}" --version 2>&1 | head -n 1) from release ${TAG}"
+  # Native Windows writes CRLF; remove only that terminal record delimiter.
+  actual_version="${actual_version%$'\r'}"
+  # Archive integrity and executable version are separate checks. A mislabeled
+  # but checksum-valid archive must not silently satisfy a different SDK pin.
+  if [ "${actual_version}" != "repro ${version}" ]; then
+    die "requested release ${TAG}, but its CLI reports '${actual_version}'; refusing a different SDK"
+  fi
+  log "installed ${actual_version} from release ${TAG}"
 
   printf 'REPRO_BIN_DIR=%s\n' "${INSTALL_DIR}/bin"
 }

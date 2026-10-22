@@ -6,15 +6,14 @@ description: >
 
   Resolution order:
     0. Explicit from-source=true -> build the requested source revision.
-    1. A `repro` already on PATH  -> reuse it, do nothing.
-    2. The prebuilt release archive for this OS/arch -> download, verify its
+    1. The requested prebuilt release archive for this OS/arch -> download, verify its
         SHA-256 against the release's SHA256SUMS, unpack, add bin/ to PATH.
-    3. Source build -- Nix dev shell on Linux/macOS, env.ps1 DIY contract on
+    2. Source build -- Nix dev shell on Linux/macOS, env.ps1 DIY contract on
         Windows. Announced with a ::warning:: rather than taken silently, because
         it is minutes-to-hours slower and needs the sibling repos that
         `reprobuild-provision` clones.
 
-  Step 2 is the reason release archives are published at all. It did not exist
+  Step 1 is the reason release archives are published at all. It did not exist
   until now: this action probed PATH and otherwise went straight to a source
   build, so the release assets were never downloaded by anything.
 
@@ -82,7 +81,7 @@ inputs:
       Release to install the prebuilt `repro` CLI from -- a tag (`v0.2.0`, or
       the bare `0.2.0`) or `latest`. Pin this to make a consumer's CI
       reproducible across reprobuild releases. Ignored when `from-source` is
-      true, or when a `repro` is already on PATH.
+      true. An unrelated CLI on PATH never overrides this selection.
     required: false
     default: "latest"
   io-mon-pin:
@@ -126,12 +125,12 @@ inputs:
 outputs:
   install-source:
     description: >
-      How `repro` ended up on PATH: `path` (already there), `release` (prebuilt
-      archive), or `source` (built here). Useful for asserting in CI that a
+      How `repro` ended up on PATH: `release` (verified prebuilt archive)
+      or `source` (built here). Useful for asserting in CI that a
       given runner class is actually being served by a prebuilt binary.
     value: ${{ steps.decide.outputs.install-source }}
   repro-bin-dir:
-    description: Directory added to PATH containing the `repro` CLI (empty when it was already on PATH).
+    description: Directory added to PATH containing the selected `repro` CLI.
     value: ${{ steps.decide.outputs.repro-bin-dir }}
 
 runs:
@@ -146,36 +145,10 @@ runs:
       run: |
         . "${GITHUB_ACTION_PATH}/../ci-roots/route.sh"
         printf 'workspace-directory=%s\nlegacy-layout=%s\n' "$MCL_WORKSPACE_ROOT" "$MCL_LEGACY_LAYOUT" >> "$GITHUB_OUTPUT"
-    # Idempotency probe: if a `repro` CLI is already on PATH (e.g. baked into
-    # the runner image, or installed by an earlier invocation of this action in
-    # the same job), skip everything below. This makes the action a cheap no-op
-    # on hosts that already ship `repro`.
-    - name: Detect pre-installed repro CLI
-      id: probe
-      if: ${{ inputs.from-source != 'true' }}
-      shell: bash
-      env:
-        MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
-        MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
-      run: |
-        set -euo pipefail
-        # `command -v` finds `repro` on Linux/macOS and, under the bash shell
-        # Git-for-Windows provides, also resolves `repro.exe` via PATHEXT.
-        # Probe the Windows name explicitly too so a `.exe`-only install counts.
-        if command -v repro >/dev/null 2>&1 || command -v repro.exe >/dev/null 2>&1; then
-          resolved="$(command -v repro 2>/dev/null || command -v repro.exe 2>/dev/null || true)"
-          echo "repro already on PATH at: ${resolved}"
-          echo "already-present=true" >> "$GITHUB_OUTPUT"
-          # Keep it on PATH for subsequent workflow steps (its dir may only be
-          # on PATH for this action's shell, not the job-wide $GITHUB_PATH).
-          if [ -n "${resolved}" ]; then
-            dir="$(dirname "${resolved}")"
-            echo "${dir}" >> "$GITHUB_PATH"
-          fi
-        else
-          echo "no repro CLI on PATH"
-          echo "already-present=false" >> "$GITHUB_OUTPUT"
-        fi
+    # PATH discovery is not release identity: an older or incomplete installation
+    # must not suppress the explicitly requested SDK. Reuse requires the owning
+    # store/release provenance, not a successful --version string. Until that
+    # authority is supplied, use the canonical verified installer below.
 
     # ── Preferred path: the prebuilt release binary ───────────────────────────
     #
@@ -187,7 +160,7 @@ runs:
     # source. Only exit 3 is caught here.
     - name: Install prebuilt repro CLI from GitHub Release
       id: release
-      if: ${{ steps.probe.outputs.already-present != 'true' && inputs.from-source != 'true' }}
+      if: ${{ inputs.from-source != 'true' }}
       shell: bash
       env:
         REPRO_VERSION: ${{ inputs.repro-version }}
@@ -241,18 +214,13 @@ runs:
         FROM_SOURCE: ${{ inputs.from-source }}
         REPRO_VERSION: ${{ inputs.repro-version }}
         REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
-        ALREADY_PRESENT: ${{ steps.probe.outputs.already-present }}
         RELEASE_INSTALLED: ${{ steps.release.outputs.installed }}
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
-        if [ "${ALREADY_PRESENT}" = "true" ]; then
-          echo "install-source=path"    >> "$GITHUB_OUTPUT"
-          echo "repro-bin-dir="         >> "$GITHUB_OUTPUT"
-          echo "need-source=false"      >> "$GITHUB_OUTPUT"
-        elif [ "${RELEASE_INSTALLED}" = "true" ]; then
+        if [ "${RELEASE_INSTALLED}" = "true" ]; then
           echo "install-source=release" >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"
