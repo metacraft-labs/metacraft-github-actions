@@ -159,10 +159,11 @@ dependency siblings come from `repro develop --all` against its committed
 
 ## Which reprobuild store a job builds into
 
-The self-hosted Linux runners mount a **shared, persistent** reprobuild
-content-addressed store into every per-job container, at `/srv/repro-store`.
-The runners are ephemeral; the store is not, so an artefact realised by one job
-is meant to still be there for the next.
+Where administrators have configured the shared mount, self-hosted Linux jobs
+can use a **shared, persistent** reprobuild content-addressed store at
+`/srv/repro-store`. The runners are ephemeral; that configured store is not.
+A Linux runner label alone does not establish this wiring: the current rollout
+does not cover every Linux runner, and this action does not create the mount.
 
 Reprobuild uses that store only when `REPRO_STORE_ROOT` points at it. With the
 variable unset it falls back to a per-user cache directory
@@ -178,11 +179,12 @@ This action now makes that choice, on every flavor, and reports it:
 | a directory it cannot write          | exports nothing; **does not fail**          |
 | `REPRO_STORE_ROOT` already set       | leaves the caller's value alone             |
 
-The two "exports nothing" rows are why this is safe to run fleet-wide: on
-GitHub-hosted runners, on macOS and on Windows there is no such mount, and
-falling back to the per-user default is not a degraded state — it is what every
-runner without a shared store already does. Turning a missing optimisation into
-a red build would take out the whole fleet the first time a mount was renamed.
+The two "exports nothing" rows also apply to Linux jobs without a configured
+shared mount. The supported per-user fallback lets setup run across runner
+classes without making an absent optimisation a setup failure. Successful setup
+therefore does not prove that host storage is wired into a guest or that two
+jobs reused it. Missing sharing can remain a deployment defect even while the
+fallback works correctly; deployment and cross-job reuse need their own proof.
 
 Writability is checked with a **real write**, not with `-w`. The store is shared
 between per-job containers and is therefore world-writable, and it is bounded by
