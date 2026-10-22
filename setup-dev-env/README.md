@@ -51,6 +51,16 @@ jobs:
 | `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                             |
 | `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                           |
 
+### Reprobuild release selection
+
+`repro-version` selects a release tag (for example `v0.2.10`) or `latest`
+(the default) whenever the reprobuild flavor or repro-lock strategy installs
+Reprobuild. An ambient CLI never overrides the requested release. The shared
+installer checks the downloaded archive and its reported release version;
+this selection check alone does not qualify complete SDK or warm-store reuse.
+Set `repro-from-source: true` to choose the source route instead; that route
+ignores `repro-version` and uses the source inputs below.
+
 ### Source-built Reprobuild inputs
 
 `repro-build-pin` chooses the Reprobuild source revision.

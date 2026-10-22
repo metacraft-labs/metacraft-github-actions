@@ -192,6 +192,13 @@ inputs:
       working directory.
     required: false
     default: "./env.ps1"
+  repro-version:
+    description: >
+      Reprobuild release tag or latest, forwarded to setup-reprobuild when the
+      reprobuild flavor or repro-lock strategy installs the CLI. An unrelated
+      CLI on PATH does not override it. Ignored when repro-from-source is true.
+    required: false
+    default: "latest"
   repro-from-source:
     description: >
       Build repro from repro-build-pin even when a CLI is already installed
@@ -721,7 +728,7 @@ runs:
 
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@6484f6174df3556e5e81e929e0a68e5666eb4380
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@ef4a13cfcd343f9607fdce788f31298a5f02c073
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -731,6 +738,7 @@ runs:
         attic-token: ${{ inputs.attic-token }}
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
+        repro-version: ${{ inputs.repro-version }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
         from-source: ${{ inputs.repro-from-source }}
         io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}

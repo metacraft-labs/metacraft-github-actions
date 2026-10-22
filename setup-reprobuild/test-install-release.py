@@ -10,6 +10,7 @@ import io
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -86,6 +87,23 @@ class ReleaseSelection(unittest.TestCase):
     def install(self):
         return subprocess.run(['bash', str(HERE / 'install-release.sh')],
                               env=self.env, text=True, capture_output=True, timeout=20)
+
+    def test_parent_forwards_release_and_source_selection_to_published_helper(self):
+        # This guards the composite's actual wiring; HTTP tests below exercise
+        # the selected child's real installer rather than a replacement SDK.
+        parent = (HERE.parent / 'setup-dev-env' / 'action.yml').read_text()
+        step = parent.split('    - name: Install the repro CLI (reprobuild)\n', 1)[1]
+        step = step.split('    # ------------------------------------------------------------------', 1)[0]
+        self.assertRegex(step, r'(?m)^      uses: metacraft-labs/'
+                        r'metacraft-github-actions/setup-reprobuild@[0-9a-f]{40}$')
+        for child, source in [('repro-version', 'repro-version'),
+                              ('repro-build-pin', 'repro-build-pin'),
+                              ('from-source', 'repro-from-source')]:
+            self.assertIn('        ' + child + ': ${{ inputs.' + source + ' }}\n', step)
+        parent_input = re.search(r'^  repro-version:\n(.*?)(?=^  [a-z])',
+                                parent, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(parent_input)
+        self.assertIn('    default: "latest"\n', parent_input.group(1))
 
     def test_requested_release_installs_despite_misleading_ambient_cli(self):
         self.archive()
