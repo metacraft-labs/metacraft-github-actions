@@ -105,8 +105,16 @@ jobs:
       - name: RunQuota bootstrap revision with real Git repositories
         run: python3 reprobuild-provision/test-runquota-ref.py
 
+      # Real local HTTP and archive operations test SDK selection, not the SDK
+      # runtime itself; release smoke tests own the native bundle qualification.
+      - name: Requested release selection and installer contract
+        run: python3 setup-reprobuild/test-install-release.py
+
       - name: Windows hook source stays pinned as mainline advances
         run: python3 reprobuild-provision/test-windows-hooks-pin.py
+
+      - name: status-im/nim-bearssl clone carries the declared credential scope
+        run: python3 reprobuild-provision/test-bearssl-auth.py
 
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh

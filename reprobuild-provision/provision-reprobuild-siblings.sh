@@ -135,10 +135,42 @@ scrub_token() {
 # URLs in the ssh forms, and the selective submodule update below has to reach
 # them over https for the header to authenticate anything.
 #
-# The scope is ONE owner because that is what the CI App token covers. The
-# `status-im/nim-bearssl` clone on the Windows path is therefore deliberately
-# NOT authenticated -- see the note at that clone.
+# EXTRA_TOKEN_URL_PREFIXES: the `status-im/` owner prefix, DECLARED here for
+# the `status-im/nim-bearssl` clone on the Windows path and nowhere else.
+#
+# This file used to say that clone could not be authenticated, because the CI
+# credential is a GitHub App installation token for `metacraft-labs` and
+# `status-im` has no installation of that app. The premise is true; the
+# conclusion was not. GitHub does not require a credential to be SCOPED to a
+# repository to accept it on a PUBLIC one, only to be VALID: an installation
+# token grants no private access outside its installation, and `nim-bearssl`
+# needs none. Measured (metacraft-github-actions run 34273033056, job
+# 102219153977) with an installation token covering nothing in `status-im`:
+#
+#   anonymous ls-remote of status-im/nim-bearssl            -> rc=0 (control)
+#   same, installation token in a preemptive extraHeader    -> rc=0, right SHA
+#   same header against the token's own repository         -> rc=0 (control)
+#
+# and GitHub reads the header rather than ignoring it: a fake token in the same
+# header is rejected on the same public repository. An authenticated request is
+# not drawn against the per-IP anonymous budget, which is the point of this
+# whole file.
+#
+# The OWNER prefix rather than the one repository, because `nim-bearssl`'s
+# `bearssl/csources` submodule is `status-im/BearSSL`, a second fetch on the
+# same budget. This does NOT widen any default: `TOKEN_OWNERS` is still the one
+# sibling owner, and `setup-nix/configure-git-auth-test.sh` still asserts that
+# `status-im` receives no credential under the default scope. The declaration
+# is pinned on the wire by `test-bearssl-auth.py`.
+#
+# Built on GIT_AUTH_URL_BASE for the same reason `authenticated-clone.sh` is: it
+# is github.com in production, and the contract suite points it at a local
+# authenticating git server. `scoped_git_auth_build` refuses any base that is
+# not github.com or loopback.
+URL_BASE="${GIT_AUTH_URL_BASE:-https://github.com/}"
 export TOKEN_OWNERS="${SIBLING_OWNER}"
+STATUS_IM_SCOPE="${URL_BASE}status-im/"
+export EXTRA_TOKEN_URL_PREFIXES="${STATUS_IM_SCOPE}"
 export SCOPED_GIT_AUTH_REWRITES=1
 export SCOPED_GIT_AUTH_MASK=1
 scoped_git_auth_build || exit 1
@@ -196,7 +228,7 @@ preflight() { # <owner/name> <rev>
   # the line above would build the URL from an empty ${repo} and preflight the
   # wrong remote -- which, being a `ls-remote` of "https://github.com/.git",
   # would fail every pin and look exactly like the defect this script fixes.
-  local url="https://github.com/${repo}.git"
+  local url="${URL_BASE}${repo}.git"
   local out rc=0
   # `git -C "${NEUTRAL_DIR}"` -- RUN THIS FROM OUTSIDE THE CHECKOUT, and this
   # is not a stylistic preference.
@@ -325,38 +357,36 @@ else
     libs/nim-json-serialization \
     libs/nim-stew \
     libs/nimcrypto; then
-    echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed. The scoped credential covers '${SIBLING_OWNER}' only; a submodule hosted under another owner cannot be authenticated by it."
+    echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed. The scoped credential covers '${SIBLING_OWNER}' (plus the declared status-im prefix) only; a private submodule hosted under another owner cannot be authenticated by it."
     exit 1
   fi
 
   # -----------------------------------------------------------------------
-  # status-im/nim-bearssl -- THE ONE CLONE THIS FIX DOES NOT AUTHENTICATE.
+  # status-im/nim-bearssl -- the third-party clone, authenticated too.
   # -----------------------------------------------------------------------
   #
   # Reprobuild's peer-cache apps import `status-im/nim-bearssl`. The Nix dev
   # shell supplies it through BEARSSL_SRC; Windows env.ps1 resolves it as a
   # sibling checkout.
   #
-  # It is fetched anonymously and there is no honest way to change that from
-  # here. The CI credential is a GitHub App INSTALLATION token for the
-  # `metacraft-labs` org; `status-im` is a different org with no installation
-  # of that app, and the owner-scoped header deliberately does not cover it
-  # (`authenticated-clone-test.sh` asserts that a third-party owner receives
-  # no credential, and that assertion is correct and should stay).
+  # This block used to call itself "THE ONE CLONE THIS FIX DOES NOT
+  # AUTHENTICATE", on the premise that the metacraft-labs App token cannot
+  # cover another org. It can, for a PUBLIC repository -- see the measurement
+  # at EXTRA_TOKEN_URL_PREFIXES above, which is what now authenticates this
+  # clone and its `status-im/BearSSL` submodule through the same preemptive
+  # header as every other clone here. Left anonymous, it was the one fetch on
+  # this path still drawn against the fleet's shared per-IP budget.
   #
-  # So this clone remains subject to the same per-IP anonymous limit as
-  # before. It is a PUBLIC third-party repository on the WINDOWS path only,
-  # and closing it needs a credential this org does not currently have -- see
-  # the action manifest for what that would take. It is called out loudly
-  # rather than quietly retried, because an unauthenticated fallback that
-  # usually works is how a hard failure becomes an intermittent one.
+  # The URL stays credential-FREE, as everywhere else in this file: a
+  # credential in a URL is not sent to a public repository at all (see the top
+  # of this file), so it must travel in the header.
   bearssl_ref="9a4eed052abbded2d94feaf3f5bbd95a30ec4671"
   bearssl_dest="${WS}/nim-bearssl"
-  echo "reprobuild-provision: status-im/nim-bearssl @ ${bearssl_ref} -> ${bearssl_dest} (ANONYMOUS: the metacraft-labs App token cannot authenticate another org; this clone alone remains exposed to GitHub's per-IP unauthenticated limit)"
+  echo "reprobuild-provision: status-im/nim-bearssl @ ${bearssl_ref} -> ${bearssl_dest} (authenticated through the declared '${STATUS_IM_SCOPE}' credential scope, submodule included)"
   rm -rf "${bearssl_dest}"
   if ! git clone --quiet --depth 1 --recurse-submodules \
-    "https://github.com/status-im/nim-bearssl.git" "${bearssl_dest}"; then
-    echo "::error::reprobuild-provision: cloning status-im/nim-bearssl failed. This is the one clone on this path that is unauthenticated by necessity (see the comment above it), so a GitHub 'temporarily limiting some unauthenticated downloads' error here is expected under fleet load and is NOT the same defect as the metacraft-labs clones above."
+    "${URL_BASE}status-im/nim-bearssl.git" "${bearssl_dest}"; then
+    echo "::error::reprobuild-provision: cloning status-im/nim-bearssl failed. This clone is authenticated through the declared '${STATUS_IM_SCOPE}' credential scope (when a gh-token is supplied -- check the scope report above), so GitHub's 'temporarily limiting some unauthenticated downloads' here means the header did not reach git, not an expected consequence of fleet load."
     exit 1
   fi
   if ! git -C "${bearssl_dest}" fetch --quiet --depth 1 origin "${bearssl_ref}" ||

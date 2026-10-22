@@ -26,6 +26,12 @@ inputs:
       `https://github.com/some-partner/one-repo.git`) or that owner's prefix
       (`https://github.com/some-partner/`). Matching is by slash-delimited path
       prefix, so naming one repository does not authenticate its neighbours.
+      A second, easily missed use: a cross-org PUBLIC fetch that must stop
+      being anonymous. GitHub accepts any VALID credential on a public
+      repository without requiring it to be scoped there, so this org's App
+      token declared for `https://github.com/status-im/` lifts those fetches
+      off the per-IP unauthenticated budget the ephemeral fleet shares (see
+      `reprobuild-provision/provision-reprobuild-siblings.sh`).
     required: false
     default: ""
   substituters:
@@ -120,9 +126,25 @@ runs:
         #     `github.com/<owner>=` as an entry matching nothing — silently
         #     unauthenticating every private flake input in the org.
         #
-        # Both send the token only to github.com, which issued it; the exposure
-        # is that Nix attaches it to fetches of third-party github.com repos.
-        # Narrowing them needs a Nix version floor, which is a separate change.
+        # Both send the token only to github.com, which issued it, and both
+        # reach only Nix's OWN HTTP traffic (`github:` inputs, tarballs,
+        # `builtins.fetch*` downloads); the exposure is that a third-party
+        # `github:` input gets it too. Narrowing them needs a Nix version
+        # floor, which is a separate change.
+        #
+        # They do NOT reach a `git+https://` input, and reading this note as if
+        # they did sends a diagnosis the wrong way. That fetcher execs the `git`
+        # binary with no credential of any kind (intercepted argv+env on Nix
+        # 2.25.2/2.28.5/2.28.7; `netrc`, `accessToken` and `extraHeader` occur
+        # nowhere in libfetchers/{git,git-utils}.cc through 2.35.2), so it is
+        # authenticated by the process's git configuration -- the Git CLI
+        # credential below -- or not at all, and a third-party one rides the
+        # fleet's shared per-IP anonymous budget. Its 401 prints `fatal: could
+        # not read Username for 'https://github.com'`, which does NOT prove
+        # that no credential was sent: with no credential helper reachable
+        # (GIT_CONFIG_GLOBAL=/dev/null), a REJECTED preemptive header prints
+        # the identical line. Diagnose by asking which configured scope matches
+        # the failing URL, not by the message.
         cat << EOF > "$HOME/.config/nix/nix.conf"
           # Enable flakes + nix-command additively, so this holds even when the
           # DeterminateSystems installer is skipped because Nix is pre-installed
