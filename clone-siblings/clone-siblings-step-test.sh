@@ -980,6 +980,25 @@ lacks "12a: the record store was not contacted" "$OUT" "Cloning manifests repo"
 lacks "12a: and no record-store diagnostic appears" "$OUT" "metacraft-manifests"
 contains "12a: the resolution table names the committed lock" "$OUT" "committed repro.lock"
 
+# Path-free v3 locks resolve by dependency identity and exclude the self entry.
+CL_V3="$TMPROOT/committed-v3.lock"
+{
+  printf 'schema = "reprobuild.solved-graph-lock.v3"\n[lock]\n'
+  printf 'deps = [{ name = "nim-acp", self = "true", revision = "%s", integrity = "git-sha1:%s" }, { name = "nim-acp", revision = "%s", integrity = "git-sha1:%s" }]\n' "$SELF_SHA" "$SELF_SHA" "$ACP_PIN" "$ACP_PIN"
+} >"$CL_V3"
+COMMITTED_LOCK="$CL_V3" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "v3: a path-free committed lock resolves siblings" "$RC" "0"
+check "v3: self is excluded and the named sibling pin is cloned" \
+  "$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$ACP_PIN"
+lacks "v3: the record store is not contacted" "$OUT" "Cloning manifests repo"
+
+# Legacy sibling paths are machine-local hints, never an alternate identity.
+CL_STALE_PATH="$TMPROOT/committed-stale-path.lock"
+mk_committed_lock "$CL_STALE_PATH" "$(dep_entry unrelated ../nim-acp "$ACP_PIN")"
+COMMITTED_LOCK="$CL_STALE_PATH" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "v2: a stale path cannot impersonate a different dependency name" "$RC" "1"
+contains "v2: the missing dependency is diagnosed" "$OUT" "nim-acp"
+
 # 12b. A sibling the committed lock does not pin is a NAMED refusal, raised
 #      before anything is cloned, naming the remedy — never a tip, never a
 #      silent detour through a record store the project did not opt into.

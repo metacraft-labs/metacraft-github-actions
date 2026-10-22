@@ -39,9 +39,9 @@
 #
 #   1. `$GITHUB_WORKSPACE/repro.lock` exists and declares a solved-graph-lock
 #      schema.
-#   2. It pins at least one SIBLING dependency — a dep whose `path` is not
-#      "." (the root/consumer entry). A root-only lock has nothing for
-#      `repro develop --all` to provision, so routing to it would replace a
+#   2. It pins at least one SIBLING dependency — a dep without `self = "true"`
+#      (or legacy `path = "."`, the root/consumer entry). A root-only lock has
+#      nothing for `repro develop --all` to provision, so routing to it would replace a
 #      working clone step with a no-op.
 #   3. `env-flavor` is `reprobuild`. The repro path needs the `repro` CLI, and
 #      `reprobuild` is the one flavor where setup-dev-env is already going to
@@ -101,11 +101,16 @@ LOCK_SIBLINGS=0
 if [ -f "${LOCK}" ]; then
   LOCK_STATE="foreign"
   _schema_ok=0
+  _legacy=0
   while IFS= read -r _line || [ -n "${_line}" ]; do
     # Trim leading whitespace; the lock is TOML and the two keys we read are
     # written at column 0 today, but nothing in TOML requires that.
     _t="${_line#"${_line%%[![:space:]]*}"}"
     case "${_t}" in
+    'schema = "reprobuild.solved-graph-lock.v2"')
+      _schema_ok=1
+      _legacy=1
+      ;;
     'schema = "reprobuild.solved-graph-lock.v'*)
       # Any solved-graph-lock schema version, not just v2. A version bump must
       # not silently demote every repo to clone-siblings; the CLI probe later
@@ -113,18 +118,25 @@ if [ -f "${LOCK}" ]; then
       _schema_ok=1
       ;;
     'deps = ['*)
-      # One line, one array of inline tables. Count the entries whose `path`
-      # is not "." — those are the siblings. `path = "."` is the consumer
-      # itself and is not something to provision.
-      _rest="${_t}"
+      # Count named entries, excluding v3's explicit self marker and v2's
+      # legacy root marker. Sibling paths are never needed to route the lock.
+      _rest="${_t#deps = [}"
       while :; do
         case "${_rest}" in
-        *'path = "'*)
-          _rest="${_rest#*path = \"}"
-          _val="${_rest%%\"*}"
-          if [ "${_val}" != "." ]; then
-            LOCK_SIBLINGS=$((LOCK_SIBLINGS + 1))
-          fi
+        *'{ '*' }'*)
+          _entry="${_rest%%" }"*}"
+          _rest="${_rest#*" }"}"
+          _rest="${_rest#", "}"
+          case ", ${_entry#\{ }" in
+          *', self = "true"'*) ;;
+          *', name = "'*)
+            _self=0
+            if [ "${_legacy}" -eq 1 ]; then
+              case ", ${_entry}" in *', path = "."'*) _self=1 ;; esac
+            fi
+            [ "${_self}" -eq 1 ] || LOCK_SIBLINGS=$((LOCK_SIBLINGS + 1))
+            ;;
+          esac
           ;;
         *) break ;;
         esac
@@ -184,7 +196,7 @@ lock_gap_reason() {
   case "${LOCK_STATE}" in
   absent) printf 'there is no repro.lock at %s' "${LOCK}" ;;
   foreign) printf '%s exists but declares no reprobuild.solved-graph-lock schema' "${LOCK}" ;;
-  root-only) printf '%s pins no sibling dependency (every dep is path = ".", the consumer itself)' "${LOCK}" ;;
+  root-only) printf '%s pins no sibling dependency (every dep is the consumer itself)' "${LOCK}" ;;
   *) printf 'the committed lock is usable' ;;
   esac
 }

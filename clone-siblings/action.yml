@@ -26,11 +26,18 @@
 # CI went on passing. An entry that replaces a revision the lock DOES pin is now
 # reported on every run, warned about, and refusable with `on-lock-override`.
 #
-# WHICH COMMIT'S LOCK, AND WHY MAINLINE DOES NOT LOCK ITSELF
+# WHICH COMMIT'S LOCK, AND WHY MAINLINE DOES NOT LOCK ITSELF (record-store only)
 #
-# The step below probes the pushed commit (falling back to its parent for
-# GitHub merge commits) or the pull request's base — both MAINLINE commits —
-# and `--no-walk` requires the probed commit ITSELF to carry a lock.
+# Under the default `lock-store: committed` none of what follows applies: the
+# pin is the triggering commit's own committed `repro.lock`, which every commit
+# carries in its tree — including the merge commit GitHub creates when a pull
+# request lands — so there is no candidate commit to probe and nothing to
+# publish (reprobuild-specs/Unified-Locking-And-Hooks.md §14.5, §14.6).
+#
+# Under `lock-store: record-store` the step below probes the pushed commit
+# (falling back to its parent for GitHub merge commits) or the pull request's
+# base — both MAINLINE commits — and `--no-walk` requires the probed commit
+# ITSELF to carry a record.
 #
 # That is not a property mainline has on its own. The pre-push gate locks
 # commits leaving a WORKSPACE; a PR-based repo's mainline commits are created
@@ -38,10 +45,16 @@
 # `codetracer@dev` and `infra@live` not one first-parent commit in the last
 # thirty carried a lock, and every job that reached that line died there.
 #
-# `publish-workspace-lock` (this repo) is what makes the premise true for a
-# merged pull request whose HEAD was locked: it re-anchors that record onto the
-# mainline commit. The alternative — relaxing `--no-walk` into an ancestry walk
-# — was rejected twice over: it cannot rescue `infra`, which has no locked
+# For a record-store project, `publish-workspace-lock` (this repo) is what
+# makes the premise true for a merged pull request whose HEAD was locked: it
+# re-anchors that record onto the mainline commit, and only when the caller
+# passes `lock-store: record-store` (without it, it publishes nothing). No
+# repository calls it that way today, and the per-repo publisher workflows
+# that called it without the opt-in are being removed (from 2026-10-14); a
+# project that opts into a record store has to add one back.
+#
+# The alternative — relaxing `--no-walk` into an ancestry walk — was rejected
+# twice over: it cannot rescue `infra`, which has no locked
 # ancestor within reach, and it would answer a merge commit with pins that
 # PREDATE the merge, which is exactly wrong for a pull request whose content is
 # a sibling bump.
