@@ -10,8 +10,10 @@ description: >
         SHA-256 against the release's SHA256SUMS, unpack, add bin/ to PATH.
     2. Source build -- Nix dev shell on Linux/macOS, env.ps1 DIY contract on
         Windows. Announced with a ::warning:: rather than taken silently, because
-        it is minutes-to-hours slower and needs the sibling repos that
-        `reprobuild-provision` clones.
+        it is minutes-to-hours slower. Only this source path invokes the
+        canonical `reprobuild-provision` dependency action, after cloning the
+        selected Reprobuild source and before compiling it. Verified release
+        installation does not clone or build SDK source dependencies.
 
   Step 1 is the reason release archives are published at all. It did not exist
   until now: this action probed PATH and otherwise went straight to a source
@@ -26,9 +28,10 @@ description: >
   repo costs no extra download at all, because every consumer is already
   fetching this repo to read `setup-dev-env`.
 
-  This action does not read the reprobuild worktree: `install-release.sh`
-  comes along via the `github.action_path` context, and the source-build
-  fallback clones reprobuild itself, at that point and only then.
+  `install-release.sh` comes along via the `github.action_path` context.
+  Only the source constructor clones the Reprobuild worktree and provisions
+  its build dependencies. Source dependency overrides retain their existing
+  defaults; this sequencing change does not introduce lock-derived selection.
 
   Name that context in prose only, as `github.action_path`. Do NOT write it in
   the double-brace expression form anywhere in this field: GitHub's
@@ -86,6 +89,22 @@ inputs:
     default: "latest"
   io-mon-pin:
     description: Optional full io-mon source SHA for a Linux/macOS source build; empty retains the Reprobuild flake lock.
+    required: false
+    default: ""
+  sibling-owner:
+    description: GitHub owner used by the canonical source dependency provisioner.
+    required: false
+    default: "metacraft-labs"
+  runquota-ref:
+    description: RunQuota source ref forwarded unchanged to source dependency provisioning.
+    required: false
+    default: "dev"
+  io-mon-ref:
+    description: Windows io-mon source ref; the separate io-mon-pin selects the POSIX Nix override.
+    required: false
+    default: "dev"
+  stackable-hooks-pin:
+    description: Optional full lowercase Windows hook-library SHA; empty retains the provisioner's existing default.
     required: false
     default: ""
   from-source:
@@ -282,6 +301,21 @@ runs:
         scoped_git_auth_report
         bash "${GIT_AUTH_DIR}/authenticated-clone.sh" \
           --repo metacraft-labs/reprobuild --dest "${DEST}" --rev "${REF}" --shallow
+
+    # SDK source dependencies belong to the selected source constructor, not
+    # to every caller that might receive a verified release instead. Keep the
+    # existing provisioner and its defaults; this only changes when it runs.
+    - name: Provision selected Reprobuild source dependencies
+      if: ${{ steps.decide.outputs.need-source == 'true' }}
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@6484f6174df3556e5e81e929e0a68e5666eb4380
+      with:
+        consumer-directory: ${{ inputs.consumer-directory }}
+        workspace-directory: ${{ inputs.workspace-directory }}
+        gh-token: ${{ inputs.gh-token }}
+        sibling-owner: ${{ inputs.sibling-owner }}
+        runquota-ref: ${{ inputs.runquota-ref }}
+        io-mon-ref: ${{ inputs.io-mon-ref }}
+        stackable-hooks-pin: ${{ inputs.stackable-hooks-pin }}
 
     - name: Install Nix (Linux/macOS, to build repro)
       if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' }}

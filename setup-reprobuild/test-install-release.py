@@ -20,14 +20,19 @@ import unittest
 HERE = Path(__file__).resolve().parent
 
 
-def step_body(name):
+def step_lines(name):
     lines = (HERE / 'action.yml').read_text().splitlines()
     start = lines.index('    - name: ' + name)
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].startswith('    - name: ')), len(lines))
-    run = lines.index('      run: |', start, end)
+    return lines[start:end]
+
+
+def step_body(name):
+    lines = step_lines(name)
+    run = lines.index('      run: |')
     return '\n'.join(line[8:] if line.startswith('        ') else ''
-                    for line in lines[run + 1:end]) + '\n'
+                    for line in lines[run + 1:]) + '\n'
 
 
 class ReleaseSelection(unittest.TestCase):
@@ -170,6 +175,67 @@ class ReleaseSelection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('install-source=source', Path(self.env['GITHUB_OUTPUT']).read_text())
         self.assertIn('from-source=true', result.stdout)
+
+    def test_source_dependency_action_is_guarded_and_ordered(self):
+        source = (HERE / 'action.yml').read_text()
+        provision = 'Provision selected Reprobuild source dependencies'
+        step = '\n'.join(step_lines(provision))
+        self.assertIn("      if: ${{ steps.decide.outputs.need-source == 'true' }}", step)
+        self.assertRegex(step, r'(?m)^      uses: metacraft-labs/'
+                        r'metacraft-github-actions/reprobuild-provision@[0-9a-f]{40}$')
+        self.assertLess(source.index('    - name: Clone reprobuild source'), source.index(provision))
+        for build in ['Install Nix (Linux/macOS, to build repro)',
+                      'Build repro CLI (Linux/macOS)',
+                      'Relocate reprobuild + build repro CLI (Windows)',
+                      'Build repro CLI (Windows)']:
+            self.assertLess(source.index(provision), source.index('    - name: ' + build))
+
+    def test_source_dependency_inputs_preserve_canonical_defaults_and_overrides(self):
+        source = (HERE / 'action.yml').read_text()
+        canonical = (HERE.parent / 'reprobuild-provision' / 'action.yml').read_text()
+        step = '\n'.join(step_lines('Provision selected Reprobuild source dependencies'))
+        for name in ['consumer-directory', 'workspace-directory', 'gh-token',
+                    'sibling-owner', 'runquota-ref', 'io-mon-ref', 'stackable-hooks-pin']:
+            self.assertIn('        ' + name + ': ${{ inputs.' + name + ' }}', step)
+            pattern = r'^  ' + re.escape(name) + r':\n(.*?)(?=^  [a-z]|^outputs:|^runs:)'
+            child_input = re.search(pattern, source, re.MULTILINE | re.DOTALL)
+            canonical_input = re.search(pattern, canonical, re.MULTILINE | re.DOTALL)
+            self.assertIsNotNone(child_input, name)
+            self.assertIsNotNone(canonical_input, name)
+            default = r'^    default: (.*)$'
+            self.assertEqual(re.search(default, child_input.group(1), re.MULTILINE).group(1),
+                            re.search(default, canonical_input.group(1), re.MULTILINE).group(1), name)
+
+    def test_release_decision_disables_source_dependencies(self):
+        self.env.update(RELEASE_INSTALLED='true', RELEASE_BIN_DIR='/selected/package/bin',
+                        FROM_SOURCE='false', REPRO_BUILD_PIN='dev')
+        result = subprocess.run(['bash', '-c', step_body('Decide install path')],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('need-source=false', Path(self.env['GITHUB_OUTPUT']).read_text().splitlines())
+
+    def test_real_no_asset_fallback_selects_source_dependencies(self):
+        self.assertEqual(self.install().returncode, 3)
+        self.env.update(RELEASE_INSTALLED='false', RELEASE_BIN_DIR='',
+                        FROM_SOURCE='false', REPRO_BUILD_PIN='dev')
+        result = subprocess.run(['bash', '-c', step_body('Decide install path')],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = Path(self.env['GITHUB_OUTPUT']).read_text().splitlines()
+        self.assertIn('need-source=true', output)
+        self.assertIn('install-source=source', output)
+        self.assertIn('FALLING BACK to a source build', result.stdout)
+
+    def test_release_integrity_error_stops_before_source_selection(self):
+        self.archive(corrupt_checksum=True)
+        self.env['GITHUB_ACTION_PATH'] = str(HERE)
+        body = step_body('Install prebuilt repro CLI from GitHub Release')
+        body = body.replace('${{ github.action_path }}', '${GITHUB_ACTION_PATH}')
+        result = subprocess.run(['bash', '-c', body], env=self.env, text=True,
+                                capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('Not falling back to a source build', result.stdout)
+        self.assertFalse(Path(self.env['GITHUB_OUTPUT']).exists())
 
 
 if __name__ == '__main__':
