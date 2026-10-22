@@ -166,12 +166,15 @@ through `direnv exec . <command>`.
 It supplies native Python, UV and Prek; the committed configuration requires
 system Python and the canonical upstream checker execution path.
 
-Install the portable hook and reconcile the matching managed dispatcher with
+Select a measured Repro build. When changing the servicing engine, first run
+`direnv exec . /absolute/path/to/repro hooks ensure --vcs .` to reconcile the
+owning managed hooks normally. Then install the portable hook with
 `direnv exec . python3 tools/install-canonical-hooks.py --repro /absolute/path/to/repro`.
-Select a measured Repro build. The installer reconciles its canonical managed
-hook and verifies that exact generated contract with the same selected engine;
-a version string or dispatcher protocol alone does not establish a match. The installer
-refuses unknown local hooks, external hook paths and mismatched generated bodies.
+The installer verifies its generated contract with that same selected engine;
+a version string or dispatcher protocol alone does not establish a match.
+It deliberately preserves the existing pre-push bytes, so an engine change
+belongs in the preceding canonical reconciliation. It refuses unknown local
+hooks, external hook paths and mismatched generated bodies.
 Run `direnv exec . prek run --all-files` and the unchanged test workflow commands.
 Native Windows formatter/tool provisioning remains an open qualification gap.
 
