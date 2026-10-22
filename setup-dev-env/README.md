@@ -61,6 +61,15 @@ this selection check alone does not qualify complete SDK or warm-store reuse.
 Set `repro-from-source: true` to choose the source route instead; that route
 ignores `repro-version` and uses the source inputs below.
 
+For the reprobuild flavor, setup performs the first use of the real consumer's
+development environment before installing `dev-exec`: `repro exec` must run a
+small Bash witness command successfully. This can materialize the recipe's
+declared environment and tools during setup. An unsupported command, a failure,
+or success without the witness fails setup while retaining its diagnostics.
+This checks the required CLI operation; it does not certify archive companions,
+native Windows behavior, or warm-store reuse. Other flavors retain their own
+environment path, including the existing lock-schema checks for `repro-lock`.
+
 ### Source-built Reprobuild inputs
 
 `repro-build-pin` chooses the Reprobuild source revision.

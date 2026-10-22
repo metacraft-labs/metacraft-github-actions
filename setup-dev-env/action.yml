@@ -835,6 +835,39 @@ runs:
         MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: bash "${GITHUB_ACTION_PATH}/ensure-host-decompressors.sh"
 
+    - name: Verify Reprobuild development-environment execution
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        # First use of the real consumer environment, after its siblings and
+        # host archive tools are ready. A version/capabilities banner cannot
+        # establish that this SDK implements the exec operation we publish.
+        witness='setup-dev-env: repro exec witness v1'
+        if output="$(repro exec -- bash -c 'printf "%s\n" "setup-dev-env: repro exec witness v1"')"; then
+          status=0
+        else
+          status=$?
+        fi
+        # Keep ordinary materialization output, including on failure. Stderr
+        # flows directly from repro; never turn a printed witness into success
+        # when the CLI itself failed.
+        printf '%s\n' "$output"
+        if [ "$status" -ne 0 ]; then
+          echo "::error::setup-dev-env: repro exec failed (exit $status)" >&2
+          exit "$status"
+        fi
+        found=false
+        while IFS= read -r line; do
+          # Accept a native Windows CRLF terminator, not surrounding whitespace.
+          if [ "${line%$'\r'}" = "$witness" ]; then found=true; fi
+        done <<< "$output"
+        if [ "$found" != true ]; then
+          echo "::error::setup-dev-env: repro exec returned success without executing its witness command" >&2
+          exit 1
+        fi
+
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       working-directory: ${{ steps.roots.outputs.consumer-directory }}

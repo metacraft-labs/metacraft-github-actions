@@ -110,6 +110,9 @@ jobs:
       - name: Requested release selection and installer contract
         run: python3 setup-reprobuild/test-install-release.py
 
+      - name: Required development-environment execution contract
+        run: python3 setup-dev-env/test-repro-exec.py
+
       - name: Windows hook source stays pinned as mainline advances
         run: python3 reprobuild-provision/test-windows-hooks-pin.py
 
