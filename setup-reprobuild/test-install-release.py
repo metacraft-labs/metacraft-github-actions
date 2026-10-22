@@ -122,6 +122,35 @@ class ReleaseSelection(unittest.TestCase):
         self.assertIn('    - name: Clone cross-repo siblings from the workspace lock\n', parent)
         self.assertIn('    - name: Provision cross-repo siblings from the committed repro.lock\n', parent)
 
+    def test_windows_preparation_preserves_consumer_and_selected_source(self):
+        for collision in (False, True):
+            with self.subTest(existing_consumer=collision):
+                workspace = self.root / ('collision' if collision else 'empty')
+                selected = workspace / '.reprobuild-src'
+                (selected / 'apps').mkdir(parents=True)
+                entrypoints = selected / 'apps' / 'entrypoints.txt'
+                entrypoints.write_bytes(b'selected-sdk\r\n')
+                consumer = workspace / 'reprobuild'
+                if collision:
+                    (consumer / 'apps').mkdir(parents=True)
+                    (consumer / 'apps' / 'entrypoints.txt').write_bytes(b'consumer\r\n')
+                env = dict(self.env, MCL_WORKSPACE_ROOT=str(workspace))
+                result = subprocess.run(
+                    ['bash', '-c', step_body('Prepare selected reprobuild source (Windows)')],
+                    env=env, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(selected.is_dir())
+                self.assertEqual(entrypoints.read_bytes(), b'selected-sdk\n')
+                if collision:
+                    self.assertEqual((consumer / 'apps' / 'entrypoints.txt').read_bytes(),
+                                      b'consumer\r\n')
+                else:
+                    self.assertFalse(consumer.exists())
+        # The real PowerShell constructor must consume the same selected tree.
+        build = step_body('Build repro CLI (Windows)')
+        self.assertIn('Set-Location "$env:MCL_WORKSPACE_ROOT\\.reprobuild-src"', build)
+        self.assertNotIn('Set-Location "$env:MCL_WORKSPACE_ROOT\\reprobuild"', build)
+
     def test_requested_release_installs_despite_misleading_ambient_cli(self):
         self.archive()
         ambient = self.root / 'ambient'
@@ -198,7 +227,7 @@ class ReleaseSelection(unittest.TestCase):
         self.assertLess(source.index('    - name: Clone reprobuild source'), source.index(provision))
         for build in ['Install Nix (Linux/macOS, to build repro)',
                       'Build repro CLI (Linux/macOS)',
-                      'Relocate reprobuild + build repro CLI (Windows)',
+                      'Prepare selected reprobuild source (Windows)',
                       'Build repro CLI (Windows)']:
             self.assertLess(source.index(provision), source.index('    - name: ' + build))
 
