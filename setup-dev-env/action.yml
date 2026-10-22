@@ -20,11 +20,11 @@ description: >
       committed `repro.lock`, via `repro develop --all`);
     - the `nix` flavor uses `metacraft-labs/metacraft-github-actions/setup-nix`;
     - the `windows-diy` flavor sources the repo's `env.ps1`;
-    - the `reprobuild` flavor uses
-      `metacraft-labs/metacraft-github-actions/reprobuild-provision` (clone the
-      dependency siblings) + `.../setup-reprobuild` (build the `repro` CLI).
-      Both moved OUT of `metacraft-labs/reprobuild` and into this repo; the
-      `uses:` lines below say so, and the note above them says why.
+    - the `reprobuild` flavor uses `.../setup-reprobuild` to install the
+      requested release first. Only its source constructor invokes
+      `.../reprobuild-provision` for SDK build dependencies. Consumer siblings
+      retain the independent selection described above. Both SDK sub-actions
+      live in this repo; the note above the installer explains why.
   This action then installs the unified `dev-exec` wrapper for the chosen flavor,
   so calling workflows carry no checkout/resolve/clone/toolchain-install steps.
 
@@ -643,16 +643,9 @@ runs:
     # ------------------------------------------------------------------
     # env-flavor: reprobuild
     #
-    # Build the `repro` CLI from source on the runner.  We deliberately
-    # do this rather than fetch a pre-built binary because:
-    #
-    #   * reprobuild's own release pipeline is still in flight, so
-    #     pinned binaries aren't published yet.
-    #
-    #   * Building from source on the runner is the deterministic
-    #     contract — it's what a developer does on their workstation
-    #     before `repro exec` is available.  Faster CIs can substitute
-    #     a cached binary once that pipeline lands.
+    # Install the requested release first. Only an explicit source request
+    # or missing release asset selects the source constructor and its SDK
+    # dependency provisioner; integrity failures remain hard failures.
     #
     # The build itself reuses the dev env the runner already knows how
     # to materialise: Linux/macOS via the reprobuild repo's nix flake;
@@ -660,9 +653,9 @@ runs:
     # paths drop a `repro` (or `repro.exe`) at a known location which
     # we then prepend to PATH.
     #
-    # HOW THIS RELATES TO `sibling-strategy`. These two steps are NOT a third
-    # sibling mechanism and the repro path does not duplicate them. They
-    # provision REPROBUILD'S OWN build inputs — the flake inputs the `repro`
+    # HOW THIS RELATES TO `sibling-strategy`. The installer is NOT a third
+    # consumer sibling mechanism. Only its source constructor provisions
+    # REPROBUILD'S OWN build inputs — the flake inputs the `repro`
     # CLI build needs — which is what `reprobuild-provision`'s own header says
     # its remaining scope is. It also says, in the same header, that a CONSUMER
     # project's from-source dependency siblings come from `repro develop --all`
@@ -672,8 +665,8 @@ runs:
     # here regardless. Under another flavor `auto` declines, because silently
     # adding a from-source CLI build to a `nix` job is not a decision `auto`
     # may take on its own — but a FORCED `repro-lock` gets the CLI installed
-    # under any flavor, which is what the two `|| ... == 'repro-lock'`
-    # conditions below are for.
+    # under any flavor, which is what the installer's
+    # `|| ... == 'repro-lock'` condition below is for.
     # ------------------------------------------------------------------
 
     # WHY THESE TWO ACTIONS LIVE IN THIS REPO AND NOT IN `reprobuild`.
@@ -714,21 +707,11 @@ runs:
     # every repo this one reaches into, so the next `uses:` that points at a
     # large repo fails HERE instead of in a consumer's `Set up job`.
 
-    - name: Provision reprobuild dependencies (reprobuild)
-      if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@6484f6174df3556e5e81e929e0a68e5666eb4380
-      with:
-        consumer-directory: ${{ inputs.consumer-directory }}
-        workspace-directory: ${{ inputs.workspace-directory }}
-        gh-token: ${{ inputs.gh-token }}
-        sibling-owner: ${{ inputs.token-owner }}
-        runquota-ref: ${{ inputs.repro-runquota-pin }}
-        io-mon-ref: ${{ inputs.repro-io-mon-pin }}
-        stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
-
     - name: Install the repro CLI (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@ef4a13cfcd343f9607fdce788f31298a5f02c073
+      # The leaf provisions SDK source dependencies only after selecting its
+      # source constructor. A verified release must not pay for those clones.
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@088108c3b78a451979403fbbaf9c142bf931fd06
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -742,6 +725,10 @@ runs:
         repro-build-pin: ${{ inputs.repro-build-pin }}
         from-source: ${{ inputs.repro-from-source }}
         io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}
+        sibling-owner: ${{ inputs.token-owner }}
+        runquota-ref: ${{ inputs.repro-runquota-pin }}
+        io-mon-ref: ${{ inputs.repro-io-mon-pin }}
+        stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
 
     # ------------------------------------------------------------------
     # sibling-strategy: repro-lock — the consumer half

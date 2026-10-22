@@ -80,6 +80,13 @@ available as `runquota-ref` on the standalone `reprobuild-provision` action.
 The consumer project's lock and sibling selection are independent of these
 bootstrap inputs.
 
+The installer invokes the existing SDK source-dependency provisioner only
+after selecting an explicit source build or a missing-asset fallback. Verified
+release installation does not clone or build those SDK source dependencies.
+Consumer-project siblings still follow `sibling-strategy` as before. This
+sequencing change retains the existing override values and defaults; it does
+not introduce lock-derived SDK dependency selection or qualify runtime reuse.
+
 ## Which mechanism clones the siblings
 
 There are two, and they answer different questions:
