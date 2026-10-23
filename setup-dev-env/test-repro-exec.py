@@ -57,6 +57,19 @@ exec "$@"''')
         self.assertIn('materializing declared environment\n', result.stdout)
         self.assertIn(WITNESS + '\n', result.stdout)
 
+    def test_lingering_child_holding_stdout_does_not_hang_the_step(self):
+        # 2026-10-23: on Windows `repro exec` leaves runquotad.exe running with
+        # the inherited stdout. A `$(...)` capture waits for EOF from every
+        # writer, so every win-hms job sat in this step until its 240-minute
+        # timeout. The step must wait for `repro exec` itself, not its children.
+        result = self.run_step('''set -eu
+test "$1" = exec && test "$2" = --
+shift 2
+( read -t 30 <> <(:) || true ) &
+"$@"''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(WITNESS + '\n', result.stdout)
+
     def test_false_success_with_global_help_is_refused(self):
         result = self.run_step("printf 'usage: repro <command>\n'; exit 0")
         self.assertEqual(result.returncode, 1)

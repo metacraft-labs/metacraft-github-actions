@@ -832,14 +832,29 @@ runs:
         # host archive tools are ready. A version/capabilities banner cannot
         # establish that this SDK implements the exec operation we publish.
         witness='setup-dev-env: repro exec witness v1'
-        if output="$(repro exec -- bash -c 'printf "%s\n" "setup-dev-env: repro exec witness v1"')"; then
+        # Capture into FILES, not `$(...)` or the step's own pipes. A command
+        # substitution waits for EOF from EVERY process holding its pipe, and on
+        # Windows `repro exec` leaves runquotad.exe running with the inherited
+        # stdout and stderr. The capture then never returns and the job sits in
+        # this step until its timeout (2026-10-23: every win-hms job, 240 min).
+        # With files, bash waits for `repro exec` itself only. Bash builtins
+        # only: this runs before dev-exec exists, so no coreutils are assumed.
+        witness_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+        witness_out="$witness_dir/setup-dev-env-witness.$$.out"
+        witness_err="$witness_dir/setup-dev-env-witness.$$.err"
+        if repro exec -- bash -c 'printf "%s\n" "setup-dev-env: repro exec witness v1"' \
+            > "$witness_out" 2> "$witness_err"; then
           status=0
         else
           status=$?
         fi
-        # Keep ordinary materialization output, including on failure. Stderr
-        # flows directly from repro; never turn a printed witness into success
+        output="$(<"$witness_out")"
+        errors="$(<"$witness_err")"
+        : > "$witness_out"; : > "$witness_err"
+        # Keep ordinary materialization output, including on failure, on the
+        # stream repro wrote it to; never turn a printed witness into success
         # when the CLI itself failed.
+        [ -z "$errors" ] || printf '%s\n' "$errors" >&2
         printf '%s\n' "$output"
         if [ "$status" -ne 0 ]; then
           echo "::error::setup-dev-env: repro exec failed (exit $status)" >&2
