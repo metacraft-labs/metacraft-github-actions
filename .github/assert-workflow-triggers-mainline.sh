@@ -58,19 +58,21 @@
 # pass it explicitly.
 #
 # Run:  bash .github/assert-workflow-triggers-mainline.sh [MAINLINE] [FILE...]
-# Discovery needs Node 20/24 in the local development environment. The action
+# File I/O needs Node 20/24 in the local development environment. The action
 # supplies its declared runtime's actual executable via WORKFLOW_TRIGGERS_NODE.
-set -uo pipefail
+set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir=${BASH_SOURCE[0]%/*}
+if [ "$script_dir" = "${BASH_SOURCE[0]}" ]; then script_dir=.; fi
+HERE="$(cd -- "$script_dir" && pwd)" || exit 2
 
-# Normally the tree under test is this script's own repository. The composite
+# Normally the tree under test is this script's own repository. The Node
 # action ships the guard from a DIFFERENT checkout than the one being checked,
 # so it points this at the caller's workspace instead.
 if [ -n "${WORKFLOW_TRIGGERS_ROOT-}" ]; then
-  ROOT="$(cd "$WORKFLOW_TRIGGERS_ROOT" && pwd)"
+  ROOT="$(cd -- "$WORKFLOW_TRIGGERS_ROOT" && pwd)" || exit 2
 else
-  ROOT="$(cd "$HERE/.." && pwd)"
+  ROOT="$(cd -- "$HERE/.." && pwd)" || exit 2
 fi
 
 MAINLINE="${1-}"
@@ -81,7 +83,15 @@ if [ -z "$MAINLINE" ]; then
 fi
 
 if [ -z "$MAINLINE" ]; then
-  heads="$(git -C "$ROOT" ls-remote --heads origin 2>/dev/null | sed 's#.*refs/heads/##')"
+  # Git is needed only for detection. Preserve its diagnostic and refuse even
+  # a plausible partial listing when the command did not finish successfully.
+  if heads="$(git -C "$ROOT" ls-remote --heads origin)"; then
+    :
+  else
+    detection_status=$?
+    echo "assert-workflow-triggers-mainline: could not list branches on origin (exit $detection_status)." >&2
+    exit 2
+  fi
   if [ -z "$heads" ]; then
     echo "assert-workflow-triggers-mainline: could not list branches on origin," >&2
     echo "  and no mainline was given. Pass it as the first argument." >&2
@@ -89,10 +99,13 @@ if [ -z "$MAINLINE" ]; then
     exit 2
   fi
   for candidate in dev latest live; do
-    if printf '%s\n' "$heads" | grep -qxF "$candidate"; then
-      MAINLINE="$candidate"
-      break
-    fi
+    while IFS=$'\t' read -r _object ref; do
+      if [ "$ref" = "refs/heads/$candidate" ]; then
+        MAINLINE="$candidate"
+        break
+      fi
+    done <<<"$heads"
+    if [ -n "$MAINLINE" ]; then break; fi
   done
   if [ -z "$MAINLINE" ]; then
     echo "assert-workflow-triggers-mainline: no dev/latest/live branch on origin." >&2
@@ -110,7 +123,7 @@ else
   # for discovery to succeed before using any filenames: a failed traversal
   # can emit a valid subset, and checking that subset would be a false pass.
   # Keep stderr attached so an operational failure retains its actual cause.
-  if workflow_files="$("${WORKFLOW_TRIGGERS_NODE:-node}" "$HERE/enumerate-workflows.cjs" "$ROOT/.github/workflows" | sort)"; then
+  if workflow_files="$("${WORKFLOW_TRIGGERS_NODE:-node}" "$HERE/enumerate-workflows.cjs" "$ROOT/.github/workflows")"; then
     if [ -n "$workflow_files" ]; then
       while IFS= read -r f; do
         FILES+=("$f")
@@ -168,22 +181,20 @@ unquote() { # <token>
 # `with:`. It tracks: whether we are inside the top-level `on:` mapping, which
 # event we are under, and which filter key (`branches` / `branches-ignore` /
 # `tags`) is currently open.
-scan() { # <file>
+scan() { # <file> <complete contents>
   # Two statements, not one: bash expands every word of a `local` command
   # before it performs any of the assignments, so `local a="$1" b="${a}"`
   # reads the OUTER `a` — unset here, and fatal under `set -u`.
   local file="$1"
   local rel="${file#"$ROOT"/}"
-  local line stripped indent lineno=0
+  local line stripped indent
   local in_on=0 on_indent=-1
   local event="" event_indent=-1
   local filter="" filter_indent=-1
-  local exempt_reason=""
 
   # Per-event accumulators, kept as newline-separated text because bash 3.2
   # (the macOS default) has no associative arrays.
   local branches_seen="" ignore_seen="" tags_seen=""
-  local reported=""
 
   finish_event() {
     [ -z "$event" ] && return 0
@@ -195,14 +206,13 @@ scan() { # <file>
       done <<<"$branches_seen"
       if [ "$ok" -eq 0 ]; then
         echo "FAIL ${rel}: \`on: ${event}: branches:\` does not name the mainline \`${MAINLINE}\`."
-        echo "     It lists: $(printf '%s' "$branches_seen" | tr '\n' ' ')"
+        echo "     It lists: ${branches_seen//$'\n'/ }"
         echo "     A ${event} to \`${MAINLINE}\` therefore runs none of this workflow, and"
         echo "     an empty check list on a mainline commit looks exactly like a clean one."
         echo "     Add \`${MAINLINE}\` to the list. If this workflow genuinely must not run"
         echo "     on the mainline, say why in the file:"
         echo "       # ci-mainline-exempt: <reason>"
         rc=1
-        reported=1
       fi
     elif [ -n "$ignore_seen" ]; then
       while IFS= read -r pat; do
@@ -211,7 +221,6 @@ scan() { # <file>
           echo "FAIL ${rel}: \`on: ${event}: branches-ignore:\` excludes the mainline \`${MAINLINE}\`"
           echo "     via \`${pat}\`, so a ${event} to the mainline runs none of this workflow."
           rc=1
-          reported=1
         fi
       done <<<"$ignore_seen"
     fi
@@ -219,14 +228,7 @@ scan() { # <file>
   }
 
   while IFS= read -r line || [ -n "$line" ]; do
-    lineno=$((lineno + 1))
     stripped="${line#"${line%%[![:space:]]*}"}"
-
-    case "$stripped" in
-    '# ci-mainline-exempt:'*)
-      exempt_reason="$(unquote "${stripped#'# ci-mainline-exempt:'}")"
-      ;;
-    esac
 
     # Comments and blank lines carry no structure.
     case "$stripped" in
@@ -345,36 +347,51 @@ scan() { # <file>
         ;;
       esac
     fi
-  done <"$file"
+  done <<<"$2"
   finish_event
-
-  if [ -n "$exempt_reason" ]; then
-    if [ -n "$reported" ]; then
-      # The exemption applies: withdraw the findings reported above.
-      echo "     (exempt: ${exempt_reason})"
-    fi
-    return 0
-  fi
   return 0
 }
 
-# `scan` sets `rc` directly, but an exemption must be able to withdraw its
-# findings, which means the decision has to be made after the whole file is
-# read. Run each file in a subshell, keep its output, and only let it count
-# when the file carries no exemption.
+# Read the whole file before either exemption checks or scanning. Bash read
+# returns the same status for EOF and a read error, so reading the filesystem
+# in its line loop can silently accept an empty or partially checked file.
+# The declared Node runtime buffers the read and reports operational failures.
 for f in "${FILES[@]}"; do
   if [ ! -f "$f" ]; then
     echo "assert-workflow-triggers-mainline: no such file: $f" >&2
     exit 2
   fi
   rel="${f#"$ROOT"/}"
-  if grep -q '^[[:space:]]*# ci-mainline-exempt:[[:space:]]*[^[:space:]]' "$f"; then
-    reason="$(sed -n 's/^[[:space:]]*# ci-mainline-exempt:[[:space:]]*//p' "$f" | head -1)"
+  if workflow="$("${WORKFLOW_TRIGGERS_NODE:-node}" "$HERE/read-workflow.cjs" "$f")"; then
+    :
+  else
+    read_status=$?
+    echo "assert-workflow-triggers-mainline: could not read workflow file $f (exit $read_status)." >&2
+    exit 2
+  fi
+
+  exempt=0
+  has_reason=0
+  reason=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    stripped="${line#"${line%%[![:space:]]*}"}"
+    case "$stripped" in
+    '# ci-mainline-exempt:'*)
+      value="${stripped#'# ci-mainline-exempt:'}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      # Retain the first marker's text and the existing any-reason precedence.
+      if [ "$exempt" -eq 0 ]; then reason="$value"; fi
+      exempt=1
+      if [ -n "$value" ]; then has_reason=1; fi
+      ;;
+    esac
+  done <<<"$workflow"
+  if [ "$has_reason" -eq 1 ]; then
     echo "skip ${rel}: exempt — ${reason}"
     checked=$((checked + 1))
     continue
   fi
-  if grep -q '^[[:space:]]*# ci-mainline-exempt:[[:space:]]*$' "$f"; then
+  if [ "$exempt" -eq 1 ]; then
     echo "FAIL ${rel}: \`# ci-mainline-exempt:\` with no reason."
     echo "     An exemption without a reason is not a decision, it is a way to make"
     echo "     this guard quiet. Say what this workflow deploys or protects instead."
@@ -382,10 +399,7 @@ for f in "${FILES[@]}"; do
     checked=$((checked + 1))
     continue
   fi
-  out="$(rc=0; scan "$f"; exit "$rc")"
-  frc=$?
-  [ -n "$out" ] && printf '%s\n' "$out"
-  [ "$frc" -ne 0 ] && rc=1
+  scan "$f" "$workflow"
   checked=$((checked + 1))
 done
 

@@ -28,7 +28,10 @@ function enumerateWorkflows(directory) {
   } finally {
     handle.closeSync();
   }
-  return filenames;
+  // Own the ordering as well as discovery; the caller needs no ambient sort.
+  return filenames.sort((a, b) =>
+    Buffer.compare(Buffer.from(a), Buffer.from(b)),
+  );
 }
 
 module.exports = { enumerateWorkflows };

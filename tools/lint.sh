@@ -37,6 +37,7 @@ PYTHON
 actionlint
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
+node --check .github/read-workflow.cjs
 node --check .github/assert-workflow-triggers-action-test.cjs
 node --test .github/assert-workflow-triggers-action-test.cjs
 

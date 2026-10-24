@@ -42,11 +42,13 @@ Add it to any workflow that already checks the repository out:
 ```
 
 The action declares a Node 24 runtime and passes that executable to its
-filesystem enumerator. It needs neither `node` nor `find` on the caller's
-`PATH`; it retains the Bash filter scanner and its ordinary shell utilities.
-No tools or packages are downloaded by the action. The direct shell command
-requires Node 20 or 24 for discovery (provided by this repository's `shell.nix`),
-or an explicit executable in `WORKFLOW_TRIGGERS_NODE`.
+filesystem helpers. Only Bash is required on the caller's `PATH` when the
+mainline is explicit; automatic mainline detection also needs Git. The filter
+scanner uses Bash builtins, and Node finishes each file read before scanning
+or exempting it. Failed reads or origin listings are errors even if they have
+produced partial output. No tools or packages are downloaded by the action.
+The direct shell command requires Node 20 or 24 for file I/O (provided by this
+repository's `shell.nix`), or an explicit executable in `WORKFLOW_TRIGGERS_NODE`.
 
 The optional `workflows` input retains Bash word splitting and pathname
 expansion in the caller's working directory. An empty input discovers both
