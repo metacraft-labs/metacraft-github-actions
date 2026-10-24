@@ -526,6 +526,11 @@ runs:
           EXTRA_FLAGS=" $NIX_DEVELOP_ARGS"
         fi
 
+        # Keep each captured environment reachable for the job, including its
+        # source-only inputs. Runtime-process GC heuristics are not job roots.
+        profile_root="$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/mcl-nix-profiles.XXXXXX")"
+        printf -v PROFILE_ROOT_SHELL '%q' "$profile_root"
+
         mkdir -p "$HOME/.local/bin"
         cat > "$HOME/.local/bin/dev-exec" <<EOF
         #!/usr/bin/env bash
@@ -537,7 +542,10 @@ runs:
         # attribute selector (if any) comes from 'nix-attr', and
         # any extra nix-develop args from 'nix-develop-args'.
         set -euo pipefail
-        exec nix develop$OVERRIDE_FLAGS$ATTR_FLAG$EXTRA_FLAGS --command "\$@"
+        profile_root=$PROFILE_ROOT_SHELL
+        # Unique per invocation: another dev-exec cannot replace a live root.
+        profile_dir="\$(mktemp -d "\$profile_root/invocation.XXXXXX")"
+        exec nix develop --profile "\$profile_dir/profile"$OVERRIDE_FLAGS$ATTR_FLAG$EXTRA_FLAGS --command "\$@"
         EOF
         chmod +x "$HOME/.local/bin/dev-exec"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
