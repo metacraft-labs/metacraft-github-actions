@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Exercise discovery through the shipped guard and real workflow files. chmod
-# removes directory access, and real find verifies the operational failure.
-# The only test double is a find wrapper for partial enumeration: it runs real
-# find, emits one of the real filenames, then fails. A traversal that fails
-# after yielding a subset depends on filesystem races and directory ordering;
+# removes directory access, and the real Node enumerator verifies the failure.
+# The only test double is a runtime wrapper for partial enumeration: it runs
+# the real Node enumerator, emits one of its real filenames, then fails. A read
+# that fails after yielding a subset depends on filesystem races and ordering;
 # this injection makes its exit-status contract deterministic. It does not
 # replace the unmodified discovery, filter rejection or permission controls.
 # Run as an unprivileged user; a filesystem that ignores the permission fixture
@@ -13,6 +13,10 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$HERE/assert-workflow-triggers-mainline.sh"
+ENUMERATOR="$HERE/enumerate-workflows.cjs"
+WORKFLOW_DISCOVERY_TEST_REAL_NODE="$(command -v node)"
+export WORKFLOW_DISCOVERY_TEST_REAL_NODE
+export WORKFLOW_TRIGGERS_NODE="$WORKFLOW_DISCOVERY_TEST_REAL_NODE"
 discovery_test_dir="$(mktemp -d)"
 locked="$discovery_test_dir/unreadable/.github/workflows"
 cleanup() {
@@ -78,20 +82,24 @@ check 'an actually empty workflow directory is refused' 2 "$discovery_test_dir/e
 check 'the permission fixture initially contains a valid workflow' 0 \
   "$discovery_test_dir/unreadable" '1 workflow(s)'
 chmod 000 "$locked"
-if find "$locked" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) \
-  >"$discovery_test_dir/find.stdout" 2>"$discovery_test_dir/find.stderr"; then
-  printf 'FAIL setup: real find could read the permission-denied fixture\n' >&2
+if "$WORKFLOW_DISCOVERY_TEST_REAL_NODE" "$ENUMERATOR" "$locked" \
+  >"$discovery_test_dir/discovery.stdout" 2>"$discovery_test_dir/discovery.stderr"; then
+  printf 'FAIL setup: real enumerator could read the permission-denied fixture\n' >&2
   exit 1
 fi
-if ! grep -q 'Permission denied' "$discovery_test_dir/find.stderr"; then
-  printf 'FAIL setup: real find failed for an unexpected reason\n' >&2
-  cat "$discovery_test_dir/find.stderr" >&2
+# Node names the real OS failure by its portable error code, rather than
+# find's platform-dependent message. Also require the failing directory.
+if ! grep -q 'EACCES' "$discovery_test_dir/discovery.stderr" || \
+  ! grep -qF "$locked" "$discovery_test_dir/discovery.stderr" || \
+  [ -s "$discovery_test_dir/discovery.stdout" ]; then
+  printf 'FAIL setup: real enumeration failed for an unexpected reason or emitted a partial list\n' >&2
+  cat "$discovery_test_dir/discovery.stderr" >&2
   exit 1
 fi
 printf 'control: '
-cat "$discovery_test_dir/find.stderr"
+cat "$discovery_test_dir/discovery.stderr"
 check 'discovery preserves the real filesystem failure diagnostic' 2 \
-  "$discovery_test_dir/unreadable" 'Permission denied' \
+  "$discovery_test_dir/unreadable" 'EACCES' "$locked" \
   'could not enumerate workflow files' '(exit 1)'
 
 # The complete real directory has a bad filter. Returning only its valid file
@@ -103,13 +111,11 @@ cp "$discovery_test_dir/invalid/.github/workflows/ci.yml" "$partial_root/.github
 check 'complete real discovery rejects the file omitted by the injection' 1 \
   "$partial_root" 'omitted.yaml' 'does not name the mainline'
 
-WORKFLOW_DISCOVERY_TEST_REAL_FIND="$(command -v find)"
-export WORKFLOW_DISCOVERY_TEST_REAL_FIND
-cat >"$discovery_test_dir/bin/find" <<'SH'
+cat >"$discovery_test_dir/bin/partial-node" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 # Enumerate real files first; inject only truncation and the final failure.
-listing="$("$WORKFLOW_DISCOVERY_TEST_REAL_FIND" "$@")"
+listing="$("$WORKFLOW_DISCOVERY_TEST_REAL_NODE" "$@")"
 while IFS= read -r file; do
   case "$file" in
     */ci.yml) printf '%s\n' "$file" ;;
@@ -118,9 +124,9 @@ done <<<"$listing"
 echo 'injected enumeration failure after a real filename' >&2
 exit 23
 SH
-chmod +x "$discovery_test_dir/bin/find"
-if partial_output="$(PATH="$discovery_test_dir/bin:$PATH" find \
-  "$partial_root/.github/workflows" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) \
+chmod +x "$discovery_test_dir/bin/partial-node"
+if partial_output="$("$discovery_test_dir/bin/partial-node" "$ENUMERATOR" \
+  "$partial_root/.github/workflows" \
   2>"$discovery_test_dir/partial.stderr")"; then
   partial_status=0
 else
@@ -131,7 +137,7 @@ if [ "$partial_status" -ne 23 ] || [ "$partial_output" != "$partial_root/.github
   exit 1
 fi
 printf 'control: partial enumeration emitted %s and exited %s\n' "$partial_output" "$partial_status"
-PATH="$discovery_test_dir/bin:$PATH" check \
+WORKFLOW_TRIGGERS_NODE="$discovery_test_dir/bin/partial-node" check \
   'a failed enumeration cannot pass by checking its valid subset' 2 \
   "$partial_root" 'injected enumeration failure after a real filename' \
   'could not enumerate workflow files' '(exit 23)'

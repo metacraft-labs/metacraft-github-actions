@@ -35,6 +35,10 @@ for name in sorted(files):
   compile(path.read_bytes(), name, "exec")
 PYTHON
 actionlint
+node --check assert-workflow-triggers/index.cjs
+node --check .github/enumerate-workflows.cjs
+node --check .github/assert-workflow-triggers-action-test.cjs
+node --test .github/assert-workflow-triggers-action-test.cjs
 
 if [ -n "$repro" ]; then
   python3 tools/test-install-canonical-hooks.py --repro "$repro"

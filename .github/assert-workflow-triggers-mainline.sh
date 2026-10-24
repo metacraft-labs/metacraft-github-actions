@@ -58,6 +58,8 @@
 # pass it explicitly.
 #
 # Run:  bash .github/assert-workflow-triggers-mainline.sh [MAINLINE] [FILE...]
+# Discovery needs Node 20/24 in the local development environment. The action
+# supplies its declared runtime's actual executable via WORKFLOW_TRIGGERS_NODE.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,7 +110,7 @@ else
   # for discovery to succeed before using any filenames: a failed traversal
   # can emit a valid subset, and checking that subset would be a false pass.
   # Keep stderr attached so an operational failure retains its actual cause.
-  if workflow_files="$(find "$ROOT/.github/workflows" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' | sort)"; then
+  if workflow_files="$("${WORKFLOW_TRIGGERS_NODE:-node}" "$HERE/enumerate-workflows.cjs" "$ROOT/.github/workflows" | sort)"; then
     if [ -n "$workflow_files" ]; then
       while IFS= read -r f; do
         FILES+=("$f")

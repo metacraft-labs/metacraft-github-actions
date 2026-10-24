@@ -499,7 +499,7 @@ fi
 # report a vacuous success.
 empty="$TMP/empty/.github"
 mkdir -p "$empty"
-cp "$GUARD" "$empty/"
+cp "$GUARD" "$HERE/enumerate-workflows.cjs" "$empty/"
 out="$(bash "$empty/assert-workflow-triggers-mainline.sh" dev 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
@@ -510,7 +510,7 @@ fi
 
 # Refuses to guess a mainline when it cannot detect one.
 mkdir -p "$TMP/norepo/.github/workflows"
-cp "$GUARD" "$TMP/norepo/.github/"
+cp "$GUARD" "$HERE/enumerate-workflows.cjs" "$TMP/norepo/.github/"
 cat >"$TMP/norepo/.github/workflows/ci.yml" <<'YAML'
 on:
   push:
@@ -527,7 +527,7 @@ fi
 # Detects the mainline from the branches that exist, in policy order.
 detect_repo="$TMP/detect"
 mkdir -p "$detect_repo/.github/workflows"
-cp "$GUARD" "$detect_repo/.github/"
+cp "$GUARD" "$HERE/enumerate-workflows.cjs" "$detect_repo/.github/"
 cat >"$detect_repo/.github/workflows/ci.yml" <<'YAML'
 on:
   push:
