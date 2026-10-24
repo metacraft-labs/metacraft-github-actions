@@ -20,7 +20,8 @@ let
     prettier
     shellcheck
     actionlint
-    nodejs
+    # Match the workflow guard action runtime and its real launcher tests.
+    nodejs_24
     dpkg
     rpm
     libarchive

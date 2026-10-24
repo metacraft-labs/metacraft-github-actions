@@ -5,7 +5,7 @@ name: test
 # builds rather than failing this one. Its contract suite therefore runs on
 # every change to it.
 #
-# Deliberately stock `ubuntu-latest` with nothing but checkout, bash and git:
+# Deliberately stock `ubuntu-latest` with checkout, Bash, Git and Node:
 # no Nix, no dev shell, no secrets, no self-hosted runner. A guard must not
 # share the failure modes of the things it guards.
 
@@ -407,8 +407,14 @@ jobs:
       - name: mainline-trigger guard contract suite
         run: bash .github/assert-workflow-triggers-mainline-test.sh
 
+      - name: workflow discovery contract suite
+        run: bash .github/assert-workflow-triggers-discovery-test.sh
+
+      - name: actual workflow action runtime and input contracts
+        run: node --test .github/assert-workflow-triggers-action-test.cjs
+
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh .github/assert-workflow-triggers-discovery-test.sh
 
   portable-hooks:
     # Independent native POSIX hook qualification; existing guard jobs unchanged.

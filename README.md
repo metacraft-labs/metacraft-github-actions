@@ -41,6 +41,21 @@ Add it to any workflow that already checks the repository out:
 - uses: metacraft-labs/metacraft-github-actions/assert-workflow-triggers@dev
 ```
 
+The action declares a Node 24 runtime and passes that executable to its
+filesystem helpers. Only Bash is required on the caller's `PATH` when the
+mainline is explicit; automatic mainline detection also needs Git. The filter
+scanner uses Bash builtins, and Node finishes each file read before scanning
+or exempting it. Failed reads or origin listings are errors even if they have
+produced partial output. No tools or packages are downloaded by the action.
+The direct shell command requires Node 20 or 24 for file I/O (provided by this
+repository's `shell.nix`), or an explicit executable in `WORKFLOW_TRIGGERS_NODE`.
+
+The optional `workflows` input retains Bash word splitting and pathname
+expansion in the caller's working directory. An empty input discovers both
+workflow suffixes in the caller's `.github/workflows` directory. Input text is
+never evaluated as shell code. Failed or empty enumeration is an error, even
+when an incomplete enumeration has already emitted a valid filename.
+
 The mainline is detected from the branches that exist on `origin`, in
 [branching-policy](https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/branching-policy.md)
 order — `dev`, then `latest`, then `live`. Detection has no `main` fallback: a
