@@ -24,7 +24,7 @@ shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-wo
 shellcheck -S warning refresh-workspace-lock/refresh-workspace-lock.sh refresh-workspace-lock/refresh-workspace-lock-test.sh
 shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh
 shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh
-shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
+shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh .github/assert-workflow-triggers-discovery-test.sh
 shellcheck -S warning tools/lint.sh .envrc
 python3 - <<'PYTHON'
 import pathlib, subprocess

@@ -104,9 +104,21 @@ if [ "$#" -gt 0 ]; then
   FILES=("$@")
 else
   FILES=()
-  while IFS= read -r f; do
-    FILES+=("$f")
-  done < <(find "$ROOT/.github/workflows" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' 2>/dev/null | sort)
+  # A process substitution hides its pipeline's status from the reader. Wait
+  # for discovery to succeed before using any filenames: a failed traversal
+  # can emit a valid subset, and checking that subset would be a false pass.
+  # Keep stderr attached so an operational failure retains its actual cause.
+  if workflow_files="$(find "$ROOT/.github/workflows" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' | sort)"; then
+    if [ -n "$workflow_files" ]; then
+      while IFS= read -r f; do
+        FILES+=("$f")
+      done <<<"$workflow_files"
+    fi
+  else
+    discovery_status=$?
+    echo "assert-workflow-triggers-mainline: could not enumerate workflow files under $ROOT/.github/workflows (exit $discovery_status)." >&2
+    exit 2
+  fi
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then

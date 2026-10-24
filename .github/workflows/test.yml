@@ -407,8 +407,11 @@ jobs:
       - name: mainline-trigger guard contract suite
         run: bash .github/assert-workflow-triggers-mainline-test.sh
 
+      - name: workflow discovery contract suite
+        run: bash .github/assert-workflow-triggers-discovery-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh
+        run: shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh .github/assert-workflow-triggers-discovery-test.sh
 
   portable-hooks:
     # Independent native POSIX hook qualification; existing guard jobs unchanged.
