@@ -760,6 +760,10 @@ runs:
         MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
+        GH_TOKEN: ${{ inputs.gh-token }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+        GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
+        SCOPED_GIT_AUTH_MASK: "1"
       run: bash "${GITHUB_ACTION_PATH}/provision-siblings-from-lock.sh"
 
     - name: Clone the siblings the repro.lock path did not provide

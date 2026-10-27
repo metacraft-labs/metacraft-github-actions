@@ -157,6 +157,15 @@ dependency siblings come from `repro develop --all` against its committed
 `repro.lock`. `sibling-strategy: repro-lock` is that consumer half, which is why
 `auto` prefers it under this flavor — the CLI is being installed regardless.
 
+Private locked siblings use the existing `gh-token` and `token-owner` inputs.
+The shared Git-auth helper carries scoped HTTP headers in a private temporary
+Git configuration only while materializing the siblings, then removes it on
+success or failure. It uses `GIT_CONFIG_GLOBAL`, the supported Repro channel;
+numbered invocation configuration is intentionally scrubbed by Repro. No token
+is placed in clone URLs, process arguments or persistent checkout configuration.
+The helper retains its credential-free GitHub SSH-to-HTTPS rewrites, so SSH
+coordinates use the same owner-scoped headers rather than an ambient SSH key.
+
 ## Which reprobuild store a job builds into
 
 Where administrators have configured the shared mount, self-hosted Linux jobs

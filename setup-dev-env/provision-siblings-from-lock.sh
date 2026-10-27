@@ -78,8 +78,9 @@
 # FAILS CLOSED: an output it cannot parse is "not usable", which routes to the
 # fallback rather than to a wrong answer.
 #
-# PORTABILITY. Pure bash builtins plus `repro`. Bash 3.2-clean (GitHub's macOS
-# images ship 3.2): no associative arrays, no `declare -n`, no coreutils, and
+# PORTABILITY. Bash 3.2-compatible syntax plus `repro` and standard Git Bash,
+# macOS/Linux temp/file tools (`mktemp`, `rm`, `rmdir`, `dirname`); no bootstrap.
+# No associative arrays or `declare -n`, and
 # no `${#arr[@]}` on a possibly-empty array under `set -u` — element counts are
 # carried in plain integers instead. Same rule as clone-siblings.sh.
 set -uo pipefail
@@ -424,7 +425,11 @@ while [ "${_i}" -lt "${JS_REPO_N}" ]; do
 done
 echo "::endgroup::"
 
-if ! (cd "${WS}" && repro develop --all); then
+# Use the shared scope derivation and Repro's supported Git credential channel.
+# A numbered-config export alone is intentionally scrubbed by its Git actions.
+# shellcheck source=../git-auth/scoped-git-auth.sh
+. "${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}/scoped-git-auth.sh"
+if ! (cd "${WS}" && scoped_git_auth_with_global repro develop --all); then
   {
     echo "::error::setup-dev-env: 'repro develop --all' failed after the committed lock had"
     echo "  been accepted as usable. This is NOT a resolution problem — every sibling above"
