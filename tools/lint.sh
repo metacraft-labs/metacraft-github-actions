@@ -35,6 +35,7 @@ for name in sorted(files):
   compile(path.read_bytes(), name, "exec")
 PYTHON
 actionlint
+python3 git-auth/test-private-global-config.py
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
 node --check .github/read-workflow.cjs
@@ -43,4 +44,5 @@ node --test .github/assert-workflow-triggers-action-test.cjs
 
 if [ -n "$repro" ]; then
   python3 tools/test-install-canonical-hooks.py --repro "$repro"
+  python3 git-auth/test-private-global-config.py --repro "$repro"
 fi

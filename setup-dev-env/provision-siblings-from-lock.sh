@@ -424,7 +424,11 @@ while [ "${_i}" -lt "${JS_REPO_N}" ]; do
 done
 echo "::endgroup::"
 
-if ! (cd "${WS}" && repro develop --all); then
+# Use the shared scope derivation and Repro's supported Git credential channel.
+# A numbered-config export alone is intentionally scrubbed by its Git actions.
+# shellcheck source=../git-auth/scoped-git-auth.sh
+. "${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}/scoped-git-auth.sh"
+if ! (cd "${WS}" && scoped_git_auth_with_global repro develop --all); then
   {
     echo "::error::setup-dev-env: 'repro develop --all' failed after the committed lock had"
     echo "  been accepted as usable. This is NOT a resolution problem — every sibling above"

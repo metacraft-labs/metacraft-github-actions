@@ -46,6 +46,9 @@
 #   scoped_git_auth_emit    Print the same pairs as `KEY=VALUE` lines, for
 #                           `$GITHUB_ENV` (job-scoped) -- what `setup-nix` needs,
 #                           because the credential must outlive its own step.
+#   scoped_git_auth_with_global  Run a command through a private temporary
+#                           GIT_CONFIG_GLOBAL file, then remove it. This is for
+#                           tools such as Repro that scrub numbered config.
 #
 # Environment read by scoped_git_auth_build:
 #   GH_TOKEN                  The token. Empty/unset => no credential is derived
@@ -262,6 +265,71 @@ scoped_git_auth_export() {
   export GIT_TERMINAL_PROMPT=0
 }
 
+# Run a command with the same scoped headers through Git's supported global
+# configuration channel. Repro deliberately scrubs numbered invocation config
+# before cross-repository Git calls; GIT_CONFIG_GLOBAL survives that boundary.
+# The credential exists only in a private temporary file for this command, never
+# in a checkout, a persistent global config, a URL or a subprocess argument.
+scoped_git_auth_with_global() (
+  # A caller's xtrace must not echo the derived header while it is rendered.
+  case $- in *x*) set +x ;; esac
+  local scratch config key scope value section attribute
+  scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/repro-git-auth.XXXXXXXX")" || return
+  config="${scratch}/config"
+  trap 'rm -f -- "$config"; rmdir -- "$scratch"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  SCOPED_GIT_AUTH_REWRITES=1 scoped_git_auth_build || return
+  scoped_git_auth_report
+  (
+    umask 077
+    set -C
+    {
+      # Do not let a runner's persistent helper save a credential or answer
+      # instead of the scoped header under test.
+      printf '[credential]\n\thelper =\n'
+      # Match authenticated-clone's process-wide Windows Git path support.
+      # Importing the runner's whole global config would also import credentials.
+      printf '[core]\n\tlongpaths = true\n'
+      # Bash 3.2 with nounset treats an empty array as unset. This guarded
+      # expansion is the same portable idiom used by the clone callers.
+      key=""
+      for value in ${SCOPED_GIT_AUTH_PAIRS[@]+"${SCOPED_GIT_AUTH_PAIRS[@]}"}; do
+        if [ -z "$key" ]; then key="$value"; continue; fi
+        case "$key" in
+          http.*.extraHeader)
+            section=http; attribute=extraHeader
+            scope="${key#http.}"; scope="${scope%.extraHeader}" ;;
+          url.*.insteadOf)
+            section=url; attribute=insteadOf
+            scope="${key#url.}"; scope="${scope%.insteadOf}" ;;
+          *) echo 'scoped-git-auth: unsupported private-config key' >&2; exit 2 ;;
+        esac
+        # Git quoted subsection/value escaping, without passing the secret to
+        # `git config` argv. Newlines cannot become injected config sections.
+        scope="${scope//\\/\\\\}"; scope="${scope//\"/\\\"}"
+        scope="${scope//$'\n'/\\n}"; scope="${scope//$'\t'/\\t}"; scope="${scope//$'\b'/\\b}"
+        value="${value//\\/\\\\}"; value="${value//\"/\\\"}"
+        value="${value//$'\n'/\\n}"; value="${value//$'\t'/\\t}"; value="${value//$'\b'/\\b}"
+        printf '[%s "%s"]\n\t%s = "%s"\n' "$section" "$scope" "$attribute" "$value"
+        key=""
+      done
+      if [ -n "$key" ]; then echo 'scoped-git-auth: incomplete private-config pair' >&2; exit 2; fi
+    } >"$config"
+  ) || return
+
+  # Invocation-scoped configuration would outrank this file. In particular,
+  # do not inherit an unrelated job-wide credential when testing its scope.
+  for key in "${!GIT_CONFIG_@}"; do
+    case "$key" in GIT_CONFIG_COUNT|GIT_CONFIG_PARAMETERS|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*) unset "$key" ;; esac
+  done
+  unset GIT_CONFIG
+  export GIT_CONFIG_GLOBAL="$config" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+  "$@"
+)
+
 # `scoped_git_auth_emit <sink>` -- print SCOPED_GIT_AUTH_PAIRS as `KEY=VALUE`
 # lines to <sink> (a file, e.g. `$GITHUB_ENV`) or to stdout when <sink> is empty.
 # Numbering starts at 0: this is for `setup-nix`, whose whole job is to define
@@ -287,13 +355,14 @@ scoped_git_auth_emit() {
 
 # `scoped_git_auth_report` -- say what was covered, without saying with what.
 scoped_git_auth_report() {
-  if [[ ${#SCOPED_GIT_AUTH_SCOPES[@]} -eq 0 ]]; then
+  local count=0 _scope
+  for _scope in ${SCOPED_GIT_AUTH_SCOPES[@]+"${SCOPED_GIT_AUTH_SCOPES[@]}"}; do count=$((count + 1)); done
+  if [[ $count -eq 0 ]]; then
     echo "scoped-git-auth: no token supplied; git is configured for public clones only."
     return 0
   fi
-  echo "scoped-git-auth: git credential scoped to ${#SCOPED_GIT_AUTH_SCOPES[@]} URL prefix(es):"
-  local _scope
-  for _scope in "${SCOPED_GIT_AUTH_SCOPES[@]}"; do
+  echo "scoped-git-auth: git credential scoped to ${count} URL prefix(es):"
+  for _scope in ${SCOPED_GIT_AUTH_SCOPES[@]+"${SCOPED_GIT_AUTH_SCOPES[@]}"}; do
     echo "  ${_scope}"
   done
 }

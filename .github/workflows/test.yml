@@ -298,6 +298,9 @@ jobs:
       - name: authenticated-clone contract suite
         run: bash git-auth/authenticated-clone-test.sh
 
+      - name: private global Git credential contract suite
+        run: python3 git-auth/test-private-global-config.py
+
       # The Windows MAX_PATH half of the same script. Separate suite because it
       # needs a different observation apparatus (a `git` shim plus trace2
       # `def_param` events) and a different fixture shape (two levels of
