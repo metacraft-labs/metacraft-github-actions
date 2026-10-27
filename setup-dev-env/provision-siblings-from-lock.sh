@@ -78,8 +78,9 @@
 # FAILS CLOSED: an output it cannot parse is "not usable", which routes to the
 # fallback rather than to a wrong answer.
 #
-# PORTABILITY. Pure bash builtins plus `repro`. Bash 3.2-clean (GitHub's macOS
-# images ship 3.2): no associative arrays, no `declare -n`, no coreutils, and
+# PORTABILITY. Bash 3.2-compatible syntax plus `repro` and standard Git Bash,
+# macOS/Linux temp/file tools (`mktemp`, `rm`, `rmdir`, `dirname`); no bootstrap.
+# No associative arrays or `declare -n`, and
 # no `${#arr[@]}` on a possibly-empty array under `set -u` — element counts are
 # carried in plain integers instead. Same rule as clone-siblings.sh.
 set -uo pipefail

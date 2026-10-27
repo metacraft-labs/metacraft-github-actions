@@ -80,6 +80,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _check_auth(self, path):
         """Return True to proceed. Journals what arrived, never its value."""
+        if ARGS.header_count_journal:
+            # Count the raw multi-value view, never the credential payload.
+            count = len(self.headers.get_all("Authorization", []))
+            with JOURNAL_LOCK:
+                with open(ARGS.header_count_journal, "a", encoding="utf-8") as fh:
+                    fh.write(f"{count} {path}\n")
         supplied = self.headers.get("Authorization")
         if not self._protected(path):
             journal(path, "public-auth" if supplied else "public-noauth")
@@ -198,6 +204,7 @@ def main():
     parser.add_argument("--root", required=True)
     parser.add_argument("--journal", required=True)
     parser.add_argument("--auth-prefix", default="")
+    parser.add_argument("--header-count-journal", default="")
     # A FILE, not a value: an argv element is readable by every process on the
     # machine, and these suites run on shared self-hosted runners.
     parser.add_argument("--auth-file", default="")

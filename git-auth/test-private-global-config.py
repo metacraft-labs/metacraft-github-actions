@@ -57,9 +57,12 @@ class PrivateGlobalConfig(unittest.TestCase):
         tokenfile.write_text(TOKEN)
         tokenfile.chmod(0o600)
         self.journal = self.base / 'journal'
+        self.auth_counts = self.base / 'auth-counts'
+        self.auth_counts.write_text('')
         self.server = subprocess.Popen(
             [sys.executable, str(SERVER), '--root', str(self.web), '--journal',
-              str(self.journal), '--auth-prefix', '/owned/', '--auth-file', str(tokenfile)],
+              str(self.journal), '--auth-prefix', '/owned/', '--auth-file', str(tokenfile),
+              '--header-count-journal', str(self.auth_counts)],
             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop_server)
         line = self.server.stdout.readline()
@@ -140,6 +143,15 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         self.assertIn('ok /owned/', journal)
         self.assertIn('public-noauth /outside/', journal)
         self.assertNotIn('public-auth', journal)
+
+    def test_repeated_owner_sends_exactly_one_wire_authorization_header(self):
+        r = self.invoke(['git', 'clone', '-q', self.url + 'owned/private.git',
+                          self.base / 'repeated-owner'], owner='owned owned')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        counts = [int(line.split(' ', 1)[0]) for line in self.auth_counts.read_text().splitlines()
+                  if '/owned/' in line]
+        self.assertTrue(counts, 'the authenticated server received no request')
+        self.assertEqual(set(counts), {1})
 
     def test_failure_cleans_private_file_and_preserves_global_config(self):
         global_config = self.home / '.gitconfig'
