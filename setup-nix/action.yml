@@ -60,6 +60,18 @@ inputs:
     description: Attic server endpoint.
     required: false
     default: "https://cache.metacraft-labs.com/"
+  substituter-preflight:
+    description: >
+      Probe every configured substituter's `nix-cache-info` (with the netrc nix
+      will use) before anything asks nix to substitute. `fail`: any unusable
+      cache fails the job with the diagnosed cause (401 no/bad token, 403
+      network ACL, unreachable). `warn` (default): cache.nixos.org must be
+      usable; any other unusable cache produces a warning annotation and is
+      removed from this job's nix.conf so no nix command waits on it. `off`: no
+      probe. Same input, default and script as devops-modules
+      `.github/setup-nix`; see setup-nix/probe-substituters.sh.
+    required: false
+    default: "warn"
 
 runs:
   using: "composite"
@@ -164,8 +176,17 @@ runs:
           # cache.nixos.org for the rest of the job.
           connect-timeout = 20
           download-attempts = 5
+          # HTTP/1.1: a group of multiplexed HTTP/2 cache.nixos.org NAR
+          # transfers was seen to stall together until the job ceiling on
+          # persistent self-hosted runners; per-object HTTP/1.1 transfers let
+          # stalled-download-timeout retry just the stuck object.
           stalled-download-timeout = 30
+          http2 = false
           http-connections = 16
+          # 0, not the 3600 default: on runners whose HOME persists between
+          # jobs, a cached "not found" outlives the job that saw it, so a path
+          # a producer job pushed minutes later is still rebuilt from source
+          # downstream. Each nix process still deduplicates its own lookups.
           narinfo-cache-negative-ttl = 0
           substituters = https://cache.nixos.org $EXTRA_SUBSTITUTERS
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $EXTRA_TRUSTED_PUBLIC_KEYS
@@ -186,6 +207,21 @@ runs:
         # file to — actually presents to each host. Same reasoning as
         # configure-git-auth.sh below. Suite: setup-nix/nix-netrc-test.sh.
         bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
+
+    # Prove the caches nix was just told about are READABLE, with the netrc it
+    # will use, before any step asks it to substitute. An unreadable cache is
+    # otherwise one warning line followed by a source build of the closure.
+    # Contract suite: setup-nix/tests/probe-substituters-test.sh.
+    - name: Probe binary caches
+      if: ${{ inputs.substituter-preflight != 'off' }}
+      shell: bash
+      env:
+        SETUP_NIX_PROBE_SUBSTITUTERS: https://cache.nixos.org ${{ inputs.substituters }}
+        SETUP_NIX_PROBE_MODE: ${{ inputs.substituter-preflight }}
+      run: |
+        SETUP_NIX_PROBE_NETRC="$HOME/.config/nix/netrc" \
+        SETUP_NIX_PROBE_NIX_CONF="$HOME/.config/nix/nix.conf" \
+          bash "${{ github.action_path }}/probe-substituters.sh"
 
     - name: Configure Git authentication
       # Scoped to the org's own repositories and to this job. See the long

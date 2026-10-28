@@ -275,8 +275,15 @@ jobs:
       - name: nix netrc contract suite
         run: bash setup-nix/nix-netrc-test.sh
 
+      # The binary-cache preflight, shared byte-for-byte with devops-modules
+      # `.github/setup-nix`. Real script, real curl, real netrc, a loopback
+      # origin playing the 200/401/403/404/portal/flaky cache shapes, and a
+      # PATH as bare as the macOS self-hosted runners'.
+      - name: binary-cache preflight contract suite
+        run: bash setup-nix/tests/probe-substituters-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh
+        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
 
   clone-git-auth:
     # `clone-siblings` and `clone-repo` clone into nearly every job in this org,
