@@ -366,6 +366,37 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
 
+  setup-nix-alignment:
+    # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
+    # most jobs in the org and must write the same nix.conf transfer settings
+    # and run the same binary-cache preflight. When one was tuned and the other
+    # was not, half the org kept the failure the tuning fixed. The comparison
+    # script lives in devops-modules, which runs the same check against this
+    # repository's `dev` daily; here it runs against devops-modules' `dev` on
+    # every change, so drift introduced on this side fails before it lands.
+    # Same stock runner, git and python3 only, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Checkout devops-modules (mainline)
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/devops-modules
+          ref: dev
+          path: .alignment/devops-modules
+          persist-credentials: false
+
+      - name: Compare the two setup-nix actions
+        run: |
+          git -C .alignment/devops-modules log -1 --format='devops-modules dev at %H'
+          python3 .alignment/devops-modules/scripts/check-setup-nix-alignment.py \
+            --devops-root .alignment/devops-modules \
+            --mga-root .
+
   clone-git-auth:
     # `clone-siblings` and `clone-repo` clone into nearly every job in this org,
     # and until this suite existed the only thing standing between a CI App
