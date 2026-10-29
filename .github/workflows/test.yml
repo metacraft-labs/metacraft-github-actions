@@ -37,6 +37,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  windows-endpoint-receipt:
+    # A real private kernel pipe and the current process suffice; no SDK,
+    # fleet runner, toolchain, credentials or host daemon is provisioned.
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Native Windows endpoint receipt controls
+        shell: pwsh
+        run: ./setup-dev-env/test-runquota-peer.ps1
+
   refresh-build-auth:
     runs-on: ubuntu-latest
     steps:

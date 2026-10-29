@@ -34,7 +34,10 @@ class WindowsSdkReceipt(unittest.TestCase):
         }
         self.environment.update(PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                                 MCL_REPRO_BIN_DIR=str(self.bin),
-                                MCL_REPRO_INSTALL_SOURCE='release')
+                                MCL_REPRO_INSTALL_SOURCE='release',
+                                # These bytes test hashing, not a live endpoint.
+                                # test-runquota-peer.ps1 owns the native query.
+                                RUNNER_OS='ReceiptFixture')
 
     def run_receipt(self):
         return subprocess.run([shutil.which('bash'), str(HERE / 'record-windows-sdk.sh')],

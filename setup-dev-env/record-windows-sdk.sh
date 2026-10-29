@@ -63,3 +63,7 @@ done < <(compgen -e)
 if [[ "$found" == false ]]; then
   echo 'setup-dev-env: inherited-bootstrap-controls=none'
 fi
+
+if [[ "${RUNNER_OS:-}" == Windows ]]; then
+  pwsh -NoLogo -NoProfile -NonInteractive -File "$(dirname "$0")/record-runquota-peer.ps1"
+fi
