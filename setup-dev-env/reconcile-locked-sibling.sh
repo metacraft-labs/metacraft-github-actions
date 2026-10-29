@@ -67,13 +67,15 @@ reconcile_locked_sibling() { # consumer, selected name/revision, actual selected
   [ "$head" != "$revision" ] || return 0
   # Refresh actual remote heads before proving publication; stale tracking refs
   # alone must not authorize moving a checkout containing unpublished work.
-  scoped_git_auth_with_global git -c gc.auto=0 -c maintenance.auto=false -C "$target" fetch --prune --no-tags origin \
+  # This proof owns only the root repo. Historical child gitlinks may no longer
+  # exist upstream; neither fetching proof nor checkout may operate on children.
+  scoped_git_auth_with_global git -c gc.auto=0 -c maintenance.auto=false -C "$target" fetch --no-recurse-submodules --prune --no-tags origin \
     '+refs/heads/*:refs/remotes/origin/*' || return 1
   [ -n "$(git -C "$target" for-each-ref --format='%(refname)' --contains="$head" refs/remotes/origin/)" ] || return 1
   git -C "$target" cat-file -e "$revision^{commit}" 2>/dev/null ||
-    scoped_git_auth_with_global git -c gc.auto=0 -c maintenance.auto=false -C "$target" fetch --prune --no-tags origin "$revision" || return 1
+    scoped_git_auth_with_global git -c gc.auto=0 -c maintenance.auto=false -C "$target" fetch --no-recurse-submodules --prune --no-tags origin "$revision" || return 1
   # Recheck after network operations. Never overwrite ignored-file collisions.
   [ "$(git -C "$target" rev-parse HEAD)" = "$head" ] || return 1
   [ -z "$(git -C "$target" status --porcelain --untracked-files=all)" ] || return 1
-  git -C "$target" checkout --detach --no-overwrite-ignore "$revision"
+  git -C "$target" checkout --no-recurse-submodules --detach --no-overwrite-ignore "$revision"
 }

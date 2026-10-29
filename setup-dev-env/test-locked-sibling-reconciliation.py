@@ -83,6 +83,93 @@ class LockedSiblingReconciliation(unittest.TestCase):
         self.assertEqual(marker.read_text(encoding="utf-8"), "must survive")
         self.reconcile(True)
 
+    def test_root_proof_ignores_unavailable_historical_submodule(self):
+        # Real root/child repositories reproduce persistent-runner Git config.
+        # An unrelated published root branch records a removed child commit;
+        # the selected root commit still names the populated child's valid HEAD.
+        self.env["GIT_ALLOW_PROTOCOL"] = "file"
+        child_seed = self.base / "child-seed"
+        child_remote = self.base / "child.git"
+        self.git("init", "-q", str(child_seed))
+        for key, value in [("user.name", "Control"),
+                            ("user.email", "control@example.invalid"),
+                            ("commit.gpgsign", "false"),
+                            ("core.hooksPath", str(self.home))]:
+            self.git("-C", str(child_seed), "config", key, value)
+        (child_seed / "retained").write_text("child source", encoding="utf-8")
+        self.git("-C", str(child_seed), "add", "retained")
+        self.git("-C", str(child_seed), "commit", "-qm", "child source")
+        self.git("clone", "--bare", "-q", str(child_seed), str(child_remote))
+        parent_branch = self.git("-C", str(self.seed), "branch", "--show-current").strip()
+        self.git("-C", str(self.seed), "submodule", "add", "-q",
+                  child_remote.as_uri(), "child")
+        self.git("-C", str(self.seed), "commit", "-qm", "declare child")
+        self.old = self.git("-C", str(self.seed), "rev-parse", "HEAD").strip()
+        self.git("-C", str(self.seed), "push", "-q", "origin", "HEAD:refs/heads/main")
+        self.git("-C", str(self.target), "fetch", "-q", "origin")
+        self.git("-C", str(self.target), "checkout", "-q", self.old)
+        self.git("-C", str(self.target), "submodule", "update", "--init", "-q")
+        child = self.target / "child"
+        self.git("-C", str(child), "switch", "-qc", "retained-child")
+        child_head = self.git("-C", str(child), "rev-parse", "HEAD").strip()
+        missing = "deadbeef" * 5
+        self.git("-C", str(self.seed), "switch", "-qc", "historical-child")
+        self.git("-C", str(self.seed), "update-index", "--cacheinfo",
+                  "160000," + missing + ",child")
+        self.git("-C", str(self.seed), "commit", "-qm", "historical unavailable child")
+        self.git("-C", str(self.seed), "push", "-q", "origin",
+                  "HEAD:refs/heads/historical-child")
+        self.git("-C", str(self.seed), "checkout", "--no-recurse-submodules",
+                  "-q", parent_branch)
+        self.commit("root-only update")
+        self.new = self.git("-C", str(self.seed), "rev-parse", "HEAD").strip()
+        self.git("-C", str(self.seed), "push", "-q", "origin", "HEAD:refs/heads/main")
+        (self.consumer / "repro.lock").write_text(
+            'schema = "reprobuild.solved-graph-lock.v3"\n'
+            'deps = [{ name = "dependency", url = "' + self.remote.as_uri() +
+            '", revision = "' + self.new + '" }]\n', encoding="utf-8")
+        self.git("-C", str(self.target), "config", "fetch.recurseSubmodules", "true")
+        self.git("-C", str(self.target), "config", "submodule.recurse", "true")
+        self.assertEqual(self.git("-C", str(self.target), "status", "--porcelain"), "")
+        result = self.reconcile(True)
+        self.assertEqual(self.head(), self.new)
+        self.assertEqual(self.git("-C", str(child), "rev-parse", "HEAD").strip(), child_head)
+        self.assertEqual(self.git("-C", str(child), "branch", "--show-current").strip(),
+                          "retained-child")
+        self.assertEqual((child / "retained").read_text(), "child source")
+        self.assertNotIn("Fetching submodule", result.stdout + result.stderr)
+        self.assertNotEqual(subprocess.run(
+            ["git", "-C", str(child), "cat-file", "-e", missing], env=self.env,
+            capture_output=True).returncode, 0)
+
+        # Even when the selected root's gitlink changes, this root-only guard
+        # must not acquire or check out child source. Child realization belongs
+        # to the source materializer, not this publication/ownership proof.
+        (child_seed / "retained").write_text("next child source", encoding="utf-8")
+        self.git("-C", str(child_seed), "add", "retained")
+        self.git("-C", str(child_seed), "commit", "-qm", "next child source")
+        child_next = self.git("-C", str(child_seed), "rev-parse", "HEAD").strip()
+        self.git("-C", str(child_seed), "push", "-q", child_remote.as_uri(),
+                  "HEAD:refs/heads/main")
+        self.git("-C", str(self.seed), "update-index", "--cacheinfo",
+                  "160000," + child_next + ",child")
+        self.git("-C", str(self.seed), "commit", "-qm", "select next child")
+        self.new = self.git("-C", str(self.seed), "rev-parse", "HEAD").strip()
+        self.git("-C", str(self.seed), "push", "-q", "origin", "HEAD:refs/heads/main")
+        (self.consumer / "repro.lock").write_text(
+            'schema = "reprobuild.solved-graph-lock.v3"\n'
+            'deps = [{ name = "dependency", url = "' + self.remote.as_uri() +
+            '", revision = "' + self.new + '" }]\n', encoding="utf-8")
+        self.reconcile(True)
+        self.assertEqual(self.head(), self.new)
+        self.assertEqual(self.git("-C", str(child), "rev-parse", "HEAD").strip(), child_head)
+        self.assertEqual(self.git("-C", str(child), "branch", "--show-current").strip(),
+                          "retained-child")
+        self.assertEqual((child / "retained").read_text(), "child source")
+        self.assertNotEqual(subprocess.run(
+            ["git", "-C", str(child), "cat-file", "-e", child_next], env=self.env,
+            capture_output=True).returncode, 0)
+
     def test_dirty_checkout_refuses_without_movement(self):
         (self.target / "payload").write_text("valuable edit", encoding="utf-8")
         self.reconcile(False)
