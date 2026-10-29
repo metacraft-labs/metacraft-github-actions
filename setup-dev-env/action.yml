@@ -716,6 +716,7 @@ runs:
     # large repo fails HERE instead of in a consumer's `Set up job`.
 
     - name: Install the repro CLI (reprobuild)
+      id: repro-cli
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
@@ -881,6 +882,14 @@ runs:
           echo "::error::setup-dev-env: repro exec returned success without executing its witness command" >&2
           exit 1
         fi
+
+    - name: Record selected Windows SDK files and bootstrap controls
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os == 'Windows' }}
+      shell: bash
+      env:
+        MCL_REPRO_BIN_DIR: ${{ steps.repro-cli.outputs.repro-bin-dir }}
+        MCL_REPRO_INSTALL_SOURCE: ${{ steps.repro-cli.outputs.install-source }}
+      run: bash "${GITHUB_ACTION_PATH}/record-windows-sdk.sh"
 
     - name: Install dev-exec wrapper (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' }}

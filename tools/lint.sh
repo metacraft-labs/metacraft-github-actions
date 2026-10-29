@@ -26,6 +26,7 @@ shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-au
 shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh
 shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh .github/assert-workflow-triggers-discovery-test.sh
 shellcheck -S warning tools/lint.sh .envrc
+shellcheck -S warning setup-dev-env/record-windows-sdk.sh
 python3 - <<'PYTHON'
 import pathlib, subprocess
 files = set(subprocess.check_output(["git", "ls-files", "--", "*.py"], text=True).splitlines())
@@ -37,6 +38,7 @@ PYTHON
 actionlint
 python3 git-auth/test-private-global-config.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
+python3 setup-dev-env/test-windows-sdk-receipt.py
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
 node --check .github/read-workflow.cjs
