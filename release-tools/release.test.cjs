@@ -259,8 +259,7 @@ test("legacy routing is limited to the documented Linux ARM64 scale set", (t) =>
   target.runnerMigration = {
     version: "0.1.0",
     owner: "zah",
-    followup:
-      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-28-release-linux-arm64-runner-migration.md",
+    followup: "2026-09-28-release-linux-arm64-runner-migration",
   };
   write();
   assert.equal(plan(root).matrix[0].runner, "ubuntu-24.04-arm");
@@ -321,8 +320,7 @@ test("Windows ARM64 hosted migration is version-scoped and drives MSI verificati
   target.runnerMigration = {
     version: "0.1.0",
     owner: "zah",
-    followup:
-      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/issues/2026-09-29-windows-arm64-release-runner-migration.md",
+    followup: "2026-09-29-windows-arm64-release-runner-migration",
   };
   write();
   assert.equal(plan(root).msiRunner, "windows-11-arm");
@@ -348,7 +346,7 @@ test("runner selection keeps native alternatives version-scoped and preserves th
     version: "0.1.0",
     owner: "zah",
     followup:
-      "https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md",
+      "2026-09-24-ci-runner-mode-policy-conflicts-with-hosted-runner-ban",
   };
   const targets = [
     {
@@ -399,6 +397,16 @@ test("runner selection keeps native alternatives version-scoped and preserves th
     ["version", "0.1.1"],
     ["owner", ""],
     ["followup", "https://example.com/"],
+    [
+      "followup",
+      "https://github.com/metacraft-labs/example/blob/latest/issues/2026-09-24-example.md",
+    ],
+    ["followup", ""],
+    ["followup", "2026-09-24"],
+    ["followup", "2026-9-24-example"],
+    ["followup", "2026-09-24-Example"],
+    ["followup", "2026-09-24-example.md"],
+    ["followup", "2026-09-24-example-"],
   ]) {
     targets[0].runnerMigration = { ...migration, [field]: value };
     write();

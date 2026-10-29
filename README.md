@@ -15,12 +15,14 @@ standard `ubuntu-24.04` when hosted is selected, otherwise the exact
 `hostedRunner` alongside its existing `runner`; the planner uses that alternative
 only when the selector chose hosted. Allowed alternatives are Linux x64 on
 `ubuntu-24.04` and macOS ARM64 on `macos-26`. Each requires `runnerMigration`
-with the exact source version, a nonempty owner and a metacraft-specs follow-up.
+with the exact source version, a nonempty owner and a `followup` tracking ID:
+the dated slug of the internal issue that owns the migration, such as
+`2026-09-24-example-runner-migration`. URLs are rejected, so a public release
+spec never names where the tracker lives.
 The planner rejects expired or incomplete exceptions even on the fallback route.
 Existing Linux/Windows ARM64 migration entries keep their explicit native routes.
 
-The first-release scope and migration ownership are documented in
-[the product release plan](https://github.com/metacraft-labs/metacraft-specs/blob/latest/infrastructure/gosti-io-mon-runquota-releases.md).
+The first-release scope and migration ownership are tracked internally.
 Runner selection does not change artifact membership, signatures, installer
 checks, Linux portability checks or publication requirements.
 

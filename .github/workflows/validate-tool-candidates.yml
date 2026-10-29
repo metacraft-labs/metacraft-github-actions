@@ -1,8 +1,7 @@
 name: Validate tool candidates on Linux
 
 # Supplemental 0.1.0 validation, owner zah. The normal product and release
-# gates remain mandatory. Exact candidates are recorded in metacraft-specs:
-# infrastructure/gosti-io-mon-runquota-releases.md.
+# gates remain mandatory. Exact candidates are recorded internally.
 on:
   workflow_dispatch:
     inputs:
