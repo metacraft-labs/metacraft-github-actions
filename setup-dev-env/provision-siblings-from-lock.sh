@@ -172,6 +172,7 @@ JS_ERROR_N=0
 JS_REPO_NAMES=()
 JS_REPO_BACKENDS=()
 JS_REPO_REVS=()
+JS_REPO_PATHS=()
 JS_BACKEND_KINDS=()
 JS_BACKEND_REACHABLE=()
 JS_BACKEND_RECORDS=()
@@ -235,6 +236,7 @@ json_read() { # <text>
           JS_REPO_NAMES[ridx]=""
           JS_REPO_BACKENDS[ridx]=""
           JS_REPO_REVS[ridx]=""
+          JS_REPO_PATHS[ridx]=""
           ;;
         backends)
           bidx=$((bidx + 1))
@@ -262,6 +264,7 @@ json_read() { # <text>
         name) JS_REPO_NAMES[ridx]="${val}" ;;
         backend) JS_REPO_BACKENDS[ridx]="${val}" ;;
         revision) JS_REPO_REVS[ridx]="${val}" ;;
+        path) JS_REPO_PATHS[ridx]="${val}" ;;
         esac
         ;;
       backends)
@@ -429,6 +432,23 @@ echo "::endgroup::"
 # A numbered-config export alone is intentionally scrubbed by its Git actions.
 # shellcheck source=../git-auth/scoped-git-auth.sh
 . "${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}/scoped-git-auth.sh"
+# Reconcile clean published leftovers only within this job's owned runner layout.
+# Keep Repro's non-destructive adoption boundary for every other checkout.
+# shellcheck source=reconcile-locked-sibling.sh
+. "$(dirname "${BASH_SOURCE[0]}")/reconcile-locked-sibling.sh"
+_i=0
+while [ "${_i}" -lt "${JS_REPO_N}" ]; do
+  _selected_path=${JS_REPO_PATHS[_i]}
+  # The established JSON reader keeps escapes. Decode only Windows separators;
+  # any other escape refuses reconciliation rather than guessing a target.
+  _selected_path=${_selected_path//\\\\/\\}
+  if ! reconcile_locked_sibling "$WS" "${JS_REPO_NAMES[_i]}" \
+    "${JS_REPO_REVS[_i]}" "$_selected_path"; then
+    echo "::error::setup-dev-env: refusing unsafe locked sibling reconciliation for ${JS_REPO_NAMES[_i]}; preserve the checkout and inspect its identity, publication and local work." >&2
+    exit 1
+  fi
+  _i=$((_i + 1))
+done
 if ! (cd "${WS}" && scoped_git_auth_with_global repro develop --all); then
   {
     echo "::error::setup-dev-env: 'repro develop --all' failed after the committed lock had"

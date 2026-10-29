@@ -19,7 +19,7 @@ if [ "$#" -ne 0 ]; then
   fi
   repro=$2
 fi
-shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh .github/assert-no-persisted-credential.sh
+shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh .github/assert-no-persisted-credential.sh
 shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/publish-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
 shellcheck -S warning refresh-workspace-lock/refresh-workspace-lock.sh refresh-workspace-lock/refresh-workspace-lock-test.sh
 shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh
@@ -36,6 +36,7 @@ for name in sorted(files):
 PYTHON
 actionlint
 python3 git-auth/test-private-global-config.py
+python3 setup-dev-env/test-locked-sibling-reconciliation.py
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
 node --check .github/read-workflow.cjs
