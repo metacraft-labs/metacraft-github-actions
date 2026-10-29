@@ -143,10 +143,21 @@ It is never silently ignored, on either path:
   routinely name build-time siblings that are _not_ solved-graph dependencies —
   `reprobuild`'s own names two — and switching them to the lock would drop them;
 - under a forced `repro-lock`, the lock wins and the list is reconciled against
-  it: an entry the lock already pins is reported redundant (by name and locked
-  revision) and dropped along with any `=ref` it carried; an entry the lock does
-  not name is reported as outside the lock and cloned **additionally** by a
-  follow-on `clone-siblings` step.
+  it: an entry the lock pins and `develop` will materialize is reported
+  redundant (by name and locked revision) and dropped along with any `=ref` it
+  carried. A declared source whose structured develop row is `pinned` by the
+  recipe is **not** redundant: bulk develop intentionally leaves it alone.
+  It is handed to the existing `clone-siblings` step as a bare repository name,
+  using the committed lock's exact revision and source owner, never the
+  caller's `=ref` or a branch tip. An entry the lock does not name is reported
+  as outside the lock and cloned **additionally** by that same follow-on step.
+  Undeclared pinned sources are not added to the clone set. A declared pinned
+  alias whose selected name differs from its GitHub URL's repository basename
+  refuses clearly: the existing clone interface uses one name for lock lookup
+  and destination, so substituting the URL name could select another lock row. This
+  pinned-source handoff also requires `lock-store: committed`; a record-store
+  lookup could resolve a different SHA. Other materialized and outside-lock
+  siblings retain their existing behavior.
 
 ### Relationship to `env-flavor: reprobuild`
 

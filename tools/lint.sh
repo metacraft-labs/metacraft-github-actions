@@ -39,6 +39,7 @@ actionlint
 python3 git-auth/test-private-global-config.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
 python3 setup-dev-env/test-windows-sdk-receipt.py
+python3 setup-dev-env/test-frozen-sibling-source.py
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
 node --check .github/read-workflow.cjs

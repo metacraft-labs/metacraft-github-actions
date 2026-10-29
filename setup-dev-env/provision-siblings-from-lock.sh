@@ -63,9 +63,10 @@
 # It is never silently ignored. Reaching this step with a declared list means
 # the caller forced `repro-lock` (auto declines when a list is declared), so:
 #
-#   * an entry the lock already pins is REDUNDANT. The lock's revision wins —
-#     that is what "the lock is authoritative" means — and the entry, plus any
-#     `=ref` it carried, is reported as dropped, by name and by revision.
+#   * an entry the lock pins is REDUNDANT only if develop will materialize it.
+#     A structured `pinned` row is intentionally skipped by bulk develop, so a
+#     declared source stays on the existing committed-lock clone path instead.
+#     Its source owner and exact SHA come from the lock; any `=ref` is dropped.
 #   * an entry the lock does not name is ADDITIONAL. It cannot come from the
 #     lock, so it is handed back to `clone-siblings` in a follow-on step and
 #     reported as outside the lock. That is the honest answer for a repo
@@ -173,6 +174,7 @@ JS_REPO_NAMES=()
 JS_REPO_BACKENDS=()
 JS_REPO_REVS=()
 JS_REPO_PATHS=()
+JS_REPO_STATES=()
 JS_BACKEND_KINDS=()
 JS_BACKEND_REACHABLE=()
 JS_BACKEND_RECORDS=()
@@ -237,6 +239,7 @@ json_read() { # <text>
           JS_REPO_BACKENDS[ridx]=""
           JS_REPO_REVS[ridx]=""
           JS_REPO_PATHS[ridx]=""
+          JS_REPO_STATES[ridx]=""
           ;;
         backends)
           bidx=$((bidx + 1))
@@ -265,6 +268,7 @@ json_read() { # <text>
         backend) JS_REPO_BACKENDS[ridx]="${val}" ;;
         revision) JS_REPO_REVS[ridx]="${val}" ;;
         path) JS_REPO_PATHS[ridx]="${val}" ;;
+        state) JS_REPO_STATES[ridx]="${val}" ;;
         esac
         ;;
       backends)
@@ -391,9 +395,31 @@ elif [ -f "${WS}/.github/sibling-repos" ]; then
   DECLARED_FROM=".github/sibling-repos"
 fi
 
+# Reuse the lock/source identity reader also used by the reconciliation guard.
+# shellcheck source=./reconcile-locked-sibling.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reconcile-locked-sibling.sh"
+
+pinned_source_entry() { # selected name/revision -> committed GitHub owner/name
+  local url identity selected source
+  url=$(locked_sibling_url "$WS/repro.lock" "$1" "$2") || return 1
+  identity=$(locked_sibling_identity "$url") || return 1
+  # clone-siblings uses one name for both lock lookup and destination. Never
+  # turn a selected alias into a different lock row by emitting its URL name.
+  selected=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  [ "${identity##*/}" = "$selected" ] || return 1
+  case "$identity" in
+    github.com/*)
+      source=${identity#github.com/}
+      printf '%s/%s\n' "${source%/*}" "$1"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 EXTRA=""
 REDUNDANT=0
 EXTRAS=0
+PINNED_SOURCES=0
 if [ -n "${DECLARED_RAW}" ]; then
   while IFS= read -r _line || [ -n "${_line}" ]; do
     _line="${_line%$'\r'}"
@@ -404,6 +430,29 @@ if [ -n "${DECLARED_RAW}" ]; then
       _name="${_name%!}"
       _name="${_name##*/}"
       if _rev="$(lock_rev_of "${_name}")"; then
+        _pinned=false
+        _i=0
+        while [ "$_i" -lt "$JS_REPO_N" ]; do
+          if [ "${JS_REPO_NAMES[_i]}" = "$_name" ] && [ "${JS_REPO_STATES[_i]}" = pinned ]; then
+            _pinned=true
+          fi
+          _i=$((_i + 1))
+        done
+        if [ "$_pinned" = true ]; then
+          if [ "${LOCK_STORE:-committed}" != committed ]; then
+            echo "::error::setup-dev-env: declared pinned source $_name requires lock-store: committed; another store could select a different revision than $_rev." >&2
+            exit 1
+          fi
+          if ! _source=$(pinned_source_entry "$_name" "$_rev"); then
+            echo "::error::setup-dev-env: cannot hand declared pinned source $_name to clone-siblings: its committed lock must name one exact GitHub source whose repository basename equals the selected name (aliases are not supported by clone-siblings)." >&2
+            exit 1
+          fi
+          PINNED_SOURCES=$((PINNED_SOURCES + 1))
+          EXTRA="${EXTRA}${_source}"$'\n'
+          echo "setup-dev-env: '$_entry' is pinned by recipe; clone-siblings will materialize $_source at committed lock revision $_rev (any =ref is ignored)."
+          summary "\`$_name\` pinned by recipe: source cloned at committed lock revision \`$_rev\`"
+          continue
+        fi
         REDUNDANT=$((REDUNDANT + 1))
         echo "::warning::setup-dev-env: '${_entry}' (from ${DECLARED_FROM}) is redundant under sibling-strategy: repro-lock — repro.lock pins ${_name} at ${_rev}, the lock is authoritative, and this entry is dropped."
         summary "\`${_entry}\` dropped: repro.lock pins \`${_name}\` at \`${_rev}\`"
@@ -434,8 +483,6 @@ echo "::endgroup::"
 . "${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}/scoped-git-auth.sh"
 # Reconcile clean published leftovers only within this job's owned runner layout.
 # Keep Repro's non-destructive adoption boundary for every other checkout.
-# shellcheck source=reconcile-locked-sibling.sh
-. "$(dirname "${BASH_SOURCE[0]}")/reconcile-locked-sibling.sh"
 _i=0
 while [ "${_i}" -lt "${JS_REPO_N}" ]; do
   _selected_path=${JS_REPO_PATHS[_i]}
@@ -470,6 +517,11 @@ if [ "${REDUNDANT}" -gt 0 ]; then
 fi
 if [ "${EXTRAS}" -gt 0 ]; then
   REASON="${REASON}; ${EXTRAS} declared entries outside the lock handed to clone-siblings"
+fi
+if [ "${PINNED_SOURCES}" -gt 0 ]; then
+  REASON="${REASON}; ${PINNED_SOURCES} declared recipe-pinned sources handed to committed-lock clone-siblings"
+fi
+if [ "$((EXTRAS + PINNED_SOURCES))" -gt 0 ]; then
   LATE_CLONE="true"
   LATE_SIBLINGS="${EXTRA}"
 fi

@@ -761,6 +761,7 @@ runs:
         MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
         SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
+        LOCK_STORE: ${{ inputs.lock-store }}
         GH_TOKEN: ${{ inputs.gh-token }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
@@ -774,9 +775,9 @@ runs:
       #     so `late-siblings` is the caller's own list (empty means
       #     `.github/sibling-repos`, exactly as the early step would have read
       #     it) — the fallback, taken loudly;
-      #   * a forced `repro-lock` had declared entries the lock does not name,
-      #     so `late-siblings` is precisely those, each already reported as
-      #     outside the lock.
+      #   * a forced `repro-lock` had declared entries bulk develop cannot
+      #     provide: either outside the lock, or structured recipe-pinned
+      #     sources. Pinned entries are bare names bound to committed lock SHAs.
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
