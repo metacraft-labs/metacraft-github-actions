@@ -253,6 +253,17 @@ without dumping the job environment. Missing files stay explicitly missing.
 Installed daemon bytes do not establish which daemon served a lease; the receipt
 does not qualify native ARM execution or shared-store reuse.
 
+The receipt also observes the process serving the selected Windows RunQuota
+endpoint. It uses the client's `RUNQUOTA_SOCKET` selection, including the default
+and the existing named-pipe mapping, and holds the pipe and query-only process
+handles while recording the server process ID, creation time, kernel-reported
+image path and the hash of the file at that path. It sends no protocol request,
+starts or stops no daemon, and changes no SDK selection. Missing, busy,
+inaccessible or changing identities remain explicitly unknown, without recovery
+or a fallback to the installed daemon. This is an endpoint observation at that
+instant, not attribution of earlier or later leases, a memory-image hash, or a
+complete compiled-source attestation.
+
 For `env-flavor: reprobuild`, `dev-exec` preserves the generic
 `repro exec -- <cmd>` contract for arbitrary commands. As a compatibility
 shim for newer typed tool provisioning requirements, calls shaped as
