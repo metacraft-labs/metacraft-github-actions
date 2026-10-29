@@ -37,6 +37,61 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  reprobuild-wrapper-cwd:
+    # Qualify the generated wrappers against the existing released CLI on both
+    # native platforms. This is an owning contract test, not a consumer pilot.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install the verified released compatibility baseline
+        id: sdk
+        shell: bash
+        env:
+          REPRO_VERSION: v0.2.17
+          REPRO_REQUIRE_CHECKSUM: "true"
+          REPRO_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Reuse the normal release installer. This test requires its selected
+          # released baseline: any failure is a failure, never a source build.
+          output="$(REPRO_INSTALL_DIR="$RUNNER_TEMP/dev-exec-contract-sdk" bash setup-reprobuild/install-release.sh)"
+          printf '%s\n' "$output"
+          bin_dir="${output##*REPRO_BIN_DIR=}"
+          cli="$bin_dir/repro"
+          if [ "$RUNNER_OS" = Windows ]; then cli="$cli.exe"; fi
+          test -f "$cli"
+          if [ "$RUNNER_OS" = Windows ]; then cli="$(cygpath -w "$cli")"; fi
+          printf 'cli=%s\n' "$cli" >> "$GITHUB_OUTPUT"
+      - name: Real generated wrapper cwd, argv and status controls
+        shell: bash
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        run: |
+          python setup-dev-env/test-repro-wrapper-cwd.py \
+            --repro "$REPRO_CONTRACT_CLI" \
+            --report "$RUNNER_TEMP/dev-exec-cwd-result.json"
+      - name: Retain native contract receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-exec-cwd-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/dev-exec-cwd-result.json
+            ${{ runner.temp }}/dev-exec-cwd-result.streams/**
+            ${{ runner.temp }}/native-status-result.json
+            ${{ runner.temp }}/native-status-result.streams/**
+          if-no-files-found: error
+
   windows-endpoint-receipt:
     # A real private kernel pipe and the current process suffice; no SDK,
     # fleet runner, toolchain, credentials or host daemon is provisioned.

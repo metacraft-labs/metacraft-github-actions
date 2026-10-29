@@ -907,11 +907,18 @@ runs:
         #   reprobuild → `repro exec -- <cmd>`
         #
         # Calling steps invoke `dev-exec just test` etc. and we route
-        # it through `repro exec --` against the calling repo's
-        # `repro.nim` recipe (selector inferred from the working
-        # directory).
-        BIN_DIR="$HOME/.local/bin"
-        mkdir -p "$BIN_DIR"
+        # it through the setup project's recipe, even when a later step runs
+        # in a nested working-directory. Explicit selection also makes Repro
+        # start its child at the project root; the small child runner restores
+        # the caller's directory without rebuilding its environment.
+        : "${MCL_CONSUMER_ROOT:?setup consumer root is required}"
+        : "${RUNNER_TEMP:?job-private runner temp is required}"
+        runner_temp="$RUNNER_TEMP"
+        if [ "${RUNNER_OS:-}" = "Windows" ]; then
+          runner_temp="$(cygpath -u "$runner_temp")"
+        fi
+        BIN_DIR="$(mktemp -d "$runner_temp/repro-dev-exec.XXXXXX")"
+        printf '%s\n' "$MCL_CONSUMER_ROOT" > "$BIN_DIR/dev-exec.project-root"
         cat > "$BIN_DIR/dev-exec" <<'EOF'
         #!/usr/bin/env bash
         # dev-exec (reprobuild flavor): re-play the local dev env's
@@ -948,19 +955,25 @@ runs:
           esac
         fi
 
-        exec repro exec -- "${args[@]}"
+        wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+        IFS= read -r project_root < "$wrapper_dir/dev-exec.project-root"
+        : "${project_root:?setup consumer root is empty}"
+        if [ "${#args[@]}" -eq 0 ]; then
+          exec repro exec "$project_root" --
+        fi
+        exec repro exec "$project_root" -- bash -c \
+          'cd -- "$1" && shift && exec "$@"' dev-exec "$PWD" "${args[@]}"
         EOF
         chmod +x "$BIN_DIR/dev-exec"
-        echo "$BIN_DIR" >> "$GITHUB_PATH"
 
         # Windows runners run pwsh by default; expose the wrapper there
         # too so subsequent pwsh-shelled steps can call `dev-exec`.
         if [ "${RUNNER_OS:-}" = "Windows" ]; then
           # Install a PowerShell wrapper plus a .cmd trampoline so both
           # pwsh- and cmd-shelled steps get the same argv rewrite.
-          WIN_BIN_DIR="$(cygpath -u "$USERPROFILE")/.local/bin"
+          WIN_BIN_DIR="$BIN_DIR"
           WIN_BIN_DIR_WIN="$(cygpath -w "$WIN_BIN_DIR")"
-          mkdir -p "$WIN_BIN_DIR"
+          cygpath -w "$MCL_CONSUMER_ROOT" > "$WIN_BIN_DIR/dev-exec.project-root"
           cat > "$WIN_BIN_DIR/dev-exec.ps1" <<'EOF'
         $ErrorActionPreference = "Stop"
 
@@ -1000,20 +1013,45 @@ runs:
         if ($cmdArgs.Count -ge 1 -and $cmdArgs[0] -eq "repro") {
           $cmdArgs = $cmdArgs[1..($cmdArgs.Count - 1)]
         }
-        & repro exec -- @cmdArgs
+        $projectRoot = [IO.File]::ReadAllText(
+          (Join-Path $PSScriptRoot "dev-exec.project-root")).TrimEnd([char[]]"`r`n")
+        if ([string]::IsNullOrEmpty($projectRoot)) {
+          throw "setup consumer root is empty"
+        }
+        if ($cmdArgs.Count -eq 0) {
+          & repro exec $projectRoot --
+          exit $LASTEXITCODE
+        }
+        $callerDirectory = (Get-Location).ProviderPath
+        $execArgs = @("exec", $projectRoot, "--", "pwsh", "-NoLogo", "-NoProfile",
+          "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+          (Join-Path $PSScriptRoot "dev-exec-run.ps1"),
+          $callerDirectory) + $cmdArgs
+        & repro @execArgs
+        exit $LASTEXITCODE
+        EOF
+          cat > "$WIN_BIN_DIR/dev-exec-run.ps1" <<'EOF'
+        # This child already has the selected project's activated environment.
+        # Change only its cwd; retain the command's argument array and status.
+        $ErrorActionPreference = "Stop"
+        if ($args.Count -lt 2) { throw "caller directory and command are required" }
+        $callerDirectory = $args[0]
+        $command = $args[1]
+        $commandArgs = @()
+        if ($args.Count -gt 2) { $commandArgs = $args[2..($args.Count - 1)] }
+        Set-Location -LiteralPath $callerDirectory
+        & $command @commandArgs
         exit $LASTEXITCODE
         EOF
           cat > "$WIN_BIN_DIR/dev-exec.cmd" <<'EOF'
         @echo off
-        if "%~1"=="repro" (
-          pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
-        ) else (
-          repro exec -- %*
-        )
+        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
         exit /b %ERRORLEVEL%
         EOF
           echo "$WIN_BIN_DIR_WIN" >> "$GITHUB_PATH"
           echo "PATHEXT=.PS1;.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL" >> "$GITHUB_ENV"
+        else
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
         fi
 
         echo "::group::dev-exec wrapper (reprobuild)"

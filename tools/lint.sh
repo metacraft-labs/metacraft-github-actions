@@ -47,6 +47,8 @@ node --check .github/assert-workflow-triggers-action-test.cjs
 node --test .github/assert-workflow-triggers-action-test.cjs
 
 if [ -n "$repro" ]; then
+  cwd_report="$(mktemp -d "${TMPDIR:-/tmp}/repro-wrapper-cwd.XXXXXX")"
+  python3 setup-dev-env/test-repro-wrapper-cwd.py --repro "$repro" --report "$cwd_report/result.json"
   python3 tools/test-install-canonical-hooks.py --repro "$repro"
   python3 git-auth/test-private-global-config.py --repro "$repro"
 fi

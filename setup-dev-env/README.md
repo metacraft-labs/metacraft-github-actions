@@ -6,11 +6,11 @@ After this composite action runs, subsequent steps invoke
 `dev-exec <cmd>` to execute any command inside the same env that
 a developer uses locally:
 
-| flavor        | `dev-exec <cmd>` resolves to                |
-| ------------- | ------------------------------------------- |
-| `nix`         | `nix develop [--override-input …] -c <cmd>` |
-| `windows-diy` | `<cmd>` (env from `env.ps1` already loaded) |
-| `reprobuild`  | `repro exec -- <cmd>`                       |
+| flavor        | `dev-exec <cmd>` resolves to                                              |
+| ------------- | ------------------------------------------------------------------------- |
+| `nix`         | `nix develop [--override-input …] -c <cmd>`                               |
+| `windows-diy` | `<cmd>` (env from `env.ps1` already loaded)                               |
+| `reprobuild`  | Setup-project Repro environment, retaining the command's caller directory |
 
 See the policy doc for the design rationale:
 [metacraft-dev-guidelines/policies/ci-shared-dev-env.md](https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/ci-shared-dev-env.md).
@@ -265,11 +265,37 @@ instant, not attribution of earlier or later leases, a memory-image hash, or a
 complete compiled-source attestation.
 
 For `env-flavor: reprobuild`, `dev-exec` preserves the generic
-`repro exec -- <cmd>` contract for arbitrary commands. As a compatibility
+`repro exec -- <cmd>` contract for arbitrary commands. The environment is
+the consumer project selected during setup, including when a later step has
+a nested `working-directory`. The wrapper binds that project explicitly and
+runs the command in the caller's original directory, preserving argument
+boundaries and its exit status. It does not select a different environment
+from the later step's directory or move a relative command/input to the
+project root. As a compatibility
 shim for newer typed tool provisioning requirements, calls shaped as
 `dev-exec repro build ...` or `dev-exec repro test ...` automatically get
 `--tool-provisioning=path` appended unless the command already includes a
 `--tool-provisioning=...` flag.
+
+Each reprobuild wrapper installation, its project binding and its child
+helpers live in a unique directory under the job's `RUNNER_TEMP`, published
+through `GITHUB_PATH`. Another setup or runner sharing the same home cannot
+replace the earlier installation's selected project.
+
+### Wrapper contract tests
+
+The existing `test.yml` workflow enrolls the real wrapper contract on Linux
+and native Windows using the verified `v0.2.17` release installer. A missing
+baseline fails the test; it does not build an SDK or skip the contract.
+Windows executes the generated Bash, PowerShell and CMD wrappers and the
+existing native CMD status controls. Linux results do not qualify Windows.
+
+Local real-engine integration is explicit: `tools/lint.sh --repro
+/absolute/path/to/measured/repro` includes the nested-directory regression.
+The ordinary no-argument lint does not infer or download an SDK. The explicit
+mode fails if its CLI is absent or unusable. For focused execution, run
+`python3 setup-dev-env/test-repro-wrapper-cwd.py --repro <qualified-cli>
+--report <result.json>`; the report retains the actual platform and streams.
 
 ## Forbidden patterns in calling workflows
 
