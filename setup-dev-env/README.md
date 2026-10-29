@@ -234,6 +234,14 @@ shell to consume them via `--override-input`:
 
 ## Reprobuild compatibility
 
+Windows reprobuild setup prints a small SDK receipt after its real `repro exec`
+witness. It fingerprints the resolved public CLI, the selected installation's
+engine and RunQuota files, and shipped source markers. It also records inherited
+`WINDOWS_DIY_SKIP_*` and `WINDOWS_DIY_ENSURE_*` controls, including set-empty values,
+without dumping the job environment. Missing files stay explicitly missing.
+Installed daemon bytes do not establish which daemon served a lease; the receipt
+does not qualify native ARM execution or shared-store reuse.
+
 For `env-flavor: reprobuild`, `dev-exec` preserves the generic
 `repro exec -- <cmd>` contract for arbitrary commands. As a compatibility
 shim for newer typed tool provisioning requirements, calls shaped as
