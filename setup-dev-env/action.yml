@@ -997,9 +997,9 @@ runs:
         @echo off
         if "%~1"=="repro" (
           pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
-          exit /b %ERRORLEVEL%
+        ) else (
+          repro exec -- %*
         )
-        repro exec -- %*
         exit /b %ERRORLEVEL%
         EOF
           echo "$WIN_BIN_DIR_WIN" >> "$GITHUB_PATH"
