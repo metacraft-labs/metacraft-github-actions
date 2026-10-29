@@ -206,10 +206,16 @@ def main():
                         observed = json.loads(output.strip().splitlines()[-1])
                         expected = {'cwd': str(working_directory), 'environment': marker,
                                     'input': input_text, 'args': ['', 'space argument', str(status)]}
-                        if observed != expected:
-                            raise RuntimeError('cwd/environment/argv/relative input changed: ' + repr(observed))
+                        # Windows may expand a temporary directory's 8.3 name.
+                        # Require the same physical directory, not its spelling.
+                        same_directory = Path(observed['cwd']).samefile(working_directory)
+                        if not same_directory or any(
+                                observed[key] != expected[key] for key in ('environment', 'input', 'args')):
+                            raise RuntimeError('cwd/environment/argv/relative input changed: '
+                                                + repr({'expected': expected, 'observed': observed}))
                         rows.append({'installation': installation, 'wrapper': name,
-                                      'status': status, 'observed': observed})
+                                      'status': status, 'expected': expected, 'observed': observed,
+                                      'sameDirectory': same_directory})
             if os.name == 'nt' and not args.expect_old_cwd_bug:
                 # Run every existing special-dispatch and generic status case,
                 # not a new approximation of their CMD invocation boundary.
