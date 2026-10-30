@@ -15,6 +15,7 @@ import base64
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import unittest
@@ -33,6 +34,20 @@ class CargoGitAcquisition(PrivateGlobalConfig):
 
     def setUp(self):
         super().setUp()
+        # Isolate Git's home/credentials without relocating an already selected
+        # Rustup toolchain. Hosted Cargo can be a proxy, unlike the standalone
+        # Cargo in the owning Nix shell. Preserve the provider's documented root.
+        if 'RUSTUP_HOME' not in self.env:
+            self.env['RUSTUP_HOME'] = str(Path.home() / '.rustup')
+        self.cargo = shutil.which('cargo')
+        self.bash = shutil.which('bash')
+        self.assertIsNotNone(self.cargo, 'the declared Cargo tool is required')
+        self.assertIsNotNone(self.bash, 'the declared Bash tool is required')
+        # Match the established native fixture: CreateProcess's bare-name
+        # search may precede PATH with System32. Keep proxy names (e.g. cargo)
+        # intact rather than resolving their symlink to a manager executable.
+        self.cargo = str(Path(self.cargo).absolute())
+        self.bash = str(Path(self.bash).absolute())
         seed = self.base / 'seed'
         (seed / 'src').mkdir()
         (seed / 'Cargo.toml').write_text(
@@ -78,19 +93,27 @@ class CargoGitAcquisition(PrivateGlobalConfig):
         if step is not None and authenticated and flavor == 'reprobuild':
             body = step.split('      run: ', 1)[1].strip()
             self.assertNotEqual(body, '|', 'use the existing block extractor if this step grows')
-            subprocess.run(
-                ['bash', '-euo', 'pipefail', '-c', body],
+            configured = subprocess.run(
+                [self.bash, '-euo', 'pipefail', '-c', body],
                 env=dict(env, GH_TOKEN=TOKEN, TOKEN_OWNERS='owned',
                           GIT_AUTH_URL_BASE=self.url, GITHUB_ENV=str(assignments),
                           GITHUB_ACTION_PATH=str(ROOT / 'setup-dev-env')),
-                capture_output=True, text=True, check=True, timeout=30)
+                capture_output=True, text=True, timeout=30)
+            # The helper intentionally emits runner mask commands. Retain
+            # actionable failure diagnostics without publishing their payloads.
+            diagnostic = '\n'.join(
+                line for line in (configured.stdout + configured.stderr).splitlines()
+                if not line.startswith('::add-mask::'))
+            for secret in (TOKEN, base64.b64encode(('x-access-token:' + TOKEN).encode()).decode()):
+                diagnostic = diagnostic.replace(secret, '<synthetic credential>')
+            self.assertEqual(configured.returncode, 0, diagnostic)
         # Replay only the documented GITHUB_ENV handoff, never a transport.
         # Never expose the emitted credential bytes.
         for line in assignments.read_text().splitlines():
             key, value = line.split('=', 1)
             env[key] = value
         assignments.unlink()
-        command = ['cargo', 'fetch', '--manifest-path', str(consumer / 'Cargo.toml')]
+        command = [self.cargo, 'fetch', '--manifest-path', str(consumer / 'Cargo.toml')]
         if repro:
             project = self.base / 'activation-project'
             project.mkdir(exist_ok=True)
@@ -98,8 +121,8 @@ class CargoGitAcquisition(PrivateGlobalConfig):
                 'import repro_project_dsl\npackage authFixture:\n'
                 '  devEnv:\n    setEnv "GHA_AUTH_FIXTURE", "active"\n')
             command = [REPRO, 'exec', str(project), '--', sys.executable, '-c',
-                        'import os,sys; assert os.environ.get("GHA_AUTH_FIXTURE") == "active"; '
-                        'os.execvp(sys.argv[1], sys.argv[1:])', *command]
+                        'import os,sys,subprocess; assert os.environ.get("GHA_AUTH_FIXTURE") == "active"; '
+                        'sys.exit(subprocess.call(sys.argv[1:]))', *command]
         # As in the owning wrapper fixture, Repro can start a service which
         # inherits its output handles. Files observe the command's completion;
         # pipes would wait for the unrelated lifetime of the inherited handle.
@@ -123,10 +146,10 @@ class CargoGitAcquisition(PrivateGlobalConfig):
     def test_cargo_requires_and_inherits_job_credential(self):
         negative = self.fetch('without-job-auth')
         self.assertNotEqual(negative.returncode, 0)
-        self.assertIn('none /owned/', self.journal.read_text())
+        self.assertIn('none /owned/', self.journal.read_text(), negative.stdout + negative.stderr)
         wrong_flavor = self.fetch('different-flavor', authenticated=True, flavor='nix')
         self.assertNotEqual(wrong_flavor.returncode, 0)
-        self.assertNotIn('ok /owned/', self.journal.read_text())
+        self.assertNotIn('ok /owned/', self.journal.read_text(), wrong_flavor.stdout + wrong_flavor.stderr)
         positive = self.fetch('with-job-auth', authenticated=True)
         self.assertEqual(positive.returncode, 0, positive.stdout + positive.stderr)
 

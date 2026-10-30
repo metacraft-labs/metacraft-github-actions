@@ -15,6 +15,7 @@ let
     # Exercise private Git dependencies through the real Cargo acquisition path.
     cargo
     rustc
+    rustup
     uv
     prek
     editorconfig-checker
