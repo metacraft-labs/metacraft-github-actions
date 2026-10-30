@@ -1,10 +1,13 @@
 """Run the action's generated wrappers against a real qualified Repro CLI.
 
-No CLI, process, filesystem or environment adapter is mocked. A tiny real
-recipe identifies its environment; a native Python child reports only its
-cwd, relative input and exact arguments. The installer is extracted by the
+No CLI, process, filesystem or environment adapter is mocked in the SDK
+activation/cwd/status controls. A tiny real recipe identifies its environment;
+a native Python child reports only its cwd, relative input and exact arguments.
+The installer is extracted by the
 existing native-status fixture. Windows wrappers run only on Windows, and
 Linux results never qualify their native execution. No SDK is built here.
+The separately justified CLI argument-recorder controls are run afterwards;
+they test provisioning-argument dispatch, not SDK realization.
 """
 import argparse
 from contextlib import ExitStack
@@ -216,6 +219,14 @@ def main():
                         rows.append({'installation': installation, 'wrapper': name,
                                       'status': status, 'expected': expected, 'observed': observed,
                                       'sameDirectory': same_directory})
+            if not args.expect_old_cwd_bug:
+                code, output, error = run([
+                    sys.executable, str(HERE / 'test-repro-exec.py'),
+                    'ProvisioningArguments'], consumer,
+                    dict(env, GHA_TEST_ACTION_YML=str(args.action_yml.resolve())))
+                if code:
+                    raise RuntimeError('generated provisioning argument controls failed:\n' +
+                                        output + error)
             if os.name == 'nt' and not args.expect_old_cwd_bug:
                 # Run every existing special-dispatch and generic status case,
                 # not a new approximation of their CMD invocation boundary.

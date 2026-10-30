@@ -2,6 +2,16 @@
 
 Shared GitHub Actions for metacraft-labs projects
 
+## Reprobuild provisioning mode
+
+For `dev-exec repro build` and `dev-exec repro test`, an explicit
+`--tool-provisioning` argument passes unchanged; otherwise Repro uses the
+project's declared default. The wrapper does not select PATH mode. It adds
+`--daemon=off` only when no daemon selector is supplied. Generic commands retain
+the setup project's environment, the caller's working directory and child status.
+Projects declare their platform-specific tool realizations in `repro.nim`, rather
+than installing tools or rewriting PATH in their workflows.
+
 ## Release tools
 
 `.github/workflows/release-tools.yml` builds the caller's declared target

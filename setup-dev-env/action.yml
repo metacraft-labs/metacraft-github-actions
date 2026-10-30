@@ -930,18 +930,15 @@ runs:
         if [ "${args[0]:-}" = "repro" ]; then
           case "${args[1]:-}" in
             build|test)
-              has_tool_provisioning=false
               has_daemon=false
               for arg in "${args[@]}"; do
                 case "$arg" in
-                  --tool-provisioning=*) has_tool_provisioning=true ;;
                   --daemon=*)            has_daemon=true ;;
                 esac
               done
 
-              if [ "$has_tool_provisioning" = false ]; then
-                args+=(--tool-provisioning=path)
-              fi
+              # Keep explicit provisioning arguments unchanged; without one,
+              # Repro must use the project's declared provisioning mode.
               # `repro build`/`repro test` require an explicit --daemon
               # selector.  In CI we want the single-shot no-daemon path
               # so there is no background process to clean up between
@@ -981,16 +978,13 @@ runs:
         if ($cmdArgs.Count -ge 2 -and
             $cmdArgs[0] -eq "repro" -and
             ($cmdArgs[1] -eq "build" -or $cmdArgs[1] -eq "test")) {
-          $hasToolProvisioning = $false
           $hasDaemon = $false
           foreach ($arg in $cmdArgs) {
-            if ($arg -like "--tool-provisioning=*") { $hasToolProvisioning = $true }
             if ($arg -like "--daemon=*")            { $hasDaemon = $true }
           }
 
-          if (-not $hasToolProvisioning) {
-            $cmdArgs += "--tool-provisioning=path"
-          }
+          # Preserve explicit provisioning arguments, or let Repro select
+          # the project's declared default. CI does not choose a toolchain.
           # Mirror the bash dev-exec: `repro build`/`test` need an explicit
           # --daemon selector; default to the single-shot no-daemon path so
           # CI does not have to clean up a background process.
