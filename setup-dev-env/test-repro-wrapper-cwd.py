@@ -26,6 +26,12 @@ fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 
 
+def write_fixture(path, text):
+    # The actual installer contains Unicode comments, and its Bash body must
+    # retain LF even when this fixture is driven by native Windows Python.
+    path.write_text(text, encoding='utf-8', newline='\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repro', type=Path, required=True)
@@ -52,7 +58,8 @@ def main():
                                     stderr=stderr, timeout=timeout)
         commands.append({'argv': [str(x) for x in argv], 'cwd': str(cwd),
                           'exit': result.returncode, 'stdout': str(out), 'stderr': str(err)})
-        return result.returncode, out.read_text(), err.read_text()
+        return (result.returncode, out.read_bytes().decode('utf-8', errors='replace'),
+                err.read_bytes().decode('utf-8', errors='replace'))
 
     rows = []
     try:
@@ -61,17 +68,17 @@ def main():
             consumer = root / 'setup project'
             nested = consumer / 'src' / 'nested directory'
             nested.mkdir(parents=True)
-            (consumer / 'repro.nim').write_text(
+            write_fixture(consumer / 'repro.nim',
                 'import repro_project_dsl\npackage wrapperFixture:\n'
                 '  devEnv:\n    setEnv "GHA_CWD_FIXTURE", "setup-project"\n')
-            (consumer / 'input.txt').write_text('root input')
-            (nested / 'input.txt').write_text('nested input')
+            write_fixture(consumer / 'input.txt', 'root input')
+            write_fixture(nested / 'input.txt', 'nested input')
             child = root / 'report child.py'
-            child.write_text(
+            write_fixture(child,
                 'import json,os,sys\nfrom pathlib import Path\n'
                 'print(json.dumps({"cwd":str(Path.cwd()),'
                 '"environment":os.environ.get("GHA_CWD_FIXTURE"),'
-                '"input":Path("input.txt").read_text(),"args":sys.argv[1:]}))\n'
+                '"input":Path("input.txt").read_text(encoding="utf-8"),"args":sys.argv[1:]}))\n'
                 'sys.exit(int(sys.argv[-1]))\n')
             home = root / 'private home'
             home.mkdir()
@@ -84,7 +91,7 @@ def main():
                 hooks = root / 'empty git hooks'
                 template.mkdir()
                 hooks.mkdir()
-                (consumer / '.gitignore').write_text('.repro/\n')
+                write_fixture(consumer / '.gitignore', '.repro/\n')
                 git = shutil.which('git')
                 if not git:
                     raise RuntimeError('real Git is required by the native status fixture')
@@ -144,7 +151,7 @@ def main():
             for name in ('github-env', 'github-path'):
                 (root / name).touch()
             installer = root / 'install-wrapper.sh'
-            installer.write_text(fixture.installer_body(args.action_yml.resolve()))
+            write_fixture(installer, fixture.installer_body(args.action_yml.resolve()))
             code, output, error = run([bash, str(installer)], consumer, install_env)
             if code:
                 raise RuntimeError('actual installer failed:\n' + output + error)
@@ -154,9 +161,9 @@ def main():
             second = root / 'second setup project'
             second_nested = second / 'src' / 'nested directory'
             second_nested.mkdir(parents=True)
-            (second / 'repro.nim').write_text(
-                (consumer / 'repro.nim').read_text().replace('setup-project', 'second-project'))
-            (second_nested / 'input.txt').write_text('second nested input')
+            write_fixture(second / 'repro.nim',
+                (consumer / 'repro.nim').read_text(encoding='utf-8').replace('setup-project', 'second-project'))
+            write_fixture(second_nested / 'input.txt', 'second nested input')
             code, output, error = run([bash, str(installer)], second,
                                       dict(install_env, MCL_CONSUMER_ROOT=str(second)))
             if code:
@@ -199,10 +206,16 @@ def main():
                         observed = json.loads(output.strip().splitlines()[-1])
                         expected = {'cwd': str(working_directory), 'environment': marker,
                                     'input': input_text, 'args': ['', 'space argument', str(status)]}
-                        if observed != expected:
-                            raise RuntimeError('cwd/environment/argv/relative input changed: ' + repr(observed))
+                        # Windows may expand a temporary directory's 8.3 name.
+                        # Require the same physical directory, not its spelling.
+                        same_directory = Path(observed['cwd']).samefile(working_directory)
+                        if not same_directory or any(
+                                observed[key] != expected[key] for key in ('environment', 'input', 'args')):
+                            raise RuntimeError('cwd/environment/argv/relative input changed: '
+                                                + repr({'expected': expected, 'observed': observed}))
                         rows.append({'installation': installation, 'wrapper': name,
-                                      'status': status, 'observed': observed})
+                                      'status': status, 'expected': expected, 'observed': observed,
+                                      'sameDirectory': same_directory})
             if os.name == 'nt' and not args.expect_old_cwd_bug:
                 # Run every existing special-dispatch and generic status case,
                 # not a new approximation of their CMD invocation boundary.
@@ -216,7 +229,7 @@ def main():
                 if code:
                     raise RuntimeError('existing whole native status controls failed:\n' + output + error)
     finally:
-        args.report.write_text(json.dumps({'repro': str(repro),
+        write_fixture(args.report, json.dumps({'repro': str(repro),
             'action': str(args.action_yml.resolve()), 'platform': sys.platform,
             'expectOldFailure': args.expect_old_cwd_bug, 'cases': rows,
             'commands': commands, 'nativeWindows': os.name == 'nt'}, indent=2) + '\n')

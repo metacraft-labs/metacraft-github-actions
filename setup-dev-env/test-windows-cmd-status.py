@@ -2,8 +2,8 @@
 
 This is a native Windows status-boundary regression, not a build/test-suite or
 bootstrap acceptance test. No executable is mocked. The action's actual wrapper
-installation step produces both wrappers in a private home. Build/test help and
-invalid variant syntax stop at the real CLI parser; generic exec needs an already
+installation step produces both wrappers in a private home. Build/test target listing and
+invalid variant syntax exercise the real typed CLI dispatch; generic exec needs an already
 qualified consumer environment supplied by the caller. Its normal provider/tool
 prerequisites must be priced before execution. Non-Windows execution fails loudly.
 
@@ -269,13 +269,18 @@ def main():
             for verb in ('build', 'test'):
                 for success in (True, False):
                     # The exact same explicit flags reach direct and wrapped Repro.
-                    tail = ['--help'] if success else ['--variant=invalid']
+                    tail = ['--list-targets', '--json'] if success else ['--variant=invalid']
                     cli = [verb, *tail, '--tool-provisioning=path', '--daemon=off']
                     direct = capture.run([str(repro), *cli], consumer, runtime_env)
                     text = direct.stdout + direct.stderr
                     if success:
-                        if direct.returncode != 0 or 'usage' not in text.lower():
-                            raise RuntimeError('real ' + verb + ' help baseline failed: ' + text)
+                        if direct.returncode != 0:
+                            raise RuntimeError('real ' + verb + ' listing baseline failed: ' + text)
+                        listing = json.loads(direct.stdout)
+                        if (listing.get('schemaId') != 'reprobuild.list-targets.v1'
+                                or not isinstance(listing.get('targets'), list)
+                                or not Path(listing['projectRoot']).samefile(consumer)):
+                            raise RuntimeError('real ' + verb + ' returned the wrong target listing: ' + text)
                     elif direct.returncode == 0 or INVALID not in text:
                         raise RuntimeError('real ' + verb + ' variant baseline failed: ' + text)
                     rows.append(check_case(capture, verb + ('-success' if success else '-failure'),
