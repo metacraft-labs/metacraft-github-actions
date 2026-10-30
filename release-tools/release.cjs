@@ -66,9 +66,10 @@ function plan(root = process.cwd(), hosted = false) {
       typeof migration.owner === "string" &&
       migration.owner.trim().length > 0 &&
       typeof migration.followup === "string" &&
-      migration.followup.startsWith(
-        "https://github.com/metacraft-labs/metacraft-specs/",
-      );
+      // An opaque tracking ID: the dated slug of the internal issue that
+      // owns the migration. Not a URL, so a public release spec never names
+      // where the tracker lives.
+      /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*$/.test(migration.followup);
     const hostedArmRunner =
       ((t.id === "linux-aarch64" && t.runner === "ubuntu-24.04-arm") ||
         (t.id === "windows-aarch64" && t.runner === "windows-11-arm")) &&

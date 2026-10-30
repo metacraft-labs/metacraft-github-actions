@@ -4,8 +4,8 @@
 No process or Git boundary is mocked. The existing smart-HTTP fixture stands
 in for a private forge because tests must use a recognizable noncredential,
 not contact GitHub with a real secret. Its journal records only auth verdicts.
-Default tests require Git, Bash and Python; --repro adds an actual measured
-Repro materialization control without pretending CI has built that SDK.
+Default tests require Git, Bash and Python; --repro additionally tests actual
+measured Repro materialization. Cargo acquisition has its own portable suite.
 """
 from __future__ import annotations
 
@@ -170,6 +170,18 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
                         'SCOPED_GIT_AUTH_MASK: "1"'):
             self.assertIn(binding, block)
         self.assertIn('provision-siblings-from-lock.sh', block)
+
+    def test_reprobuild_routes_existing_job_credential_before_exec(self):
+        action = (ROOT / 'setup-dev-env/action.yml').read_text()
+        marker = '    - name: Configure Git authentication (reprobuild)\n'
+        self.assertIn(marker, action)
+        block = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
+        self.assertIn("inputs.env-flavor == 'reprobuild'", block)
+        self.assertIn("inputs.gh-token != ''", block)
+        self.assertIn('GH_TOKEN: ${{ inputs.gh-token }}', block)
+        self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', block)
+        self.assertIn('bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"', block)
+        self.assertLess(action.index(marker), action.index('    - name: Verify Reprobuild development-environment execution'))
 
 
 class ActualReproMaterialization(PrivateGlobalConfig):
