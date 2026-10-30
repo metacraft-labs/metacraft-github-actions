@@ -74,6 +74,10 @@ class LockedSiblingReconciliation(unittest.TestCase):
     def head(self):
         return self.git("-C", str(self.target), "rev-parse", "HEAD").strip()
 
+    def assert_reason(self, result, reason):
+        self.assertIn("setup-dev-env: locked sibling refusal reason=" + reason,
+                      result.stderr)
+
     def test_published_clean_stale_checkout_reconciles_without_deletion(self):
         self.assertEqual(self.head(), self.old)
         marker = self.target / ".git" / "preserved-control"
@@ -172,14 +176,75 @@ class LockedSiblingReconciliation(unittest.TestCase):
 
     def test_dirty_checkout_refuses_without_movement(self):
         (self.target / "payload").write_text("valuable edit", encoding="utf-8")
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
         self.assertEqual((self.target / "payload").read_text(), "valuable edit")
+        self.assert_reason(result, "local-work")
+        self.assertIn("setup-dev-env: locked sibling local-work:  M payload", result.stderr)
+        self.assertNotIn("valuable edit", result.stdout + result.stderr)
 
     def test_untracked_checkout_refuses_without_movement(self):
         (self.target / "untracked").write_text("valuable", encoding="utf-8")
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assertEqual((self.target / "untracked").read_text(), "valuable")
+        self.assert_reason(result, "local-work")
+        self.assertIn("setup-dev-env: locked sibling local-work: ?? untracked", result.stderr)
+        self.assertNotIn("valuable", result.stdout + result.stderr)
+
+    def test_selected_revision_still_refuses_local_work(self):
+        self.git("-C", str(self.target), "fetch", "-q", "origin")
+        self.git("-C", str(self.target), "checkout", "-q", "--detach", self.new)
+        (self.target / "payload").write_text("private fixture body", encoding="utf-8")
+        result = self.reconcile(False)
+        self.assertEqual(self.head(), self.new)
+        self.assertEqual((self.target / "payload").read_text(), "private fixture body")
+        self.assert_reason(result, "local-work")
+        self.assertNotIn("private fixture body", result.stdout + result.stderr)
+
+    def test_failed_status_read_refuses_without_repairing_index(self):
+        index = self.target / ".git" / "index"
+        invalid = b"deliberately invalid fixture index"
+        index.write_bytes(invalid)
+        result = self.reconcile(False)
+        self.assertEqual(self.head(), self.old)
+        self.assertEqual(index.read_bytes(), invalid)
+        self.assert_reason(result, "status-read")
+        self.assertEqual(
+            result.stderr,
+            "setup-dev-env: locked sibling refusal reason=status-read\n",
+        )
+        self.assertNotIn(invalid.decode(), result.stdout + result.stderr)
+
+    def test_status_metadata_is_git_quoted_bounded_and_content_free(self):
+        # Real Git quotes this valid filename to more than the reporting cap.
+        # No content, configuration or credential process stands in for Git.
+        secret = "synthetic file content must never be logged"
+        (self.target / ("é" * 100 + ".txt")).write_text(secret, encoding="utf-8")
+        result = self.reconcile(False)
+        self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "local-work")
+        self.assertIn("path metadata omitted: longer than 512 characters", result.stderr)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+
+        quoted = self.target / "00 private path\né.txt"
+        quoted.write_text(secret, encoding="utf-8")
+        for number in range(12):
+            (self.target / f"entry-{number:02d}").write_text(secret, encoding="utf-8")
+        expected = self.git("-c", "core.quotePath=true", "-C", str(self.target),
+                            "status", "--porcelain", "--untracked-files=all").splitlines()
+        self.assertEqual(len(expected), 14)
+        result = self.reconcile(False)
+        self.assertEqual(self.head(), self.old)
+        self.assertEqual(quoted.read_text(encoding="utf-8"), secret)
+        prefix = "setup-dev-env: locked sibling local-work: "
+        lines = [line for line in result.stderr.splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(lines), 10)
+        self.assertTrue(all(len(line) <= len(prefix) + 512 for line in lines))
+        self.assertIn(prefix + expected[0], lines)
+        self.assertIn("additional paths omitted: 4", result.stderr)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assert_reason(result, "local-work")
 
     def test_unpublished_head_refuses_without_movement(self):
         self.git("-C", str(self.target), "-c", "user.name=Control", "-c",
@@ -187,21 +252,24 @@ class LockedSiblingReconciliation(unittest.TestCase):
                   "-c", "core.hooksPath=" + str(self.home), "commit", "--allow-empty",
                   "-qm", "private")
         private = self.head()
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), private)
+        self.assert_reason(result, "unpublished-head")
 
     def test_deleted_remote_head_does_not_authorize_stale_tracking_ref(self):
         self.git("-C", str(self.seed), "push", "-q", "origin", ":refs/heads/main")
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "unpublished-head")
 
     def test_rewritten_remote_head_does_not_authorize_stale_tracking_ref(self):
         self.git("-C", str(self.seed), "checkout", "--orphan", "replacement")
         self.commit("unrelated published history")
         self.git("-C", str(self.seed), "push", "-q", "--force", "origin",
                   "HEAD:refs/heads/main")
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "unpublished-head")
 
     def test_narrow_refspec_cannot_preserve_an_orphan_tracking_ref(self):
         self.git("-C", str(self.target), "config", "remote.origin.fetch",
@@ -212,29 +280,33 @@ class LockedSiblingReconciliation(unittest.TestCase):
         self.commit("rewritten remote")
         self.git("-C", str(self.seed), "push", "-q", "--force", "origin",
                   "HEAD:refs/heads/main")
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
         refs = self.git("-C", str(self.target), "for-each-ref",
                         "--format=%(refname)", "refs/remotes/origin/")
         self.assertNotIn("refs/remotes/origin/retired", refs)
+        self.assert_reason(result, "unpublished-head")
 
     def test_foreign_origin_refuses_without_movement(self):
         self.git("-C", str(self.target), "remote", "set-url", "origin",
                   (self.base / "foreign.git").as_uri())
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "origin-mismatch")
 
     def test_symlink_target_refuses(self):
         parked = self.base / "parked"
         self.target.rename(parked)
         self.target.symlink_to(parked, target_is_directory=True)
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "checkout-layout")
 
     def test_scope_escape_refuses(self):
         self.env["RUNNER_WORKSPACE"] = str(self.home)
-        self.reconcile(False)
+        result = self.reconcile(False)
         self.assertEqual(self.head(), self.old)
+        self.assert_reason(result, "runner-scope")
 
 
 if __name__ == "__main__":

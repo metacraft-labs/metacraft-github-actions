@@ -134,6 +134,20 @@ quietly resolving from the manifests you were trying to stop using.
 `sibling-strategy: clone-siblings` pins the old behaviour for a repo that has a
 `repro.lock` it is not ready to build from.
 
+### Existing CI checkouts
+
+The `repro-lock` path reconciles only clean, published checkouts inside the
+job's owned runner layout. It preserves local work, foreign checkouts and
+unpublished commits rather than resetting or deleting them. Root-repository
+publication checks do not fetch or check out submodules.
+
+A refusal reports the first rejected safety category. For local work it also
+reports at most ten Git-quoted relative status/path entries, each limited to
+512 characters; oversized entries are omitted whole and additional entries are
+counted. It does not print configuration values, environment values or file
+contents. These diagnostics identify what needs investigation; they do not
+authorize bypassing the guard or cleaning the checkout automatically.
+
 ### What happens to `siblings:`
 
 It is never silently ignored, on either path:
