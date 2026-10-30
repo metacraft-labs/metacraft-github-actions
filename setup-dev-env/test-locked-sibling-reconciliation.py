@@ -227,7 +227,7 @@ class LockedSiblingReconciliation(unittest.TestCase):
         self.assertIn("path metadata omitted: longer than 512 characters", result.stderr)
         self.assertNotIn(secret, result.stdout + result.stderr)
 
-        quoted = self.target / "00 private path\né.txt"
+        quoted = self.target / "00 private path é.txt"
         quoted.write_text(secret, encoding="utf-8")
         for number in range(12):
             (self.target / f"entry-{number:02d}").write_text(secret, encoding="utf-8")
