@@ -80,6 +80,11 @@ jobs:
           python setup-dev-env/test-repro-wrapper-cwd.py \
             --repro "$REPRO_CONTRACT_CLI" \
             --report "$RUNNER_TEMP/dev-exec-cwd-result.json"
+      - name: Real private Cargo acquisition through activated Repro
+        shell: bash
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        run: python git-auth/test-cargo-acquisition.py --repro "$REPRO_CONTRACT_CLI"
       - name: Retain native contract receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -375,6 +380,9 @@ jobs:
 
       - name: private global Git credential contract suite
         run: python3 git-auth/test-private-global-config.py
+
+      - name: private Cargo Git credential contract suite
+        run: python3 git-auth/test-cargo-acquisition.py
 
       - name: locked sibling reconciliation real Git controls
         run: python3 setup-dev-env/test-locked-sibling-reconciliation.py

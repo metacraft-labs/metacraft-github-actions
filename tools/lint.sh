@@ -37,6 +37,7 @@ for name in sorted(files):
 PYTHON
 actionlint
 python3 git-auth/test-private-global-config.py
+python3 git-auth/test-cargo-acquisition.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
 python3 setup-dev-env/test-windows-sdk-receipt.py
 python3 setup-dev-env/test-frozen-sibling-source.py
@@ -51,4 +52,5 @@ if [ -n "$repro" ]; then
   python3 setup-dev-env/test-repro-wrapper-cwd.py --repro "$repro" --report "$cwd_report/result.json"
   python3 tools/test-install-canonical-hooks.py --repro "$repro"
   python3 git-auth/test-private-global-config.py --repro "$repro"
+  python3 git-auth/test-cargo-acquisition.py --repro "$repro"
 fi
