@@ -119,6 +119,14 @@ jobs:
       - uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           nix-github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bind declared Nix-auth Node runtime
+        # The test's legacy Python caller receives the same explicit runtime
+        # binding as the production refresh action; no ambient Node discovery.
+        uses: actions/github-script@v7
+        with:
+          script: |
+            require('node:fs').appendFileSync(process.env.GITHUB_ENV,
+              'GHA_NIX_AUTH_NODE=' + process.execPath + '\n');
       - name: Real Git and Nix credential-refresh contract
         run: python3 refresh-build-auth/test.py
       - name: Real runner masking boundary with noncredential sentinels

@@ -201,6 +201,19 @@ token installs no new credential; other authentication remains the caller's
 responsibility. This does not configure a different build tool's internal Git
 implementation or change its choice of Git transport.
 
+When Nix is already installed, the `reprobuild` flavor also selects this job's
+GitHub access token for Nix's own HTTP fetcher through the shared Nix refresh
+helper. The effective map and unrelated settings are preserved; the current
+token replaces `github.com` and existing prefixes for `token-owner`, retaining
+other owners' separately configured credentials. An empty `gh-token` with no
+effective GitHub credentials configures none; with existing GitHub credentials
+it fails explicitly rather than borrowing them or erasing their scopes. Nix's
+existing host-granularity compatibility is unchanged. This configures no other
+transport's credential mechanism and does not install Nix, change caches or
+write the runner's home configuration. The common logic runs through the
+declared Actions Node runtime; legacy refresh callers receive its explicit
+executable binding (or the declared Node path in the owning development shell).
+
 ## Which reprobuild store a job builds into
 
 Where administrators have configured the shared mount, self-hosted Linux jobs

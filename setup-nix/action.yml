@@ -83,6 +83,7 @@ runs:
       id: nix_check
       shell: bash
       run: |
+        printf 'nix-auth-module=%s\n' "${GITHUB_ACTION_PATH}/../refresh-build-auth/nix-auth.cjs" >> "$GITHUB_OUTPUT"
         if command -v nix >/dev/null 2>&1; then
           echo "preinstalled=true" >> "$GITHUB_OUTPUT"
         else
@@ -207,6 +208,16 @@ runs:
         # file to — actually presents to each host. Same reasoning as
         # configure-git-auth.sh below. Suite: setup-nix/nix-netrc-test.sh.
         bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
+
+    - name: Select job-scoped Nix GitHub authentication
+      uses: actions/github-script@v7
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+        GHA_NIX_AUTH_MODULE: ${{ steps.nix_check.outputs.nix-auth-module }}
+      with:
+        script: |
+          require(process.env.GHA_NIX_AUTH_MODULE).refreshNix();
 
     # Prove the caches nix was just told about are READABLE, with the netrc it
     # will use, before any step asks it to substitute. An unreadable cache is

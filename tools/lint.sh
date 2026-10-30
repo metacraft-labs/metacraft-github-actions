@@ -41,6 +41,8 @@ python3 git-auth/test-cargo-acquisition.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
 python3 setup-dev-env/test-windows-sdk-receipt.py
 python3 setup-dev-env/test-frozen-sibling-source.py
+python3 refresh-build-auth/test.py
+node --check refresh-build-auth/nix-auth.cjs
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
 node --check .github/read-workflow.cjs

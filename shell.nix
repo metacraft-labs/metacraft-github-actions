@@ -12,6 +12,8 @@ let
     git
     bashInteractive
     python3
+    # Real isolated Nix configuration controls for the shared auth helper.
+    nix
     # Exercise private Git dependencies through the real Cargo acquisition path.
     cargo
     rustc
@@ -34,6 +36,7 @@ in
 pkgs.mkShell {
   packages = tools;
   PREK_NO_FAST_PATH = "1";
+  GHA_NIX_AUTH_NODE = "${pkgs.nodejs_24}/bin/node";
   shellHook = ''
     export PATH="${pkgs.lib.makeBinPath tools}:$PATH"
   '';
