@@ -836,6 +836,17 @@ runs:
         MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
       run: bash "${GITHUB_ACTION_PATH}/ensure-host-decompressors.sh"
 
+    - name: Configure Git authentication (reprobuild)
+      # Sibling materialization's private global config has already been
+      # removed. Later commands need the same job-scoped Git CLI channel as
+      # the Nix flavor, including commands run through Repro exec.
+      if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+      run: bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"
+
     - name: Verify Reprobuild development-environment execution
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       working-directory: ${{ steps.roots.outputs.consumer-directory }}

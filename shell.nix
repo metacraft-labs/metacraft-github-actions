@@ -12,6 +12,9 @@ let
     git
     bashInteractive
     python3
+    # Exercise private Git dependencies through the real Cargo acquisition path.
+    cargo
+    rustc
     uv
     prek
     editorconfig-checker

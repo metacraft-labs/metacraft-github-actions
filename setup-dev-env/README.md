@@ -172,10 +172,20 @@ Private locked siblings use the existing `gh-token` and `token-owner` inputs.
 The shared Git-auth helper carries scoped HTTP headers in a private temporary
 Git configuration only while materializing the siblings, then removes it on
 success or failure. It uses `GIT_CONFIG_GLOBAL`, the supported Repro channel;
-numbered invocation configuration is intentionally scrubbed by Repro. No token
+numbered invocation configuration is intentionally scrubbed by Repro's VCS operations. No token
 is placed in clone URLs, process arguments or persistent checkout configuration.
 The helper retains its credential-free GitHub SSH-to-HTTPS rewrites, so SSH
 coordinates use the same owner-scoped headers rather than an ambient SSH key.
+
+The `reprobuild` flavor also configures later Git CLI commands through the
+same job-scoped helper as the `nix` flavor. With a nonempty `gh-token`, scoped
+HTTP headers are exported through `GITHUB_ENV` as numbered Git configuration,
+which ordinary commands retain through `repro exec` activation. This covers
+Git CLI acquisition after sibling setup without retaining the temporary
+sibling credential file or writing credentials to the runner's home. An empty
+token installs no new credential; other authentication remains the caller's
+responsibility. This does not configure a different build tool's internal Git
+implementation or change its choice of Git transport.
 
 ## Which reprobuild store a job builds into
 
