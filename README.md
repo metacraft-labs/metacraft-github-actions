@@ -12,6 +12,14 @@ the setup project's environment, the caller's working directory and child status
 Projects declare their platform-specific tool realizations in `repro.nim`, rather
 than installing tools or rewriting PATH in their workflows.
 
+## Prepare inputs before long running gates
+
+[`prepare-repro-envs`](prepare-repro-envs/README.md) enters the caller's existing
+SDK shell and activates each later project's normal Repro environment while
+credentials are valid. Bootstrap and activation refusals are infrastructure
+failures, with the SDK's original diagnostic and status preserved. It selects
+no compiler, provisioning mode or package pin.
+
 ## Release tools
 
 `.github/workflows/release-tools.yml` builds the caller's declared target

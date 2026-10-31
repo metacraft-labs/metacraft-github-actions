@@ -85,6 +85,13 @@ jobs:
         env:
           REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
         run: python git-auth/test-cargo-acquisition.py --repro "$REPRO_CONTRACT_CLI"
+      - name: Prepare selected environments through real credential expiry
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python prepare-repro-envs/test-real.py --repro "$REPRO_CONTRACT_CLI" --report-directory "$RUNNER_TEMP/prepare-repro-envs"
+
       - name: Retain native contract receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,6 +102,7 @@ jobs:
             ${{ runner.temp }}/dev-exec-cwd-result.streams/**
             ${{ runner.temp }}/native-status-result.json
             ${{ runner.temp }}/native-status-result.streams/**
+            ${{ runner.temp }}/prepare-repro-envs/**
           if-no-files-found: error
 
   windows-endpoint-receipt:

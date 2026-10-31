@@ -41,6 +41,8 @@ python3 git-auth/test-cargo-acquisition.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
 python3 setup-dev-env/test-windows-sdk-receipt.py
 python3 setup-dev-env/test-frozen-sibling-source.py
+shellcheck -S warning prepare-repro-envs/prepare.sh prepare-repro-envs/enter-shell.sh
+python3 prepare-repro-envs/test.py
 python3 refresh-build-auth/test.py
 node --check refresh-build-auth/nix-auth.cjs
 node --check assert-workflow-triggers/index.cjs
@@ -52,6 +54,7 @@ node --test .github/assert-workflow-triggers-action-test.cjs
 if [ -n "$repro" ]; then
   cwd_report="$(mktemp -d "${TMPDIR:-/tmp}/repro-wrapper-cwd.XXXXXX")"
   python3 setup-dev-env/test-repro-wrapper-cwd.py --repro "$repro" --report "$cwd_report/result.json"
+  python3 prepare-repro-envs/test-real.py --repro "$repro" --report-directory "$cwd_report/prepare-repro-envs"
   python3 tools/test-install-canonical-hooks.py --repro "$repro"
   python3 git-auth/test-private-global-config.py --repro "$repro"
   python3 git-auth/test-cargo-acquisition.py --repro "$repro"
