@@ -408,20 +408,24 @@ runs:
             test -x "${runquotad}"
             "${runquotad}" --version
             echo "RUNQUOTAD_BIN=${runquotad}" >> "${GITHUB_ENV}"
-            # `repro` dlopens solver/cache libraries by leaf name. The dev
-            # shell provides the clingo/zstd runtime paths while building the
-            # CLI; persist them so later workflow steps can launch that CLI
-            # outside `nix develop`.
-            runtime_library_path="${LD_LIBRARY_PATH:-}"
-            dyld_library_path="${DYLD_LIBRARY_PATH:-}"
-            if [ -z "${dyld_library_path}" ] && [ "$(uname -s)" = "Darwin" ]; then
-              dyld_library_path="${runtime_library_path}"
-            fi
-            if [ -n "${runtime_library_path}" ]; then
-              echo "LD_LIBRARY_PATH=${runtime_library_path}" >> "${GITHUB_ENV}"
-            fi
-            if [ -n "${dyld_library_path}" ]; then
-              echo "DYLD_LIBRARY_PATH=${dyld_library_path}" >> "${GITHUB_ENV}"
+            # `repro` dlopens solver/cache libraries by leaf name. On Linux
+            # scripts/build_apps.sh links an rpath for each of them, gated by
+            # reprobuild tests/integration/t_repro_runtime_dlopen_without_library_path.nim,
+            # so the CLI needs no loader variable. Do not persist the build
+            # shell LD_LIBRARY_PATH: every later step inherits it, including
+            # the actions repro runs, and it makes a Nix tool from another
+            # nixpkgs load that shell glibc-linked libraries. Measured on
+            # gosti run 41220276392 (linux-x64): swtpm --version exited 1,
+            # glibc-2.40 libc.so.6 lacks GLIBC_ABI_DT_X86_64_PLT required by
+            # glibc-2.42 libdl.so.2. macOS keeps both paths as before.
+            if [ "$(uname -s)" = "Darwin" ]; then
+              if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+                echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "${GITHUB_ENV}"
+              fi
+              dyld_library_path="${DYLD_LIBRARY_PATH:-${LD_LIBRARY_PATH:-}}"
+              if [ -n "${dyld_library_path}" ]; then
+                echo "DYLD_LIBRARY_PATH=${dyld_library_path}" >> "${GITHUB_ENV}"
+              fi
             fi
           '
         # `just build` writes to ./build/bin/repro. Surface it on PATH.
