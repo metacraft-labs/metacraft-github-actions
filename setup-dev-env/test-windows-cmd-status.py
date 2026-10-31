@@ -2,8 +2,8 @@
 
 This is a native Windows status-boundary regression, not a build/test-suite or
 bootstrap acceptance test. No executable is mocked. The action's actual wrapper
-installation step produces both wrappers in a private home. Build/test help and
-invalid variant syntax stop at the real CLI parser; generic exec needs an already
+installation step produces both wrappers in a private home. Build/test target listing and
+invalid variant syntax exercise the real typed CLI dispatch; generic exec needs an already
 qualified consumer environment supplied by the caller. Its normal provider/tool
 prerequisites must be priced before execution. Non-Windows execution fails loudly.
 
@@ -150,6 +150,25 @@ def installer_body(action):
                       for line in body.splitlines()) + '\n'
 
 
+def installed_wrapper_directory(github_path):
+    """Use the actual installer handoff, including older installation layouts."""
+    for value in reversed(github_path.read_text(encoding='utf-8').splitlines()):
+        candidate = Path(value)
+        if (candidate / 'dev-exec').is_file() or (candidate / 'dev-exec.cmd').is_file():
+            return candidate
+    raise RuntimeError('the installer published no actual dev-exec directory')
+
+
+def write_cmd_driver(path, wrapper, argv, cmd, prior=0):
+    """Keep CALL and the final status on separately parsed CMD lines."""
+    command = subprocess.list2cmdline([str(wrapper), *argv])
+    path.write_text('@echo off\n' +
+                    '"' + cmd + '" /d /c exit /b ' + str(prior) + '\n' +
+                    'call ' + command + '\n' +
+                    'exit /b %ERRORLEVEL%\n', encoding='utf-8', newline='\n')
+    return [cmd, '/d', '/v:off', '/c', str(path)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--action-yml', type=Path,
@@ -201,7 +220,9 @@ def main():
         install_env.update(HOME=str(home), USERPROFILE=str(home), RUNNER_OS='Windows',
                     GITHUB_ENV=str(home / 'github-env'),
                     GITHUB_PATH=str(home / 'github-path'),
+                    RUNNER_TEMP=str(home / 'runner-temp'),
                     MCL_CONSUMER_ROOT=str(consumer))
+        (home / 'runner-temp').mkdir()
         (home / 'github-env').touch()
         (home / 'github-path').touch()
         script = home / 'install-wrapper.sh'
@@ -211,7 +232,7 @@ def main():
         if installed.returncode != 0:
             raise RuntimeError('actual wrapper installation failed:\n' +
                                 installed.stdout + installed.stderr)
-        wrapper = home / '.local' / 'bin' / 'dev-exec.cmd'
+        wrapper = installed_wrapper_directory(home / 'github-path') / 'dev-exec.cmd'
         if not wrapper.is_file() or not wrapper.with_suffix('.ps1').is_file():
             raise RuntimeError('the actual installer did not generate both wrappers')
         # A unique explicit named pipe prevents adopting/stopping a host daemon.
@@ -248,13 +269,18 @@ def main():
             for verb in ('build', 'test'):
                 for success in (True, False):
                     # The exact same explicit flags reach direct and wrapped Repro.
-                    tail = ['--help'] if success else ['--variant=invalid']
+                    tail = ['--list-targets', '--json'] if success else ['--variant=invalid']
                     cli = [verb, *tail, '--tool-provisioning=path', '--daemon=off']
                     direct = capture.run([str(repro), *cli], consumer, runtime_env)
                     text = direct.stdout + direct.stderr
                     if success:
-                        if direct.returncode != 0 or 'usage' not in text.lower():
-                            raise RuntimeError('real ' + verb + ' help baseline failed: ' + text)
+                        if direct.returncode != 0:
+                            raise RuntimeError('real ' + verb + ' listing baseline failed: ' + text)
+                        listing = json.loads(direct.stdout)
+                        if (listing.get('schemaId') != 'reprobuild.list-targets.v1'
+                                or not isinstance(listing.get('targets'), list)
+                                or not Path(listing['projectRoot']).samefile(consumer)):
+                            raise RuntimeError('real ' + verb + ' returned the wrong target listing: ' + text)
                     elif direct.returncode == 0 or INVALID not in text:
                         raise RuntimeError('real ' + verb + ' variant baseline failed: ' + text)
                     rows.append(check_case(capture, verb + ('-success' if success else '-failure'),
@@ -317,12 +343,8 @@ def check_case(capture, name, argv, prior, direct, wrapper, tools, cwd, env):
     # the fixture itself must not repeat the production compound-expansion bug.
     # Delayed expansion stays OFF so arguments containing ! retain their meaning.
     driver = wrapper.parent / ('case-' + name + '.cmd')
-    command = subprocess.list2cmdline([str(wrapper), *argv])
-    driver.write_text('@echo off\n' +
-                      '"' + tools['cmd.exe'] + '" /d /c exit /b ' + str(prior) + '\n' +
-                      'call ' + command + '\n' +
-                      'exit /b %ERRORLEVEL%\n', encoding='utf-8', newline='\n')
-    wrapped = capture.run([tools['cmd.exe'], '/d', '/v:off', '/c', str(driver)], cwd, env)
+    invocation = write_cmd_driver(driver, wrapper, argv, tools['cmd.exe'], prior)
+    wrapped = capture.run(invocation, cwd, env)
     # Diagnostic/output equality also rejects a wrong executable or parser path.
     if (not name.startswith('generic-') and
             (wrapped.stdout != direct.stdout or wrapped.stderr != direct.stderr)):
