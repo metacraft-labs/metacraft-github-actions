@@ -453,7 +453,7 @@ runs:
       # other caller reaches this step exactly as it did before this input
       # existed.
       if: ${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@6484f6174df3556e5e81e929e0a68e5666eb4380
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@1105fc8bc4a0bbc5051e54520bc71db9017d5297
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -782,7 +782,7 @@ runs:
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@6484f6174df3556e5e81e929e0a68e5666eb4380
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@1105fc8bc4a0bbc5051e54520bc71db9017d5297
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
