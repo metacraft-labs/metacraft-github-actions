@@ -185,7 +185,10 @@ for a in "\$@"; do
       case "\$u" in
         https://github.com/*)
           "$REAL_GIT" "\${prefix[@]}" config --get-urlmatch http.extraheader "\$u" \
-            >>"$TMPROOT/probe-headers" 2>/dev/null ;;
+            >>"$TMPROOT/probe-headers" 2>/dev/null
+          [[ -e \$HOME/.netrc ]] && echo "netrc \$HOME" >>"$TMPROOT/probe-ambient"
+          [[ -n \${GIT_ASKPASS:-} ]] && echo "askpass \$GIT_ASKPASS" >>"$TMPROOT/probe-ambient"
+          echo ran >>"$TMPROOT/probe-ambient" ;;
       esac
     done
     break
@@ -1109,6 +1112,8 @@ lacks "13a: ...and the coverage check did not refuse it" "$OUT" "the CI token fo
 COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/not-public"
 check "13b: an unreadable foreign-owner sibling is refused" "$RC" "1"
 contains "13b: ...by the coverage check, naming the owner" "$OUT" "owner(s) [aiken-lang]"
+contains "13b: ...after saying what the anonymous read answered" "$OUT" \
+  "an anonymous read of aiken-lang/not-public failed, so it is treated as private:"
 check "13b: nothing was cloned" "$([[ -d $WS_PARENT/not-public ]] && echo cloned || echo none)" "none"
 
 # 13c. One public entry must not vouch for a private entry of the same owner.
@@ -1139,6 +1144,20 @@ STEP_CWD="$CHECKOUT_WITH_TOKEN" COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TE
 check "13e: the sibling is cloned from that checkout" "$RC" "0"
 check "13e: ...and the probe ran" "$([[ -s $TMPROOT/probe-headers ]] && echo ran || echo none)" "ran"
 lacks "13e: ...with no credential" "$(<"$TMPROOT/probe-headers")" "JOBTOKEN"
+
+# 13f. Nor can an ambient ~/.netrc or askpass helper answer for it: curl reads
+#      the first through git, and either would turn a private repository into
+#      one that looks public, and send a credential to another owner.
+AMBIENT_HOME="$TMPROOT/ambient-home"
+mkdir -p "$AMBIENT_HOME"
+printf 'machine github.com login x password AMBIENT\n' >"$AMBIENT_HOME/.netrc"
+: >"$TMPROOT/probe-ambient"
+HOME="$AMBIENT_HOME" GIT_ASKPASS="$TMPROOT/askpass" COMMITTED_LOCK="$CL_FOREIGN" \
+  LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib"
+check "13f: the sibling is cloned with ambient credentials present" "$RC" "0"
+contains "13f: ...and the probe ran" "$(<"$TMPROOT/probe-ambient")" "ran"
+lacks "13f: ...with no ~/.netrc in reach" "$(<"$TMPROOT/probe-ambient")" "netrc"
+lacks "13f: ...and no askpass helper" "$(<"$TMPROOT/probe-ambient")" "askpass"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

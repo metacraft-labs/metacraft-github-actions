@@ -383,8 +383,13 @@ add_owner() {
 # `aiken-lang/stdlib` is the first such sibling.
 #
 # The probe is what keeps the check honest: it is made with credentials and
-# prompts disabled, so a private repository, a typo and an unreachable GitHub
-# all fail it, stay in scope and reach the coverage check as before.
+# prompts disabled, and with HOME moved so an ambient ~/.netrc or global git
+# config has nothing to offer, so a private repository, a typo and an
+# unreachable GitHub all fail it, stay in scope and reach the coverage check as
+# before. That check then says the token does not cover the owner, which is the
+# wrong reading of a network or TLS failure, so the probe's own error is printed
+# first: it is the only place a public repository's failed probe can be told
+# from a private one. The error cannot hold a credential, since none was sent.
 #
 # Disabling the helper is not enough. This step runs in the primary checkout,
 # and `ls-remote`, unlike `clone`, reads that repository's config, where
@@ -399,18 +404,21 @@ owner_in_job_scope() { # <owner>
   done
   return 1
 }
+PROBE_ERROR=""
 publicly_readable() { # <owner> <name>
-  GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+  PROBE_ERROR="$(HOME="${RUNNER_TEMP:-/tmp}/clone-siblings-probe-no-home" GIT_CONFIG_GLOBAL=/dev/null GIT_ASKPASS='' SSH_ASKPASS='' \
+    GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c core.askPass= \
     -c http.https://github.com/.extraHeader= ls-remote \
-    "https://github.com/$1/$2" HEAD >/dev/null 2>&1
+    "https://github.com/$1/$2" HEAD 2>&1 >/dev/null)"
 }
 for i in "${!OWNERS[@]}"; do
   ow="${OWNERS[$i]}"
-  if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ] &&
-    ! owner_in_job_scope "${ow}" &&
-    publicly_readable "${ow}" "${NAMES[$i]}"; then
-    echo "${ow}/${NAMES[$i]} is public and outside the token's owners [${JOB_TOKEN_OWNERS}]; cloning it with no credential."
-    continue
+  if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ] && ! owner_in_job_scope "${ow}"; then
+    if publicly_readable "${ow}" "${NAMES[$i]}"; then
+      echo "${ow}/${NAMES[$i]} is public and outside the token's owners [${JOB_TOKEN_OWNERS}]; cloning it with no credential."
+      continue
+    fi
+    echo "clone-siblings: an anonymous read of ${ow}/${NAMES[$i]} failed, so it is treated as private: ${PROBE_ERROR}"
   fi
   add_owner "${ow}"
 done
