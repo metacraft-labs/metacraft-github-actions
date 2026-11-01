@@ -174,6 +174,24 @@ cat >"$TMPROOT/bin/git" <<SHIM
 # URL-only rewrite: https://github.com/<x> -> file://$SRV/<x>. Every other
 # argument, including anything that looks like an option, is passed through
 # untouched so the real git parses it exactly as the action wrote it.
+#
+# A file:// URL sends no HTTP header, so a probe's credential cannot be seen on
+# the wire here. Instead ls-remote records what the real git resolves as its
+# header for the GitHub URL, under the same -c options and in the same directory.
+prefix=()
+for a in "\$@"; do
+  if [[ \$a == ls-remote ]]; then
+    for u in "\$@"; do
+      case "\$u" in
+        https://github.com/*)
+          "$REAL_GIT" "\${prefix[@]}" config --get-urlmatch http.extraheader "\$u" \
+            >>"$TMPROOT/probe-headers" 2>/dev/null ;;
+      esac
+    done
+    break
+  fi
+  prefix+=("\$a")
+done
 args=()
 for a in "\$@"; do
   case "\$a" in
@@ -297,6 +315,7 @@ run_step() { # <siblings-input> [<on-lock-override>]
   : >"$TMPROOT/github-env"
   : >"$SUMMARY"
   OUT="$(
+    cd "${STEP_CWD:-.}" || exit 1
     PATH="$TMPROOT/bin:$PATH" \
       GH_TOKEN="" \
       SIBLINGS_INPUT="$1" \
@@ -1103,6 +1122,23 @@ check "13c: ...before anything is cloned" "$([[ -d $WS_PARENT/stdlib ]] && echo 
 COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
 check "13d: an in-scope sibling is unaffected" "$RC" "0"
 lacks "13d: ...and is not treated as anonymous" "$OUT" "cloning it with no credential"
+
+# 13e. The probe sends nothing, even from a checkout holding the job's token.
+#      `actions/checkout` leaves that header in the repository's own config and
+#      the step runs in that repository, so `ls-remote` would pick it up.
+CHECKOUT_WITH_TOKEN="$TMPROOT/checkout-with-token"
+"$REAL_GIT" init -q "$CHECKOUT_WITH_TOKEN"
+"$REAL_GIT" -C "$CHECKOUT_WITH_TOKEN" config --local \
+  http.https://github.com/.extraheader "AUTHORIZATION: basic JOBTOKEN"
+check "13e: the fixture would hand a plain probe the token" \
+  "$("$REAL_GIT" -C "$CHECKOUT_WITH_TOKEN" config --get-urlmatch http.extraheader \
+    https://github.com/aiken-lang/stdlib)" "AUTHORIZATION: basic JOBTOKEN"
+: >"$TMPROOT/probe-headers"
+STEP_CWD="$CHECKOUT_WITH_TOKEN" COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" \
+  run_step "aiken-lang/stdlib"
+check "13e: the sibling is cloned from that checkout" "$RC" "0"
+check "13e: ...and the probe ran" "$([[ -s $TMPROOT/probe-headers ]] && echo ran || echo none)" "ran"
+lacks "13e: ...with no credential" "$(<"$TMPROOT/probe-headers")" "JOBTOKEN"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

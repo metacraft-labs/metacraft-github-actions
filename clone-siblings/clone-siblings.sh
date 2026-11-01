@@ -385,6 +385,13 @@ add_owner() {
 # The probe is what keeps the check honest: it is made with credentials and
 # prompts disabled, so a private repository, a typo and an unreachable GitHub
 # all fail it, stay in scope and reach the coverage check as before.
+#
+# Disabling the helper is not enough. This step runs in the primary checkout,
+# and `ls-remote`, unlike `clone`, reads that repository's config, where
+# `actions/checkout` leaves `http.https://github.com/.extraheader` holding the
+# job's token. So the probe clears that key by its full name: a plain
+# `http.extraHeader=` is less specific than the URL-scoped entry, and git keeps
+# the more specific one (https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpltURLgt).
 owner_in_job_scope() { # <owner>
   local t
   for t in ${JOB_TOKEN_OWNERS}; do
@@ -393,7 +400,8 @@ owner_in_job_scope() { # <owner>
   return 1
 }
 publicly_readable() { # <owner> <name>
-  GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote \
+  GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+    -c http.https://github.com/.extraHeader= ls-remote \
     "https://github.com/$1/$2" HEAD >/dev/null 2>&1
 }
 for i in "${!OWNERS[@]}"; do
