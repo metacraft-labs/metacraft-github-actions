@@ -222,6 +222,10 @@ inputs:
       that scope surfaces as a bare GitHub 404 on a private repository, which
       reads as a typo rather than as an auth failure.
 
+      A sibling outside these owners that an anonymous client can read is
+      public, so it needs no token here or later in the job: it is cloned with
+      no credential and does not trip that failure.
+
       Set to the empty string to skip the check (for a job that runs no
       `setup-nix`).
     required: false

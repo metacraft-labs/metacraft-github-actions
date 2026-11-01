@@ -373,7 +373,41 @@ add_owner() {
   done
   CLONE_OWNERS+=("${o}")
 }
-for ow in ${OWNERS[@]+"${OWNERS[@]}"}; do add_owner "${ow}"; done
+# A PUBLIC REPOSITORY OUTSIDE THE TOKEN'S OWNERS IS CLONED WITH NO CREDENTIAL.
+#
+# The coverage check below exists because a PRIVATE repository under an owner
+# the token does not cover answers 404, which reads as a typo. A public one has
+# neither problem: it needs no token, and the rest of the job never needs one
+# for it either, so widening `token-owner` for it would only hand this
+# organisation's token to another one. codetracer-cardano-recorder's
+# `aiken-lang/stdlib` is the first such sibling.
+#
+# The probe is what keeps the check honest: it is made with credentials and
+# prompts disabled, so a private repository, a typo and an unreachable GitHub
+# all fail it, stay in scope and reach the coverage check as before.
+owner_in_job_scope() { # <owner>
+  local t
+  for t in ${JOB_TOKEN_OWNERS}; do
+    [ "${t}" = "$1" ] && return 0
+  done
+  return 1
+}
+publicly_readable() { # <owner> <name>
+  GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote \
+    "https://github.com/$1/$2" HEAD >/dev/null 2>&1
+}
+for i in "${!OWNERS[@]}"; do
+  ow="${OWNERS[$i]}"
+  if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ] &&
+    ! owner_in_job_scope "${ow}" &&
+    publicly_readable "${ow}" "${NAMES[$i]}"; then
+    echo "${ow}/${NAMES[$i]} is public and outside the token's owners [${JOB_TOKEN_OWNERS}]; cloning it with no credential."
+    continue
+  fi
+  add_owner "${ow}"
+done
+# Every entry may have been public; the scoped credential still needs an owner.
+[ "${#CLONE_OWNERS[@]}" -eq 0 ] && add_owner "${DEFAULT_OWNER}"
 # The manifest owners are added unconditionally, because the lock is now
 # consulted for EVERY entry and not only for the bare ones. See "WHY THE LOCK IS
 # READ EVEN WHEN NOTHING RESOLVES FROM IT" below.

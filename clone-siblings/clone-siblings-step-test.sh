@@ -1062,6 +1062,48 @@ COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="records" run_step "nim-acp"
 check "12i: an unknown lock-store value is refused" "$RC" "1"
 contains "12i: ...naming the accepted values" "$OUT" "record-store"
 
+# ---------------------------------------------------------------------------
+# 13. An owner outside the token's scope: public is cloned with no credential,
+#     anything else is still refused before a clone. The fixture server plays
+#     GitHub, so a repository it serves is one an anonymous probe can read, and
+#     one it does not serve answers the probe the way a private repository
+#     answers an anonymous client.
+# ---------------------------------------------------------------------------
+mkdir -p "$SRV/aiken-lang"
+"$REAL_GIT" clone -q --bare "$SRV/metacraft-labs/nim-pty.git" "$SRV/aiken-lang/stdlib.git"
+git_q -C "$SRV/aiken-lang/stdlib.git" config uploadpack.allowAnySHA1InWant true
+STDLIB_SHA="$(sha_of nim-pty)"
+CL_FOREIGN="$TMPROOT/committed-foreign.lock"
+FOREIGN_ENTRY="$(dep_entry stdlib ../stdlib "$STDLIB_SHA")"
+mk_committed_lock "$CL_FOREIGN" "${FOREIGN_ENTRY//metacraft-labs\/stdlib/aiken-lang\/stdlib}"
+
+# 13a. A public repository under a foreign owner is cloned at its lock pin.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib"
+check "13a: a public foreign-owner sibling is cloned" "$RC" "0"
+check "13a: ...at the revision the lock pins" \
+  "$("$REAL_GIT" -C "$WS_PARENT/stdlib" rev-parse HEAD 2>/dev/null)" "$STDLIB_SHA"
+contains "13a: ...and the step says no credential was used" "$OUT" "cloning it with no credential"
+lacks "13a: ...and the coverage check did not refuse it" "$OUT" "the CI token for this job is scoped to"
+
+# 13b. The same owner with a repository nothing can read anonymously is the
+#      private case the coverage check exists for: refused by name, no clone.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/not-public"
+check "13b: an unreadable foreign-owner sibling is refused" "$RC" "1"
+contains "13b: ...by the coverage check, naming the owner" "$OUT" "owner(s) [aiken-lang]"
+check "13b: nothing was cloned" "$([[ -d $WS_PARENT/not-public ]] && echo cloned || echo none)" "none"
+
+# 13c. One public entry must not vouch for a private entry of the same owner.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib
+aiken-lang/not-public"
+check "13c: a private entry beside a public one is still refused" "$RC" "1"
+check "13c: ...before anything is cloned" "$([[ -d $WS_PARENT/stdlib ]] && echo cloned || echo none)" "none"
+
+# 13d. An owner the token covers is not probed, so a private repository there
+#      keeps its credential.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "13d: an in-scope sibling is unaffected" "$RC" "0"
+lacks "13d: ...and is not treated as anonymous" "$OUT" "cloning it with no credential"
+
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then
