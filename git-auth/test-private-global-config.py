@@ -6,6 +6,14 @@ in for a private forge because tests must use a recognizable noncredential,
 not contact GitHub with a real secret. Its journal records only auth verdicts.
 Default tests require Git, Bash and Python; --repro additionally tests actual
 measured Repro materialization. Cargo acquisition has its own portable suite.
+
+The git-auth composite action (git-auth/action.yml) is driven through its real
+`run:` body and `env:` bindings, extracted from the manifest text, exactly as
+the runner would execute them. The --repro cases include the negative control
+for the defect the action exists for: the same `repro develop` invocation, with
+the credential only in numbered GIT_CONFIG_* configuration (what setup-nix
+exports job-wide), must fail to clone the private repository even though plain
+`git ls-remote` with that configuration succeeds.
 """
 from __future__ import annotations
 
@@ -14,6 +22,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -22,8 +31,57 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / 'git-auth/scoped-git-auth.sh'
 SERVER = ROOT / 'git-auth/git-http-auth-server.py'
+ACTION = ROOT / 'git-auth/action.yml'
 TOKEN = 'ghs_NotARealToken_private_global_config_control_0123456789'
+BLOB = base64.b64encode(('x-access-token:' + TOKEN).encode()).decode()
 REPRO = None
+ACTION_STEP_MARKER = '    - name: Run with the scoped Git credential\n'
+
+
+def action_step():
+    """Return (bindings, working_directory, body) of git-auth/action.yml's step.
+
+    Plain text parsing, like the other composite tests here: no YAML library
+    is assumed on the runner. The manifest is laid out with a fixed indent, so
+    a change that moves these keys fails here rather than testing something
+    other than what GitHub runs.
+    """
+    text = ACTION.read_text()
+    assert ACTION_STEP_MARKER in text, 'git-auth/action.yml lost its step'
+    step = text.split(ACTION_STEP_MARKER, 1)[1]
+    head, body_text = step.split('      run: |\n', 1)
+    workdir = None
+    bindings = {}
+    in_env = False
+    for line in head.splitlines():
+        stripped = line.strip()
+        if line.startswith('      working-directory: '):
+            workdir = line.split(': ', 1)[1]
+        if line == '      env:':
+            in_env = True
+            continue
+        if in_env:
+            if not line.startswith('        '):
+                in_env = False
+                continue
+            if stripped.startswith('#'):
+                continue
+            name, value = stripped.split(': ', 1)
+            bindings[name] = value
+    body = []
+    for line in body_text.splitlines():
+        if line and not line.startswith('        '):
+            break
+        body.append(line[8:])
+    return bindings, workdir, '\n'.join(body).rstrip('\n') + '\n'
+
+
+def resolve(expression, inputs):
+    """Evaluate the only expression shapes the step uses: an input or a literal."""
+    if expression.startswith('${{ inputs.') and expression.endswith(' }}'):
+        return inputs[expression[len('${{ inputs.'):-len(' }}')]]
+    assert '${{' not in expression, 'unsupported expression ' + expression
+    return expression.strip('"')
 
 
 class PrivateGlobalConfig(unittest.TestCase):
@@ -53,7 +111,7 @@ class PrivateGlobalConfig(unittest.TestCase):
             target = self.web / owner / 'private.git'
             target.parent.mkdir()
             self.git('clone', '--bare', '-q', str(seed), str(target))
-        tokenfile = self.base / 'fixture-token'
+        tokenfile = self.tokenfile = self.base / 'fixture-token'
         tokenfile.write_text(TOKEN)
         tokenfile.chmod(0o600)
         self.journal = self.base / 'journal'
@@ -74,7 +132,7 @@ class PrivateGlobalConfig(unittest.TestCase):
 from pathlib import Path
 f=Path(os.environ['GIT_CONFIG_GLOBAL'])
 longpaths=subprocess.check_output(['git','config','--bool','--get','core.longpaths'],text=True).strip()
-Path(sys.argv[1]).write_text(json.dumps({'config':str(f),'mode':stat.S_IMODE(f.stat().st_mode),'parentMode':stat.S_IMODE(f.parent.stat().st_mode),'argv':sys.argv[2:],'longpaths':longpaths}))
+Path(sys.argv[1]).write_text(json.dumps({'config':str(f),'mode':stat.S_IMODE(f.stat().st_mode),'parentMode':stat.S_IMODE(f.parent.stat().st_mode),'argv':sys.argv[2:],'longpaths':longpaths,'ghToken':'GH_TOKEN' in os.environ,'numbered':sorted(k for k in os.environ if k.startswith(('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_','GIT_CONFIG_VALUE_')))}))
 r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
 ''')
 
@@ -183,9 +241,116 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         self.assertIn('bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"', block)
         self.assertLess(action.index(marker), action.index('    - name: Verify Reprobuild development-environment execution'))
 
+    # ---- git-auth/action.yml, the composite consumers call -----------------
+
+    def job_numbered_credential(self):
+        """The job-wide credential setup-nix's configure-git-auth.sh exports.
+
+        Every consuming job carries it, so the action is exercised with it in
+        the environment: the script must still take its credential from the
+        private file, not from this.
+        """
+        return {'GIT_CONFIG_COUNT': '1',
+                'GIT_CONFIG_KEY_0': 'http.' + self.url + 'owned/.extraHeader',
+                'GIT_CONFIG_VALUE_0': 'AUTHORIZATION: basic ' + BLOB}
+
+    def assert_no_credential_leak(self, result):
+        output = result.stdout + result.stderr
+        self.assertNotIn(TOKEN, output)
+        # The derived header may appear only as the payload of the runner's
+        # `::add-mask::` command, which the runner consumes and never logs.
+        for line in output.splitlines():
+            if BLOB in line:
+                self.assertTrue(line.startswith('::add-mask::'), 'credential printed: ' + line[:40])
+        self.assertEqual(list(self.scratch.iterdir()), [], 'private config left in RUNNER_TEMP')
+        for path in self.base.rglob('*'):
+            if path == self.tokenfile or path.is_symlink() or not path.is_file():
+                continue
+            data = path.read_bytes()
+            self.assertNotIn(TOKEN.encode(), data, path)
+            self.assertNotIn(BLOB.encode(), data, path)
+
+    def run_action(self, script, *, token=TOKEN, owner='owned', workdir=None, job_env=None):
+        """Execute the action's real run: body with its real env: bindings."""
+        bindings, workdir_expr, body = action_step()
+        inputs = {'gh-token': token, 'token-owner': owner,
+                  'working-directory': str(workdir or self.base), 'run': script}
+        step_env = {name: resolve(value, inputs) for name, value in bindings.items()}
+        script_file = self.base / 'action-step.sh'
+        script_file.write_text(body)
+        env = dict(self.env, GITHUB_ACTION_PATH=str(ROOT / 'git-auth'),
+                   RUNNER_TEMP=str(self.scratch), GIT_AUTH_URL_BASE=self.url)
+        env.update(job_env or {})
+        env.update(step_env)
+        # How the runner executes a `shell: bash` step.
+        result = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', str(script_file)],
+                                env=env, cwd=resolve(workdir_expr, inputs),
+                                capture_output=True, text=True, timeout=120)
+        self.assert_no_credential_leak(result)
+        return result
+
+    def test_action_binding_contract(self):
+        bindings, workdir, body = action_step()
+        self.assertEqual(bindings, {'GH_TOKEN': '${{ inputs.gh-token }}',
+                                    'TOKEN_OWNERS': '${{ inputs.token-owner }}',
+                                    'GIT_AUTH_RUN': '${{ inputs.run }}',
+                                    'SCOPED_GIT_AUTH_MASK': '"1"'})
+        self.assertEqual(workdir, '${{ inputs.working-directory }}')
+        # Inputs reach the script only through the environment; an expression
+        # in the body would splice caller text into shell source.
+        self.assertNotIn('${{', body)
+        self.assertIn('. "${GITHUB_ACTION_PATH}/scoped-git-auth.sh"', body)
+        self.assertIn('scoped_git_auth_with_global', body)
+        self.assertIn('export -n GH_TOKEN', body)
+        manifest = ACTION.read_text().split('\nruns:\n', 1)[0]
+        for declaration in ('  gh-token:\n', '  token-owner:\n', '  working-directory:\n', '  run:\n'):
+            self.assertIn(declaration, manifest)
+        self.assertIn('    default: metacraft-labs\n', manifest)
+        self.assertIn('    default: "."\n', manifest)
+
+    def test_action_private_clone_through_private_global_config(self):
+        workdir = self.base / 'work'
+        workdir.mkdir()
+        target = self.base / 'action-clone'
+        script = ('pwd > ' + shlex.quote(str(self.base / 'action-pwd')) + '\n' +
+                  shlex.join([sys.executable, str(self.child), str(self.trace), 'git', 'clone', '-q',
+                              self.url + 'owned/private.git', str(target)]) + '\n')
+        r = self.run_action(script, workdir=workdir, job_env=self.job_numbered_credential())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((target / 'payload').read_text(), 'actual committed source\n')
+        self.assertIn('ok /owned/', self.journal.read_text())
+        self.assertEqual((self.base / 'action-pwd').read_text().strip(), str(workdir))
+        self.assertIn('::add-mask::' + BLOB, r.stdout)
+        proof = json.loads(self.trace.read_text())
+        self.assertEqual(proof['mode'], 0o600)
+        self.assertEqual(proof['parentMode'], 0o700)
+        self.assertFalse(Path(proof['config']).exists())
+        self.assertFalse(Path(proof['config']).parent.exists())
+        self.assertFalse(proof['ghToken'], 'GH_TOKEN was exported to the script')
+        self.assertEqual(proof['numbered'], [], 'job-wide numbered config reached the script')
+
+    def test_action_empty_token_refuses_before_running(self):
+        marker = self.base / 'ran'
+        # The job credential is present, so a silent fallback would succeed.
+        r = self.run_action('touch ' + shlex.quote(str(marker)), token='',
+                            job_env=self.job_numbered_credential())
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('gh-token input is empty', r.stderr)
+        self.assertFalse(marker.exists())
+        self.assertNotIn('/owned/', self.journal.read_text() if self.journal.exists() else '')
+
+    def test_action_script_runs_errexit_and_keeps_status(self):
+        marker = self.base / 'after-false'
+        r = self.run_action('false\ntouch ' + shlex.quote(str(marker)))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(marker.exists())
+        r = self.run_action('exit 37')
+        self.assertEqual(r.returncode, 37)
+
 
 class ActualReproMaterialization(PrivateGlobalConfig):
-    def provision(self, token, *, ssh=False):
+    def consumer(self, *, ssh=False):
+        """A consumer checkout whose committed lock pins one private sibling."""
         consumer = self.base / 'consumer'
         consumer.mkdir()
         self.git('init', '-q', str(consumer))
@@ -197,11 +362,55 @@ class ActualReproMaterialization(PrivateGlobalConfig):
             '{ name = "private", coord_kind = "vcs", url = "' +
             ('git@github.com:owned/private.git' if ssh else self.url + 'owned/private.git') +
             '", revision = "' + self.rev + '" }]\n')
+        return consumer
+
+    def repro_path(self):
+        return str(Path(REPRO).parent) + os.pathsep + self.env['PATH']
+
+    def develop_command(self):
+        # The invocation codetracer's provision-repro-lock-siblings runs.
+        return ['repro', 'develop', '--all', '--only=private', '--reset', '--into=' + str(self.base)]
+
+    def test_actual_repro_develop_through_git_auth_action(self):
+        consumer = self.consumer()
+        job_env = dict(self.job_numbered_credential(), PATH=self.repro_path())
+        r = self.run_action(shlex.join(self.develop_command()) + '\n', workdir=consumer, job_env=job_env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.base / 'private/payload').read_text(), 'actual committed source\n')
+        self.assertEqual(self.git('-C', str(self.base / 'private'), 'rev-parse', 'HEAD').stdout.strip(), self.rev)
+        self.assertIn('ok /owned/', self.journal.read_text())
+
+    def test_actual_repro_develop_ignores_numbered_job_credential(self):
+        """Negative control: the defect the git-auth action exists for.
+
+        The job-wide numbered configuration is a valid credential (plain git
+        authenticates with it below), yet Repro scrubs it before its own clone,
+        so the private sibling is not materialized.
+        """
+        consumer = self.consumer()
+        env = dict(self.env, GIT_CONFIG_GLOBAL=os.devnull, PATH=self.repro_path(),
+                   **self.job_numbered_credential())
+        probe = subprocess.run(['git', 'ls-remote', self.url + 'owned/private.git', 'HEAD'],
+                               env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertIn(self.rev, probe.stdout)
+        self.assertIn('ok /owned/', self.journal.read_text())
+        before = len(self.journal.read_text())
+        r = subprocess.run(self.develop_command(), env=env, cwd=consumer,
+                           capture_output=True, text=True, timeout=120)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.base / 'private/payload').exists())
+        attempt = self.journal.read_text()[before:]
+        self.assertIn('none /owned/', attempt)
+        self.assertNotIn('ok /owned/', attempt)
+
+    def provision(self, token, *, ssh=False):
+        consumer = self.consumer(ssh=ssh)
         env = dict(self.env, GH_TOKEN=token, TOKEN_OWNERS='owned',
                     GIT_AUTH_URL_BASE=self.url, RUNNER_TEMP=str(self.scratch),
                     MCL_CONSUMER_ROOT=str(consumer), SIBLING_STRATEGY='repro-lock',
                     GIT_AUTH_DIR=str(ROOT / 'git-auth'),
-                    PATH=str(Path(REPRO).parent) + os.pathsep + self.env['PATH'])
+                    PATH=self.repro_path())
         r = subprocess.run(['bash', '-euo', 'pipefail', str(ROOT / 'setup-dev-env/provision-siblings-from-lock.sh')],
                             env=env, cwd=consumer, capture_output=True, text=True, timeout=60)
         for secret in (TOKEN, base64.b64encode(('x-access-token:' + TOKEN).encode()).decode()):
@@ -243,4 +452,6 @@ if __name__ == '__main__':
         suite.addTest(ActualReproMaterialization('test_actual_repro_private_locked_checkout'))
         suite.addTest(ActualReproMaterialization('test_actual_repro_without_token_refuses_private_checkout'))
         suite.addTest(ActualReproMaterialization('test_actual_repro_private_ssh_locked_checkout'))
+        suite.addTest(ActualReproMaterialization('test_actual_repro_develop_through_git_auth_action'))
+        suite.addTest(ActualReproMaterialization('test_actual_repro_develop_ignores_numbered_job_credential'))
     sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())

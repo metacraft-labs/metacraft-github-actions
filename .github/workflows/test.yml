@@ -85,6 +85,16 @@ jobs:
         env:
           REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
         run: python git-auth/test-cargo-acquisition.py --repro "$REPRO_CONTRACT_CLI"
+      # The git-auth action's real `repro develop` materialization, and the
+      # negative control that the job's numbered Git configuration alone does
+      # not reach Repro's clone. The suite drives the steps with bash and
+      # POSIX file modes, so it runs on the Linux leg only.
+      - name: Real private Repro materialization through the git-auth action
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python git-auth/test-private-global-config.py --repro "$REPRO_CONTRACT_CLI"
       - name: Prepare selected environments through real credential expiry
         env:
           REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}

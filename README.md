@@ -44,6 +44,57 @@ The first-release scope and migration ownership are tracked internally.
 Runner selection does not change artifact membership, signatures, installer
 checks, Linux portability checks or publication requirements.
 
+## `git-auth`
+
+Runs a bash script with the job's scoped GitHub credential, delivered through
+a private `GIT_CONFIG_GLOBAL` file. Use it for any step whose Git access goes
+through Repro, such as `repro develop` cloning a private sibling.
+
+`setup-nix` exports the job credential as numbered Git configuration
+(`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n`). Plain `git`
+reads it. Repro deliberately removes numbered configuration from the Git
+commands it runs for another repository, so in the same job `git ls-remote`
+succeeds and `repro develop` fails with `could not read Username for
+'https://github.com'`. Git reads a global configuration file named by
+`GIT_CONFIG_GLOBAL` through that boundary.
+
+```yaml
+- uses: metacraft-labs/metacraft-github-actions/git-auth@<sha>
+  with:
+    gh-token: ${{ steps.ci_token.outputs.token }}
+    working-directory: ${{ github.workspace }}
+    run: |
+      nix develop .#ci --command repro develop --all --reset --into=..
+```
+
+| Input | Default | Meaning |
+| ----- | ------- | ------- |
+| `gh-token` | (required) | The job's token. An empty value fails the step. |
+| `token-owner` | `metacraft-labs` | Whitespace-separated owners the credential is scoped to. |
+| `working-directory` | `.` | Directory the script runs in. |
+| `run` | (required) | The script. It runs under `bash -eo pipefail`, like a `run:` step. |
+
+The action writes an owner-scoped `http.<url>.extraHeader`, and the ssh-to-https
+`insteadOf` rewrites that carry no credential, to a `0600` file in a private
+directory under `RUNNER_TEMP`. It then sets `GIT_CONFIG_GLOBAL` and
+`GIT_CONFIG_NOSYSTEM=1`, clears the inherited numbered configuration, runs the
+script, and deletes the file however the script exits. The token is not put in
+a URL, an argument list, a checkout or a persistent configuration file.
+`GH_TOKEN` is not exported to the script, and the derived header is printed
+only as an `::add-mask::` command. The credential logic is the same
+`scoped-git-auth.sh` that `setup-nix`, `clone-siblings` and `setup-dev-env`
+use.
+
+An empty `gh-token` is an error, not an anonymous run. A private clone without a
+credential fails later, as a 404 or a username prompt that does not name the
+missing token.
+
+The step needs only Bash and coreutils on the runner's `PATH`, so it runs on
+nix-darwin runners before any dev shell. Its contract suite is
+`git-auth/test-private-global-config.py`. Run it with `--repro <cli>` to add
+the real `repro develop` cases, including the control that shows numbered
+configuration alone does not reach Repro's clone.
+
 ## `assert-workflow-triggers`
 
 Fails when a workflow's `push` / `pull_request` branch filters do not name the
