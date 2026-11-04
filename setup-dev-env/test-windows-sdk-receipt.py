@@ -4,6 +4,10 @@ SDK image files are fixture bytes: this test verifies observation/routing, not
 execution, daemon identity, Windows loader behavior or a release qualification.
 The lookup-only repro fixture is never executed. All hashes and filesystem
 operations use the real Bash/coreutils boundary.
+
+The optional compgen builtin is disabled only in a real child Bash startup to
+reproduce noninteractive Nix Bash. The producer, environment and hashing tools
+remain real; this compatibility control does not qualify native Windows.
 """
 import hashlib
 import os
@@ -39,10 +43,32 @@ class WindowsSdkReceipt(unittest.TestCase):
                                 # test-runquota-peer.ps1 owns the native query.
                                 RUNNER_OS='ReceiptFixture')
 
-    def run_receipt(self):
-        return subprocess.run([shutil.which('bash'), str(HERE / 'record-windows-sdk.sh')],
-                              env=self.environment, text=True, capture_output=True,
-                              timeout=10)
+    def run_receipt(self, without_compgen=False):
+        environment = self.environment
+        if without_compgen:
+            startup = self.root / 'disable optional compgen.bash'
+            startup.write_text('enable -n compgen 2>/dev/null || true\n'
+                                'if builtin compgen -e >/dev/null 2>&1; then exit 91; fi\n'
+                                'echo "receipt-fixture: compgen-disabled" >&2\n',
+                                encoding='utf-8', newline='\n')
+            environment = dict(environment, BASH_ENV=startup.as_posix())
+        result = subprocess.run([shutil.which('bash'), str(HERE / 'record-windows-sdk.sh')],
+                                env=environment, text=True, capture_output=True,
+                                timeout=10)
+        if without_compgen:
+            self.assertIn('receipt-fixture: compgen-disabled', result.stderr)
+        return result
+
+    def test_control_scan_does_not_require_optional_compgen_builtin(self):
+        result = self.run_receipt(without_compgen=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('inherited-bootstrap-controls=none', result.stdout)
+        self.environment.update(WINDOWS_DIY_SKIP_NARGO='1', WINDOWS_DIY_ENSURE_TTD='')
+        result = self.run_receipt(without_compgen=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('name=WINDOWS_DIY_SKIP_NARGO value=1', result.stdout)
+        self.assertIn("name=WINDOWS_DIY_ENSURE_TTD value=''", result.stdout)
+        self.assertNotIn('inherited-bootstrap-controls=none', result.stdout)
 
     def test_actual_images_have_real_hashes_and_absent_sources_stay_missing(self):
         result = self.run_receipt()

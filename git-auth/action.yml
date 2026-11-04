@@ -1,0 +1,77 @@
+name: Run with the scoped Git credential
+description: |
+  Run a bash script with the job's scoped GitHub credential delivered through a
+  private GIT_CONFIG_GLOBAL file, the channel Repro's git actions read.
+
+  setup-nix exports the job credential as numbered git configuration
+  (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n). Plain git reads it,
+  but Repro deliberately scrubs numbered configuration before the git calls it
+  makes on behalf of another repository, so a private sibling cloned by
+  repro develop fails with "could not read Username" even though git ls-remote
+  in the same job succeeds. A global configuration file is the supported
+  channel through that boundary.
+
+  The script runs through scoped_git_auth_with_global (scoped-git-auth.sh in
+  this directory). It writes the owner-scoped extraHeader and the
+  credential-free ssh-to-https rewrites into a 0600 file in a 0700 directory
+  under RUNNER_TEMP, points GIT_CONFIG_GLOBAL at it with GIT_CONFIG_NOSYSTEM=1,
+  clears the inherited numbered configuration, runs the script, and deletes
+  the file however the script exits. The token never reaches a URL, an argv,
+  a checkout or a persistent config. GH_TOKEN is not exported to the script,
+  because the file is its credential.
+
+  An empty gh-token is an error, not an anonymous run. A caller uses this
+  action because the script reads a private repository, and an anonymous
+  clone of one fails later as a 404 or a username prompt that does not name
+  the missing token.
+
+  Needs bash and coreutils (mktemp, rm, rmdir; base64 when present) on the
+  runner's PATH, which nix-darwin runners have before any dev shell. It does
+  not use grep, sed or awk.
+inputs:
+  gh-token:
+    description: GitHub token for the job (normally a minted App installation token). Required; an empty value fails the step.
+    required: true
+  token-owner:
+    description: Whitespace-separated GitHub owners the credential is scoped to.
+    required: false
+    default: metacraft-labs
+  working-directory:
+    description: Directory the script runs in.
+    required: false
+    default: "."
+  run:
+    description: Bash script to run with the credential. It runs under bash -eo pipefail, like a run step.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Run with the scoped Git credential
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # Inputs arrive through the environment only. Expanding the script or
+      # the token into this body would make them shell source, which the
+      # runner evaluates before any quoting here applies.
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+        GIT_AUTH_RUN: ${{ inputs.run }}
+        SCOPED_GIT_AUTH_MASK: "1"
+      run: |
+        set -euo pipefail
+        if [ -z "${GH_TOKEN:-}" ]; then
+          echo "::error::git-auth: the gh-token input is empty. This action exists to give its script a credential, and it does not fall back to an anonymous run: a private clone would then fail as a 404 or a username prompt that does not mention the token. Pass the job's minted token, for example the token output of an actions/create-github-app-token step." >&2
+          exit 1
+        fi
+        if [ -z "${GIT_AUTH_RUN//[[:space:]]/}" ]; then
+          echo "::error::git-auth: the run input is empty, so there is nothing to run with the credential." >&2
+          exit 1
+        fi
+        # scoped_git_auth_build reads GH_TOKEN as a shell variable. Drop its
+        # export attribute so the script and everything it starts see only the
+        # private config file, not the token.
+        export -n GH_TOKEN GIT_AUTH_RUN
+        # shellcheck source=./scoped-git-auth.sh
+        . "${GITHUB_ACTION_PATH}/scoped-git-auth.sh"
+        scoped_git_auth_with_global \
+          bash --noprofile --norc -eo pipefail -c "${GIT_AUTH_RUN}" git-auth-run

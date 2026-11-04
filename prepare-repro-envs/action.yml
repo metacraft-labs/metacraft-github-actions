@@ -1,0 +1,22 @@
+name: Prepare selected Repro environments
+description: Prepare declared toolchains and activate each later build environment before long running gates.
+inputs:
+  working-directory:
+    description: Existing build working directory in which the shell is entered.
+    required: true
+  nix-shell:
+    description: Exact existing Nix development shell supplying Repro to the later build.
+    required: true
+  projects:
+    description: Newline separated project roots whose Repro environments the later build uses.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Prepare selected build inputs while credentials are valid
+      shell: bash
+      env:
+        REPRO_PREFLIGHT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        REPRO_PREFLIGHT_NIX_SHELL: ${{ inputs.nix-shell }}
+        REPRO_PREFLIGHT_PROJECTS: ${{ inputs.projects }}
+      run: bash "${GITHUB_ACTION_PATH}/enter-shell.sh"

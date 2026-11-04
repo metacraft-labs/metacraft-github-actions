@@ -52,14 +52,17 @@ fi
 # Restrict observation to the legacy provisioning controls, never a general
 # environment dump (which would include job credentials). Empty means set-empty.
 found=false
-while IFS= read -r name; do
+# Prefix expansion works without the optional compgen builtin. A failed
+# process-substitution producer must not turn a populated scan into "none".
+for name in "${!WINDOWS_DIY_ENSURE_@}" "${!WINDOWS_DIY_SKIP_@}"; do
+  [[ -n "$name" ]] || continue
   case "$name" in
     WINDOWS_DIY_SKIP_*|WINDOWS_DIY_ENSURE_*)
       printf 'setup-dev-env: inherited-bootstrap-control name=%s value=%q\n' "$name" "${!name}"
       found=true
       ;;
   esac
-done < <(compgen -e)
+done
 if [[ "$found" == false ]]; then
   echo 'setup-dev-env: inherited-bootstrap-controls=none'
 fi

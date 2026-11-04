@@ -174,6 +174,27 @@ cat >"$TMPROOT/bin/git" <<SHIM
 # URL-only rewrite: https://github.com/<x> -> file://$SRV/<x>. Every other
 # argument, including anything that looks like an option, is passed through
 # untouched so the real git parses it exactly as the action wrote it.
+#
+# A file:// URL sends no HTTP header, so a probe's credential cannot be seen on
+# the wire here. Instead ls-remote records what the real git resolves as its
+# header for the GitHub URL, under the same -c options and in the same directory.
+prefix=()
+for a in "\$@"; do
+  if [[ \$a == ls-remote ]]; then
+    for u in "\$@"; do
+      case "\$u" in
+        https://github.com/*)
+          "$REAL_GIT" "\${prefix[@]}" config --get-urlmatch http.extraheader "\$u" \
+            >>"$TMPROOT/probe-headers" 2>/dev/null
+          [[ -e \$HOME/.netrc ]] && echo "netrc \$HOME" >>"$TMPROOT/probe-ambient"
+          [[ -n \${GIT_ASKPASS:-} ]] && echo "askpass \$GIT_ASKPASS" >>"$TMPROOT/probe-ambient"
+          echo ran >>"$TMPROOT/probe-ambient" ;;
+      esac
+    done
+    break
+  fi
+  prefix+=("\$a")
+done
 args=()
 for a in "\$@"; do
   case "\$a" in
@@ -297,6 +318,7 @@ run_step() { # <siblings-input> [<on-lock-override>]
   : >"$TMPROOT/github-env"
   : >"$SUMMARY"
   OUT="$(
+    cd "${STEP_CWD:-.}" || exit 1
     PATH="$TMPROOT/bin:$PATH" \
       GH_TOKEN="" \
       SIBLINGS_INPUT="$1" \
@@ -1061,6 +1083,81 @@ contains "12h: ...and says it could not reach it" "$OUT" "Failed to clone manife
 COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="records" run_step "nim-acp"
 check "12i: an unknown lock-store value is refused" "$RC" "1"
 contains "12i: ...naming the accepted values" "$OUT" "record-store"
+
+# ---------------------------------------------------------------------------
+# 13. An owner outside the token's scope: public is cloned with no credential,
+#     anything else is still refused before a clone. The fixture server plays
+#     GitHub, so a repository it serves is one an anonymous probe can read, and
+#     one it does not serve answers the probe the way a private repository
+#     answers an anonymous client.
+# ---------------------------------------------------------------------------
+mkdir -p "$SRV/aiken-lang"
+"$REAL_GIT" clone -q --bare "$SRV/metacraft-labs/nim-pty.git" "$SRV/aiken-lang/stdlib.git"
+git_q -C "$SRV/aiken-lang/stdlib.git" config uploadpack.allowAnySHA1InWant true
+STDLIB_SHA="$(sha_of nim-pty)"
+CL_FOREIGN="$TMPROOT/committed-foreign.lock"
+FOREIGN_ENTRY="$(dep_entry stdlib ../stdlib "$STDLIB_SHA")"
+mk_committed_lock "$CL_FOREIGN" "${FOREIGN_ENTRY//metacraft-labs\/stdlib/aiken-lang\/stdlib}"
+
+# 13a. A public repository under a foreign owner is cloned at its lock pin.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib"
+check "13a: a public foreign-owner sibling is cloned" "$RC" "0"
+check "13a: ...at the revision the lock pins" \
+  "$("$REAL_GIT" -C "$WS_PARENT/stdlib" rev-parse HEAD 2>/dev/null)" "$STDLIB_SHA"
+contains "13a: ...and the step says no credential was used" "$OUT" "cloning it with no credential"
+lacks "13a: ...and the coverage check did not refuse it" "$OUT" "the CI token for this job is scoped to"
+
+# 13b. The same owner with a repository nothing can read anonymously is the
+#      private case the coverage check exists for: refused by name, no clone.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/not-public"
+check "13b: an unreadable foreign-owner sibling is refused" "$RC" "1"
+contains "13b: ...by the coverage check, naming the owner" "$OUT" "owner(s) [aiken-lang]"
+contains "13b: ...after saying what the anonymous read answered" "$OUT" \
+  "an anonymous read of aiken-lang/not-public failed, so it is treated as private:"
+check "13b: nothing was cloned" "$([[ -d $WS_PARENT/not-public ]] && echo cloned || echo none)" "none"
+
+# 13c. One public entry must not vouch for a private entry of the same owner.
+COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib
+aiken-lang/not-public"
+check "13c: a private entry beside a public one is still refused" "$RC" "1"
+check "13c: ...before anything is cloned" "$([[ -d $WS_PARENT/stdlib ]] && echo cloned || echo none)" "none"
+
+# 13d. An owner the token covers is not probed, so a private repository there
+#      keeps its credential.
+COMMITTED_LOCK="$CL_OK" LOCK_STORE_UNDER_TEST="" run_step "nim-acp"
+check "13d: an in-scope sibling is unaffected" "$RC" "0"
+lacks "13d: ...and is not treated as anonymous" "$OUT" "cloning it with no credential"
+
+# 13e. The probe sends nothing, even from a checkout holding the job's token.
+#      `actions/checkout` leaves that header in the repository's own config and
+#      the step runs in that repository, so `ls-remote` would pick it up.
+CHECKOUT_WITH_TOKEN="$TMPROOT/checkout-with-token"
+"$REAL_GIT" init -q "$CHECKOUT_WITH_TOKEN"
+"$REAL_GIT" -C "$CHECKOUT_WITH_TOKEN" config --local \
+  http.https://github.com/.extraheader "AUTHORIZATION: basic JOBTOKEN"
+check "13e: the fixture would hand a plain probe the token" \
+  "$("$REAL_GIT" -C "$CHECKOUT_WITH_TOKEN" config --get-urlmatch http.extraheader \
+    https://github.com/aiken-lang/stdlib)" "AUTHORIZATION: basic JOBTOKEN"
+: >"$TMPROOT/probe-headers"
+STEP_CWD="$CHECKOUT_WITH_TOKEN" COMMITTED_LOCK="$CL_FOREIGN" LOCK_STORE_UNDER_TEST="" \
+  run_step "aiken-lang/stdlib"
+check "13e: the sibling is cloned from that checkout" "$RC" "0"
+check "13e: ...and the probe ran" "$([[ -s $TMPROOT/probe-headers ]] && echo ran || echo none)" "ran"
+lacks "13e: ...with no credential" "$(<"$TMPROOT/probe-headers")" "JOBTOKEN"
+
+# 13f. Nor can an ambient ~/.netrc or askpass helper answer for it: curl reads
+#      the first through git, and either would turn a private repository into
+#      one that looks public, and send a credential to another owner.
+AMBIENT_HOME="$TMPROOT/ambient-home"
+mkdir -p "$AMBIENT_HOME"
+printf 'machine github.com login x password AMBIENT\n' >"$AMBIENT_HOME/.netrc"
+: >"$TMPROOT/probe-ambient"
+HOME="$AMBIENT_HOME" GIT_ASKPASS="$TMPROOT/askpass" COMMITTED_LOCK="$CL_FOREIGN" \
+  LOCK_STORE_UNDER_TEST="" run_step "aiken-lang/stdlib"
+check "13f: the sibling is cloned with ambient credentials present" "$RC" "0"
+contains "13f: ...and the probe ran" "$(<"$TMPROOT/probe-ambient")" "ran"
+lacks "13f: ...with no ~/.netrc in reach" "$(<"$TMPROOT/probe-ambient")" "netrc"
+lacks "13f: ...and no askpass helper" "$(<"$TMPROOT/probe-ambient")" "askpass"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

@@ -85,6 +85,23 @@ jobs:
         env:
           REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
         run: python git-auth/test-cargo-acquisition.py --repro "$REPRO_CONTRACT_CLI"
+      # The git-auth action's real `repro develop` materialization, and the
+      # negative control that the job's numbered Git configuration alone does
+      # not reach Repro's clone. The suite drives the steps with bash and
+      # POSIX file modes, so it runs on the Linux leg only.
+      - name: Real private Repro materialization through the git-auth action
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python git-auth/test-private-global-config.py --repro "$REPRO_CONTRACT_CLI"
+      - name: Prepare selected environments through real credential expiry
+        env:
+          REPRO_CONTRACT_CLI: ${{ steps.sdk.outputs.cli }}
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python prepare-repro-envs/test-real.py --repro "$REPRO_CONTRACT_CLI" --report-directory "$RUNNER_TEMP/prepare-repro-envs"
+
       - name: Retain native contract receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,6 +112,7 @@ jobs:
             ${{ runner.temp }}/dev-exec-cwd-result.streams/**
             ${{ runner.temp }}/native-status-result.json
             ${{ runner.temp }}/native-status-result.streams/**
+            ${{ runner.temp }}/prepare-repro-envs/**
           if-no-files-found: error
 
   windows-endpoint-receipt:
@@ -365,6 +383,37 @@ jobs:
 
       - name: shellcheck
         run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
+
+  setup-nix-alignment:
+    # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
+    # most jobs in the org and must write the same nix.conf transfer settings
+    # and run the same binary-cache preflight. When one was tuned and the other
+    # was not, half the org kept the failure the tuning fixed. The comparison
+    # script lives in devops-modules, which runs the same check against this
+    # repository's `dev` daily; here it runs against devops-modules' `dev` on
+    # every change, so drift introduced on this side fails before it lands.
+    # Same stock runner, git and python3 only, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Checkout devops-modules (mainline)
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/devops-modules
+          ref: dev
+          path: .alignment/devops-modules
+          persist-credentials: false
+
+      - name: Compare the two setup-nix actions
+        run: |
+          git -C .alignment/devops-modules log -1 --format='devops-modules dev at %H'
+          python3 .alignment/devops-modules/scripts/check-setup-nix-alignment.py \
+            --devops-root .alignment/devops-modules \
+            --mga-root .
 
   clone-git-auth:
     # `clone-siblings` and `clone-repo` clone into nearly every job in this org,

@@ -373,7 +373,57 @@ add_owner() {
   done
   CLONE_OWNERS+=("${o}")
 }
-for ow in ${OWNERS[@]+"${OWNERS[@]}"}; do add_owner "${ow}"; done
+# A PUBLIC REPOSITORY OUTSIDE THE TOKEN'S OWNERS IS CLONED WITH NO CREDENTIAL.
+#
+# The coverage check below exists because a PRIVATE repository under an owner
+# the token does not cover answers 404, which reads as a typo. A public one has
+# neither problem: it needs no token, and the rest of the job never needs one
+# for it either, so widening `token-owner` for it would only hand this
+# organisation's token to another one. codetracer-cardano-recorder's
+# `aiken-lang/stdlib` is the first such sibling.
+#
+# The probe is what keeps the check honest: it is made with credentials and
+# prompts disabled, and with HOME moved so an ambient ~/.netrc or global git
+# config has nothing to offer, so a private repository, a typo and an
+# unreachable GitHub all fail it, stay in scope and reach the coverage check as
+# before. That check then says the token does not cover the owner, which is the
+# wrong reading of a network or TLS failure, so the probe's own error is printed
+# first: it is the only place a public repository's failed probe can be told
+# from a private one. The error cannot hold a credential, since none was sent.
+#
+# Disabling the helper is not enough. This step runs in the primary checkout,
+# and `ls-remote`, unlike `clone`, reads that repository's config, where
+# `actions/checkout` leaves `http.https://github.com/.extraheader` holding the
+# job's token. So the probe clears that key by its full name: a plain
+# `http.extraHeader=` is less specific than the URL-scoped entry, and git keeps
+# the more specific one (https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpltURLgt).
+owner_in_job_scope() { # <owner>
+  local t
+  for t in ${JOB_TOKEN_OWNERS}; do
+    [ "${t}" = "$1" ] && return 0
+  done
+  return 1
+}
+PROBE_ERROR=""
+publicly_readable() { # <owner> <name>
+  PROBE_ERROR="$(HOME="${RUNNER_TEMP:-/tmp}/clone-siblings-probe-no-home" GIT_CONFIG_GLOBAL=/dev/null GIT_ASKPASS='' SSH_ASKPASS='' \
+    GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c core.askPass= \
+    -c http.https://github.com/.extraHeader= ls-remote \
+    "https://github.com/$1/$2" HEAD 2>&1 >/dev/null)"
+}
+for i in "${!OWNERS[@]}"; do
+  ow="${OWNERS[$i]}"
+  if [ -n "${JOB_TOKEN_OWNERS//[[:space:]]/}" ] && ! owner_in_job_scope "${ow}"; then
+    if publicly_readable "${ow}" "${NAMES[$i]}"; then
+      echo "${ow}/${NAMES[$i]} is public and outside the token's owners [${JOB_TOKEN_OWNERS}]; cloning it with no credential."
+      continue
+    fi
+    echo "clone-siblings: an anonymous read of ${ow}/${NAMES[$i]} failed, so it is treated as private: ${PROBE_ERROR}"
+  fi
+  add_owner "${ow}"
+done
+# Every entry may have been public; the scoped credential still needs an owner.
+[ "${#CLONE_OWNERS[@]}" -eq 0 ] && add_owner "${DEFAULT_OWNER}"
 # The manifest owners are added unconditionally, because the lock is now
 # consulted for EVERY entry and not only for the bare ones. See "WHY THE LOCK IS
 # READ EVEN WHEN NOTHING RESOLVES FROM IT" below.
