@@ -279,7 +279,7 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         script_file = self.base / 'action-step.sh'
         script_file.write_text(body)
         env = dict(self.env, GITHUB_ACTION_PATH=str(ROOT / 'git-auth'),
-                   RUNNER_TEMP=str(self.scratch), GIT_AUTH_URL_BASE=self.url)
+                    RUNNER_TEMP=str(self.scratch), GIT_AUTH_URL_BASE=self.url)
         env.update(job_env or {})
         env.update(step_env)
         # How the runner executes a `shell: bash` step.
@@ -390,14 +390,15 @@ class ActualReproMaterialization(PrivateGlobalConfig):
         consumer = self.consumer()
         env = dict(self.env, GIT_CONFIG_GLOBAL=os.devnull, PATH=self.repro_path(),
                    **self.job_numbered_credential())
-        probe = subprocess.run(['git', 'ls-remote', self.url + 'owned/private.git', 'HEAD'],
-                               env=env, capture_output=True, text=True, timeout=30)
+        probe = subprocess.run(
+            ['git', 'ls-remote', self.url + 'owned/private.git', 'HEAD'],
+            env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(probe.returncode, 0, probe.stderr)
         self.assertIn(self.rev, probe.stdout)
         self.assertIn('ok /owned/', self.journal.read_text())
         before = len(self.journal.read_text())
         r = subprocess.run(self.develop_command(), env=env, cwd=consumer,
-                           capture_output=True, text=True, timeout=120)
+                            capture_output=True, text=True, timeout=120)
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse((self.base / 'private/payload').exists())
         attempt = self.journal.read_text()[before:]

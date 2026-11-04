@@ -67,12 +67,12 @@ succeeds and `repro develop` fails with `could not read Username for
       nix develop .#ci --command repro develop --all --reset --into=..
 ```
 
-| Input | Default | Meaning |
-| ----- | ------- | ------- |
-| `gh-token` | (required) | The job's token. An empty value fails the step. |
-| `token-owner` | `metacraft-labs` | Whitespace-separated owners the credential is scoped to. |
-| `working-directory` | `.` | Directory the script runs in. |
-| `run` | (required) | The script. It runs under `bash -eo pipefail`, like a `run:` step. |
+| Input               | Default          | Meaning                                                            |
+| ------------------- | ---------------- | ------------------------------------------------------------------ |
+| `gh-token`          | (required)       | The job's token. An empty value fails the step.                    |
+| `token-owner`       | `metacraft-labs` | Whitespace-separated owners the credential is scoped to.           |
+| `working-directory` | `.`              | Directory the script runs in.                                      |
+| `run`               | (required)       | The script. It runs under `bash -eo pipefail`, like a `run:` step. |
 
 The action writes an owner-scoped `http.<url>.extraHeader`, and the ssh-to-https
 `insteadOf` rewrites that carry no credential, to a `0600` file in a private
