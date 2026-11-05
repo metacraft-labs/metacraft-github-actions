@@ -76,6 +76,15 @@ function effectiveTokens(env) {
   return JSON.parse(out)["access-tokens"].value;
 }
 
+function effectiveSetting(env, name) {
+  const out = execFileSync(
+    NIX,
+    ["--extra-experimental-features", "nix-command", "show-config", "--json"],
+    { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return JSON.parse(out)[name].value;
+}
+
 test("token file round-trips and GitHub rotation keeps other hosts and owners", (t) => {
   const dir = privateDir(tempDir(t));
   jc.writeAccessTokens(dir, {
@@ -287,26 +296,32 @@ test("setup-nix keeps every secret out of a persistent HOME", (t) => {
     "the token was written into HOME nix.conf",
   );
   const netrc = path.join(home, ".config/nix/netrc");
-  assert.ok(
-    fs.lstatSync(netrc).isSymbolicLink(),
-    "HOME netrc must be a link into the job directory",
-  );
   const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
     fs.readFileSync(jobEnv, "utf8"),
   )[1];
-  assert.equal(
-    fs.realpathSync(netrc),
-    fs.realpathSync(path.join(dir, jc.NETRC)),
-  );
-  assert.ok(!fs.readFileSync(netrc, "utf8").includes("leaked-sentinel"));
+  // HOME keeps an empty regular file: no secret, and nothing that dangles
+  // into a deleted directory for the next job's `touch` to trip over.
+  assert.ok(fs.lstatSync(netrc).isFile(), "HOME netrc must be a regular file");
+  assert.equal(fs.readFileSync(netrc, "utf8"), "");
   assert.deepEqual(effectiveTokens(env), { "github.com": "job-sentinel" });
+  assert.equal(effectiveSetting(env, "netrc-file"), path.join(dir, jc.NETRC));
+  assert.ok(
+    fs
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
+      .includes("password job-sentinel"),
+  );
   // The next job on this runner, before RUNNER_TEMP is reused: nothing stale.
   fs.rmSync(dir, { recursive: true });
   assert.deepEqual(effectiveTokens(env), {});
-  assert.ok(
-    !fs.existsSync(netrc),
-    "the HOME netrc link must dangle once the job directory is gone",
-  );
+  assert.equal(effectiveSetting(env, "netrc-file"), netrc);
+  // What devops-modules' setup-nix does next on the same runner.
+  const touch = spawnSync("sh", [
+    "-c",
+    'touch "$1" && chmod 0600 "$1"',
+    "sh",
+    netrc,
+  ]);
+  assert.equal(touch.status, 0, "a later job must be able to touch HOME netrc");
 });
 
 function fakeGitHub(
@@ -676,9 +691,10 @@ test("a broker started before setup-nix creates the directory, and setup-nix reu
   assert.deepEqual(effectiveTokens(env), {
     "github.com": "ghs_rotated_sentinel",
   });
+  assert.equal(effectiveSetting(env, "netrc-file"), path.join(dir, jc.NETRC));
   assert.ok(
     fs
-      .readFileSync(path.join(home, ".config/nix/netrc"), "utf8")
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
       .includes("password ghs_rotated_sentinel"),
   );
 });

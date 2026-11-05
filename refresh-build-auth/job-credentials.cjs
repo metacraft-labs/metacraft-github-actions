@@ -156,8 +156,22 @@ function readAccessTokens(dir) {
   return tokens;
 }
 
+/**
+ * Write the include file: the token map, and -- only once setup-nix has put a
+ * netrc in this directory -- a `netrc-file` pointing at it. The include is
+ * read after the user nix.conf's own `netrc-file`, so it wins while the job
+ * runs and vanishes with the directory, and $HOME never has to hold a
+ * credential or a link that dangles into a deleted directory. Without a job
+ * netrc no `netrc-file` is set, so a host-configured one is left alone.
+ */
 function writeAccessTokens(dir, tokens) {
-  writeAtomic(path.join(dir, NIX_TOKENS), formatAccessTokens(tokens));
+  let content = formatAccessTokens(tokens);
+  if (fs.existsSync(path.join(dir, NETRC))) content += netrcLine(dir) + "\n";
+  writeAtomic(path.join(dir, NIX_TOKENS), content);
+}
+
+function netrcLine(dir) {
+  return "netrc-file = " + path.join(dir, NETRC);
 }
 
 /**
@@ -495,6 +509,7 @@ module.exports = {
   includeLine,
   isIncludeLine,
   formatAccessTokens,
+  netrcLine,
   readAccessTokens,
   writeAccessTokens,
   withGithubToken,

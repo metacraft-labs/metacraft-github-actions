@@ -449,8 +449,8 @@ if [ -f "$ACTION_YML" ]; then
     # persistent runner $HOME outlives the job and the token in it goes dead.
     check "the step delegates the netrc to write-nix-netrc.sh, in the job directory" \
       "$(grep -cE '^[[:space:]]*NETRC_PATH="\$cred_dir/netrc" bash "\$\{GITHUB_ACTION_PATH\}/write-nix-netrc\.sh"[[:space:]]*$' "$STEP")" "1"
-    check "HOME's netrc is only a link into the job directory" \
-      "$(grep -cE '^[[:space:]]*ln -sfn "\$cred_dir/netrc" "\$HOME/\.config/nix/netrc"[[:space:]]*$' "$STEP")" "1"
+    check "HOME's netrc is emptied, not linked or written" \
+      "$(grep -cE '^[[:space:]]*:[[:space:]]*>"\$HOME/\.config/nix/netrc"[[:space:]]*$' "$STEP")" "1"
     # The defect in one line: the action declared the private substituter
     # and then wrote a netrc naming only github.com.
     check "the step no longer writes the netrc inline" \

@@ -125,9 +125,11 @@ runs:
         # minutes into an unrelated job (codetracer-launcher job 126423778474).
         # The token goes into a private directory under RUNNER_TEMP, which the
         # runner empties between jobs; nix.conf reaches it through `!include`
-        # (Nix ignores a missing `!include` file) and `netrc-file` through a
-        # symlink that dangles once the directory is gone -- no credential,
-        # rather than a dead one. Keeping the token in files rather than in
+        # (Nix ignores a missing `!include` file), and the include also points
+        # `netrc-file` at the job netrc. Once the directory is gone that means
+        # no credential, rather than a dead one. (Not a symlink in $HOME: a
+        # link left dangling into a deleted directory breaks the next action
+        # that `touch`es the netrc, as devops-modules' setup-nix does.) Keeping the token in files rather than in
         # NIX_CONFIG is also what lets refresh-build-auth and the credential
         # broker (setup-dev-env `app-id`) replace it in place for steps, and
         # daemons, that started before the refresh.
@@ -149,7 +151,6 @@ runs:
           exit 1
           ;;
         esac
-        printf 'access-tokens = github.com=%s\n' "$GH_TOKEN" >"$cred_dir/nix-access-tokens.conf"
 
         # NOTE (scoping): unlike the Git CLI credential installed below, these
         # two mechanisms are HOST-granular and stay that way here, deliberately:
@@ -234,9 +235,14 @@ runs:
         # file to — actually presents to each host. Same reasoning as
         # configure-git-auth.sh below. Suite: setup-nix/nix-netrc-test.sh.
         NETRC_PATH="$cred_dir/netrc" bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
-        # Replaces the regular file earlier versions of this action (and
-        # devops-modules' setup-nix) left in $HOME with this job's credentials.
-        ln -sfn "$cred_dir/netrc" "$HOME/.config/nix/netrc"
+        # The include nix.conf reads last: the token, and the job netrc in
+        # place of the `netrc-file` above. $HOME keeps an EMPTY netrc --
+        # replacing the credentials earlier versions of this action (and
+        # devops-modules' setup-nix) left there -- so the setting above names a
+        # real, harmless file once the job directory is gone.
+        printf 'access-tokens = github.com=%s\nnetrc-file = %s\n' "$GH_TOKEN" "$cred_dir/netrc" >"$cred_dir/nix-access-tokens.conf"
+        rm -f "$HOME/.config/nix/netrc"
+        : >"$HOME/.config/nix/netrc"
         echo "MCL_JOB_CREDENTIALS_DIR=$cred_dir" >>"$GITHUB_ENV"
 
     - name: Select job-scoped Nix GitHub authentication
@@ -260,7 +266,7 @@ runs:
         SETUP_NIX_PROBE_SUBSTITUTERS: https://cache.nixos.org ${{ inputs.substituters }}
         SETUP_NIX_PROBE_MODE: ${{ inputs.substituter-preflight }}
       run: |
-        SETUP_NIX_PROBE_NETRC="$HOME/.config/nix/netrc" \
+        SETUP_NIX_PROBE_NETRC="$MCL_JOB_CREDENTIALS_DIR/netrc" \
         SETUP_NIX_PROBE_NIX_CONF="$HOME/.config/nix/nix.conf" \
           bash "${{ github.action_path }}/probe-substituters.sh"
 

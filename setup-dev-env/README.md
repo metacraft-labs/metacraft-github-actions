@@ -230,7 +230,8 @@ The Nix credential now lives in files, not in the environment:
   (`mcl-job-credentials.*`, mode 700) and exports its path as
   `MCL_JOB_CREDENTIALS_DIR`. It holds `nix-access-tokens.conf` and the netrc.
 - `NIX_CONFIG` and the user `nix.conf` carry only an `!include` of the token
-  file; `$HOME/.config/nix/netrc` is a symlink into the directory. Nothing
+  file, which also points `netrc-file` at the job netrc; `$HOME/.config/nix/netrc`
+  is left empty. Nothing
   secret is written into `$HOME`, which on persistent self-hosted runners
   outlives the job: a token left there used to be inherited by later jobs and
   fail them once it expired. The runner empties `$RUNNER_TEMP` between jobs;
