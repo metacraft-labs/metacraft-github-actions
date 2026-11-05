@@ -149,6 +149,30 @@ inputs:
       explicitly in `siblings` entries, as `owner/name`.
     required: false
     default: "metacraft-labs"
+  app-id:
+    description: >
+      Optional. Numeric ID of the GitHub App that minted `gh-token` (the org's
+      CI Token Provider App). Together with `app-private-key` it starts a
+      job-scoped credential broker that re-mints the Nix GitHub credential
+      before it expires.
+
+      Without it the credential is `gh-token`, and an App installation token
+      expires one hour after it is minted: a job whose setup and build take
+      longer then fails its next Nix fetch with `401 Bad credentials`. The
+      broker rewrites the job's private credential files in place, so steps
+      and daemons started before a refresh pick the new token up on their
+      next `nix` invocation. Tokens it mints are restricted to `contents:
+      read`. It covers Nix (its `access-tokens` and netrc); the Git CLI
+      credential is still `gh-token`, refreshed between phases by
+      `refresh-build-auth`.
+    required: false
+    default: ""
+  app-private-key:
+    description: >
+      Optional. The PEM private key of the App named by `app-id`. Passed to the
+      broker on its standard input, never in its arguments or environment.
+    required: false
+    default: ""
   substituters:
     description: >
       Space-separated Nix substituter URLs to trust in addition
@@ -341,6 +365,26 @@ runs:
         . "${GITHUB_ACTION_PATH}/../ci-roots/route.sh"
         printf 'consumer-directory=%s\nworkspace-directory=%s\n' "$MCL_CONSUMER_ROOT" "$MCL_WORKSPACE_ROOT" >> "$GITHUB_OUTPUT"
         printf 'nix-auth-module=%s\n' "${GITHUB_ACTION_PATH}/../refresh-build-auth/nix-auth.cjs" >> "$GITHUB_OUTPUT"
+    - name: Start the job credential broker
+      # First, before sibling clones and source builds can use up the hour
+      # an installation token lives: on a loaded host a source bootstrap has
+      # outlasted it inside this action (metacraft-pm issue
+      # 2026-09-28-repro-source-bootstrap-exhausts-the-github-token-lifetime).
+      # It creates the job's private credential directory; setup-nix and the
+      # selection steps below reuse it. Windows has no Nix to serve.
+      if: ${{ inputs.app-id != '' && inputs.app-private-key != '' && runner.os != 'Windows' }}
+      uses: actions/github-script@v7
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
+        TOKEN_OWNERS: ${{ inputs.token-owner }}
+        GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
+      with:
+        script: |
+          const path = require('node:path');
+          const broker = path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs');
+          await require(broker).startBroker();
+
     - name: Validate env-flavor
       working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash

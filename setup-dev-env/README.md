@@ -43,6 +43,8 @@ jobs:
 | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `env-flavor`            | yes      | `nix` \| `windows-diy` \| `reprobuild`.                                                                                                                                   |
 | `gh-token`              | no       | Forwarded to `setup-nix` so private flake inputs resolve.                                                                                                                 |
+| `app-id`                | no       | ID of the App that minted `gh-token`. With `app-private-key`, starts the job credential broker — see below.                                                               |
+| `app-private-key`       | no       | PEM private key of that App. Handed to the broker on standard input only.                                                                                                 |
 | `substituters`          | no       | Space-separated extra Nix substituter URLs, such as Attic cache URLs.                                                                                                     |
 | `trusted-public-keys`   | no       | Space-separated signing keys for the extra substituters.                                                                                                                  |
 | `flake-override-inputs` | no       | Newline-separated `NAME=PATH` entries; each becomes `--override-input NAME path:PATH` on every `nix develop` invocation. Use for sibling-repo overrides cloned alongside. |
@@ -213,6 +215,58 @@ transport's credential mechanism and does not install Nix, change caches or
 write the runner's home configuration. The common logic runs through the
 declared Actions Node runtime; legacy refresh callers receive its explicit
 executable binding (or the declared Node path in the owning development shell).
+
+## How long the job's Nix credential lives
+
+The CI Token Provider App's installation tokens expire **one hour** after
+they are minted. Setup that clones siblings and realises toolchains can use
+most of that hour, so a later `nix` fetch of a private (or rate-limited
+public) input failed with `HTTP error 401 ... "Bad credentials"`.
+
+The Nix credential now lives in files, not in the environment:
+
+- `setup-nix` (or the broker below, which starts first) creates a private
+  directory under `$RUNNER_TEMP`
+  (`mcl-job-credentials.*`, mode 700) and exports its path as
+  `MCL_JOB_CREDENTIALS_DIR`. It holds `nix-access-tokens.conf` and the netrc.
+- `NIX_CONFIG` and the user `nix.conf` carry only an `!include` of the token
+  file, which also points `netrc-file` at the job netrc; `$HOME/.config/nix/netrc`
+  is left empty. Nothing
+  secret is written into `$HOME`, which on persistent self-hosted runners
+  outlives the job: a token left there used to be inherited by later jobs and
+  fail them once it expired. The runner empties `$RUNNER_TEMP` between jobs;
+  Nix ignores a missing `!include`, so a stale reference means no credential,
+  not a dead one.
+- A refresh (`refresh-build-auth`, or the broker below) rewrites those files
+  in place. Every `nix` process started afterwards reads the new token,
+  including the ones a daemon started earlier spawns.
+
+**The broker.** Pass `app-id` and `app-private-key` (the same App secrets
+`actions/create-github-app-token` takes) and the action starts a detached
+process that re-mints the token about every 40 minutes, always at least 15
+minutes before expiry, until the runner ends the job. Tokens it mints are
+requested with `contents: read` only, because a token minted after its step
+has ended cannot be registered with `::add-mask::`; the first one, minted while
+the step runs, is masked. Its log is `broker.log` in the credential directory.
+
+```yaml
+- id: token
+  uses: actions/create-github-app-token@v2
+  with:
+    app-id: ${{ vars.CI_TOKEN_PROVIDER_APP_ID || secrets.CI_TOKEN_PROVIDER_APP_ID }}
+    private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+    owner: metacraft-labs
+- uses: metacraft-labs/metacraft-github-actions/setup-dev-env@dev
+  with:
+    env-flavor: reprobuild
+    gh-token: ${{ steps.token.outputs.token }}
+    app-id: ${{ vars.CI_TOKEN_PROVIDER_APP_ID || secrets.CI_TOKEN_PROVIDER_APP_ID }}
+    app-private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+```
+
+The broker covers Nix. The Git CLI credential setup installs is still
+`gh-token` in numbered `GIT_CONFIG_*` variables; refresh it between phases
+with `refresh-build-auth`.
 
 ## Which reprobuild store a job builds into
 

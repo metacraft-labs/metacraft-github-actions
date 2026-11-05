@@ -147,6 +147,15 @@ jobs:
               'GHA_NIX_AUTH_NODE=' + process.execPath + '\n');
       - name: Real Git and Nix credential-refresh contract
         run: python3 refresh-build-auth/test.py
+      - name: Real Git and Nix credential-refresh contract (job credential files)
+        # The same contract with RUNNER_TEMP set, i.e. through the job's
+        # private credential directory and an `!include` in NIX_CONFIG --
+        # the mode every real runner takes.
+        run: RUNNER_TEMP="$(mktemp -d)" python3 refresh-build-auth/test.py
+      - name: Job credential files and broker contract
+        # Real Nix parser, setup-nix's actual step body, real RSA/JWT, and a
+        # loopback stand-in for GitHub's App endpoints (justified in the file).
+        run: '"$GHA_NIX_AUTH_NODE" --test refresh-build-auth/job-credentials-test.cjs'
       - name: Real runner masking boundary with noncredential sentinels
         env:
           GH_TOKEN: fresh-masking-fixture-not-a-credential

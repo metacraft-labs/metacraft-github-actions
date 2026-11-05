@@ -1,0 +1,700 @@
+// Contract suite for the job-scoped Nix credential files and their broker.
+//
+// Real boundaries wherever one exists on a stock runner:
+//   * the real Nix configuration parser (`nix config show --json`) reads the
+//     files the module writes, through `!include` in NIX_CONFIG and through
+//     the user nix.conf setup-nix writes -- isolated from the operator's own
+//     configuration by NIX_CONF_DIR/HOME/XDG overrides;
+//   * setup-nix's actual "Configure Nix authentication" step body is executed
+//     with bash, not a paraphrase of it;
+//   * real RSA keys and node:crypto sign/verify the App JWT.
+//
+// ONE MOCK, justified: GitHub's App endpoints are served by a loopback HTTP
+// server. Minting a real installation token needs the production App's private
+// key, which a test must never hold, and GitHub cannot be asked to trust a test
+// key. The stand-in verifies the JWT with the test key's PUBLIC half and checks
+// the request shapes the real API requires (method, path, Bearer scheme,
+// API version header, `permissions` body), so a client that GitHub would
+// reject is rejected here too. Expiry is driven by an injected clock: waiting
+// out a real hour is not a test.
+//
+// Every credential below is an inert sentinel; nothing reaches the network.
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const http = require("node:http");
+const crypto = require("node:crypto");
+const { spawnSync, execFileSync } = require("node:child_process");
+
+const jc = require("./job-credentials.cjs");
+
+const repo = path.resolve(__dirname, "..");
+const NIX = (() => {
+  const found = spawnSync("sh", ["-c", "command -v nix"], { encoding: "utf8" });
+  return found.status === 0 ? found.stdout.trim() : "";
+})();
+
+function tempDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "job-cred-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function privateDir(root) {
+  return jc.createCredentialsDir(root);
+}
+
+// An environment in which Nix reads ONLY what the test gives it.
+function isolatedNixEnv(home, extra = {}) {
+  const empty = path.join(home, "empty.conf");
+  if (!fs.existsSync(empty)) fs.writeFileSync(empty, "");
+  return {
+    PATH: process.env.PATH,
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_CONFIG_DIRS: path.join(home, "no-xdg-dirs"),
+    NIX_CONF_DIR: path.join(home, "no-system-conf"),
+    NIX_USER_CONF_FILES: empty,
+    ...extra,
+  };
+}
+
+function effectiveTokens(env) {
+  assert.ok(
+    NIX,
+    "the owning environment must provide Nix for real parser controls",
+  );
+  const out = execFileSync(
+    NIX,
+    ["--extra-experimental-features", "nix-command", "show-config", "--json"],
+    { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return JSON.parse(out)["access-tokens"].value;
+}
+
+function effectiveSetting(env, name) {
+  const out = execFileSync(
+    NIX,
+    ["--extra-experimental-features", "nix-command", "show-config", "--json"],
+    { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return JSON.parse(out)[name].value;
+}
+
+test("token file round-trips and GitHub rotation keeps other hosts and owners", (t) => {
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, {
+    "github.com": "old",
+    "github.com/metacraft-labs": "old-owner",
+    "github.com/partner": "partner",
+    "gitlab.com": "gl",
+  });
+  jc.rotate(dir, "new", ["metacraft-labs"]);
+  assert.deepEqual(jc.readAccessTokens(dir), {
+    "github.com": "new",
+    "github.com/metacraft-labs": "new",
+    "github.com/partner": "partner",
+    "gitlab.com": "gl",
+  });
+  assert.equal(fs.statSync(path.join(dir, jc.NIX_TOKENS)).mode & 0o777, 0o600);
+  assert.throws(() => jc.rotate(dir, "", ["metacraft-labs"]));
+  assert.throws(() => jc.rotate(dir, "has space", ["metacraft-labs"]));
+});
+
+test("netrc rotation replaces only the github.com machine", (t) => {
+  const dir = privateDir(tempDir(t));
+  fs.writeFileSync(
+    path.join(dir, jc.NETRC),
+    "machine github.com login x-access-token password old\nmachine cache.example.com password attic-sentinel\n",
+    { mode: 0o600 },
+  );
+  jc.rotate(dir, "new", []);
+  assert.equal(
+    fs.readFileSync(path.join(dir, jc.NETRC), "utf8"),
+    "machine github.com login x-access-token password new\nmachine cache.example.com password attic-sentinel\n",
+  );
+});
+
+test("the credential directory is refused when it is shared or relative", (t) => {
+  const root = tempDir(t);
+  assert.throws(() =>
+    jc.credentialsDir({ MCL_JOB_CREDENTIALS_DIR: "relative/dir" }),
+  );
+  const open = path.join(root, "open");
+  fs.mkdirSync(open, { mode: 0o755 });
+  fs.chmodSync(open, 0o755);
+  assert.throws(
+    () => jc.credentialsDir({ MCL_JOB_CREDENTIALS_DIR: open }),
+    /group\/world/,
+  );
+  const good = privateDir(root);
+  assert.equal(jc.credentialsDir({ MCL_JOB_CREDENTIALS_DIR: good }), good);
+  assert.equal(jc.credentialsDir({}), "");
+});
+
+test("real Nix reads the token through the NIX_CONFIG include, follows a rotation, and degrades to none", (t) => {
+  const home = tempDir(t);
+  const dir = privateDir(home);
+  jc.writeAccessTokens(dir, {
+    "github.com": "first-sentinel",
+    "gitlab.com": "kept-sentinel",
+  });
+  const env = isolatedNixEnv(home, {
+    NIX_CONFIG: "http-connections = 7\n" + jc.includeLine(dir) + "\n",
+  });
+  assert.deepEqual(effectiveTokens(env), {
+    "github.com": "first-sentinel",
+    "gitlab.com": "kept-sentinel",
+  });
+  jc.rotate(dir, "second-sentinel", ["metacraft-labs"]);
+  // Same environment -- exactly what a step or daemon started before the
+  // refresh holds -- and the next nix process sees the new token.
+  assert.deepEqual(effectiveTokens(env), {
+    "github.com": "second-sentinel",
+    "gitlab.com": "kept-sentinel",
+  });
+  // The runner empties RUNNER_TEMP between jobs: no credential, and no error.
+  fs.rmSync(dir, { recursive: true });
+  assert.deepEqual(effectiveTokens(env), {});
+  assert.ok(jc.isIncludeLine(jc.includeLine(dir)));
+  assert.ok(!jc.isIncludeLine("!include /etc/nix/other.conf"));
+});
+
+test("nix-auth refreshNix writes the file and leaves only an include in NIX_CONFIG", (t) => {
+  const home = tempDir(t);
+  const runnerTemp = path.join(home, "runner-temp");
+  fs.mkdirSync(runnerTemp);
+  const jobEnv = path.join(home, "github-env");
+  fs.writeFileSync(jobEnv, "");
+  const env = isolatedNixEnv(home, {
+    NIX_CONFIG:
+      "http-connections = 7\naccess-tokens = github.com=stale-sentinel gitlab.com=kept-sentinel\n",
+    GH_TOKEN: "fresh-sentinel",
+    TOKEN_OWNERS: "metacraft-labs",
+    GITHUB_ENV: jobEnv,
+    RUNNER_TEMP: runnerTemp,
+  });
+  const run = spawnSync(
+    process.execPath,
+    [path.join(__dirname, "nix-auth.cjs")],
+    { env, encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  const written = fs.readFileSync(jobEnv, "utf8");
+  for (const secret of ["stale-sentinel", "fresh-sentinel", "kept-sentinel"])
+    assert.ok(
+      !written.includes(secret),
+      "a token reached GITHUB_ENV: " + secret,
+    );
+  const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(written)[1];
+  const config = /NIX_CONFIG<<(\S+)\n([\s\S]*?)\n\1\n/.exec(written)[2];
+  assert.equal(config, "http-connections = 7\n" + jc.includeLine(dir));
+  const next = { ...env, NIX_CONFIG: config + "\n" };
+  assert.deepEqual(effectiveTokens(next), {
+    "github.com": "fresh-sentinel",
+    "gitlab.com": "kept-sentinel",
+  });
+  // A second selection (refresh-build-auth) replaces the include, never stacks it.
+  fs.writeFileSync(jobEnv, "");
+  const again = spawnSync(
+    process.execPath,
+    [path.join(__dirname, "nix-auth.cjs")],
+    {
+      env: {
+        ...next,
+        GH_TOKEN: "fresher-sentinel",
+        MCL_JOB_CREDENTIALS_DIR: dir,
+      },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(again.status, 0, again.stderr);
+  const second = fs.readFileSync(jobEnv, "utf8");
+  assert.ok(
+    !second.includes("MCL_JOB_CREDENTIALS_DIR="),
+    "an existing directory is reused",
+  );
+  const config2 = /NIX_CONFIG<<(\S+)\n([\s\S]*?)\n\1\n/.exec(second)[2];
+  assert.equal(
+    config2.split("\n").filter((l) => l.startsWith("!include")).length,
+    1,
+  );
+  assert.deepEqual(effectiveTokens({ ...next, NIX_CONFIG: config2 + "\n" }), {
+    "github.com": "fresher-sentinel",
+    "gitlab.com": "kept-sentinel",
+  });
+});
+
+test("setup-nix keeps every secret out of a persistent HOME", (t) => {
+  const home = tempDir(t);
+  const runnerTemp = path.join(home, "runner-temp");
+  fs.mkdirSync(runnerTemp);
+  const jobEnv = path.join(home, "github-env");
+  fs.writeFileSync(jobEnv, "");
+  // What an earlier job's setup-nix left behind on a persistent runner.
+  fs.mkdirSync(path.join(home, ".config/nix"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, ".config/nix/netrc"),
+    "machine github.com login x-access-token password leaked-sentinel\n",
+  );
+  const action = execFileSync(
+    process.execPath,
+    [
+      path.join(repo, ".github/read-workflow.cjs"),
+      path.join(repo, "setup-nix/action.yml"),
+    ],
+    {
+      encoding: "utf8",
+    },
+  );
+  const marker = "    - name: Configure Nix authentication\n";
+  assert.equal(
+    action.split(marker).length,
+    2,
+    "exactly one 'Configure Nix authentication' step",
+  );
+  const afterMarker = action.slice(action.indexOf(marker) + marker.length);
+  const step = afterMarker.slice(
+    0,
+    (afterMarker.indexOf("\n    - name:") + 1 || afterMarker.length + 1) - 1,
+  );
+  const lines = step
+    .slice(step.indexOf("run: |\n") + "run: |\n".length)
+    .split("\n");
+  const indent = lines[0].length - lines[0].trimStart().length;
+  const body = [];
+  for (const line of lines) {
+    if (line.trim() && line.length - line.trimStart().length < indent) break;
+    body.push(
+      line.slice(Math.min(indent, line.length - line.trimStart().length)),
+    );
+  }
+  const env = isolatedNixEnv(home, {
+    NIX_USER_CONF_FILES: "",
+    GH_TOKEN: "job-sentinel",
+    GITHUB_ENV: jobEnv,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+    EXTRA_SUBSTITUTERS: "",
+    EXTRA_TRUSTED_PUBLIC_KEYS: "",
+    ATTIC_TOKEN: "",
+    ATTIC_ENDPOINT: "",
+  });
+  delete env.NIX_USER_CONF_FILES;
+  const run = spawnSync("bash", ["-c", body.join("\n")], {
+    env,
+    encoding: "utf8",
+  });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const conf = fs.readFileSync(path.join(home, ".config/nix/nix.conf"), "utf8");
+  assert.ok(
+    !conf.includes("job-sentinel"),
+    "the token was written into HOME nix.conf",
+  );
+  const netrc = path.join(home, ".config/nix/netrc");
+  const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
+    fs.readFileSync(jobEnv, "utf8"),
+  )[1];
+  // HOME keeps an empty regular file: no secret, and nothing that dangles
+  // into a deleted directory for the next job's `touch` to trip over.
+  assert.ok(fs.lstatSync(netrc).isFile(), "HOME netrc must be a regular file");
+  assert.equal(fs.readFileSync(netrc, "utf8"), "");
+  assert.deepEqual(effectiveTokens(env), { "github.com": "job-sentinel" });
+  assert.equal(effectiveSetting(env, "netrc-file"), path.join(dir, jc.NETRC));
+  assert.ok(
+    fs
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
+      .includes("password job-sentinel"),
+  );
+  // The next job on this runner, before RUNNER_TEMP is reused: nothing stale.
+  fs.rmSync(dir, { recursive: true });
+  assert.deepEqual(effectiveTokens(env), {});
+  assert.equal(effectiveSetting(env, "netrc-file"), netrc);
+  // What devops-modules' setup-nix does next on the same runner.
+  const touch = spawnSync("sh", [
+    "-c",
+    'touch "$1" && chmod 0600 "$1"',
+    "sh",
+    netrc,
+  ]);
+  assert.equal(touch.status, 0, "a later job must be able to touch HOME netrc");
+});
+
+function fakeGitHub(
+  t,
+  publicKey,
+  { orgStatus = 200, mintStatus = 201, expiresInMs = 3600 * 1000 } = {},
+) {
+  const seen = [];
+  let counter = 0;
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const auth = req.headers.authorization || "";
+      const [h, p, s] = auth.replace(/^Bearer /, "").split(".");
+      const valid =
+        auth.startsWith("Bearer ") &&
+        req.headers["x-github-api-version"] === "2022-11-28" &&
+        crypto.verify(
+          "RSA-SHA256",
+          Buffer.from(h + "." + p),
+          publicKey,
+          Buffer.from(s || "", "base64url"),
+        );
+      const claims = valid
+        ? JSON.parse(Buffer.from(p, "base64url").toString())
+        : null;
+      seen.push({ method: req.method, url: req.url, valid, claims, body });
+      const reply = (status, json) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(json));
+      };
+      if (!valid)
+        return reply(401, { message: "A JSON web token could not be decoded" });
+      if (
+        req.method === "GET" &&
+        req.url === "/orgs/metacraft-labs/installation"
+      )
+        return orgStatus === 200
+          ? reply(200, { id: 4242 })
+          : reply(orgStatus, { message: "Not Found" });
+      if (
+        req.method === "GET" &&
+        req.url === "/users/metacraft-labs/installation"
+      )
+        return reply(200, { id: 4242 });
+      if (
+        req.method === "POST" &&
+        req.url === "/app/installations/4242/access_tokens"
+      ) {
+        if (mintStatus !== 201)
+          return reply(mintStatus, { message: "fixture refusal" });
+        counter += 1;
+        return reply(201, {
+          token: "ghs_minted_sentinel_" + counter,
+          expires_at: new Date(Date.now() + expiresInMs).toISOString(),
+        });
+      }
+      return reply(404, { message: "Not Found" });
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      t.after(() => server.close());
+      resolve({ url: `http://127.0.0.1:${server.address().port}`, seen });
+    });
+  });
+}
+
+function keyPair() {
+  return crypto.generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+}
+
+test("the App JWT carries the claims GitHub requires", () => {
+  const { privateKey, publicKey } = keyPair();
+  const jwt = jc.appJwt("12345", privateKey, 1_000_000);
+  const [h, p, s] = jwt.split(".");
+  assert.deepEqual(JSON.parse(Buffer.from(h, "base64url")), {
+    alg: "RS256",
+    typ: "JWT",
+  });
+  assert.deepEqual(JSON.parse(Buffer.from(p, "base64url")), {
+    iat: 999_940,
+    exp: 1_000_540,
+    iss: "12345",
+  });
+  assert.ok(
+    crypto.verify(
+      "RSA-SHA256",
+      Buffer.from(h + "." + p),
+      publicKey,
+      Buffer.from(s, "base64url"),
+    ),
+  );
+});
+
+test("minting looks up the installation and asks for read-only contents", async (t) => {
+  const { privateKey, publicKey } = keyPair();
+  const gh = await fakeGitHub(t, publicKey, { orgStatus: 404 });
+  const minted = await jc.mintInstallationToken({
+    apiUrl: gh.url,
+    appId: "12345",
+    privateKey,
+    owner: "metacraft-labs",
+    permissions: { contents: "read" },
+  });
+  assert.equal(minted.token, "ghs_minted_sentinel_1");
+  assert.deepEqual(
+    gh.seen.map((r) => [r.method, r.url]),
+    [
+      ["GET", "/orgs/metacraft-labs/installation"],
+      ["GET", "/users/metacraft-labs/installation"],
+      ["POST", "/app/installations/4242/access_tokens"],
+    ],
+  );
+  assert.deepEqual(JSON.parse(gh.seen[2].body), {
+    permissions: { contents: "read" },
+  });
+  const { privateKey: wrongKey } = keyPair();
+  await assert.rejects(
+    jc.mintInstallationToken({
+      apiUrl: gh.url,
+      appId: "12345",
+      privateKey: wrongKey,
+      owner: "metacraft-labs",
+    }),
+    /HTTP 401/,
+  );
+});
+
+test("the broker refreshes before expiry, retries a failed mint, and stops with its directory", async (t) => {
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, { "github.com": "initial" });
+  let clock = 0;
+  const hour = 3600 * 1000;
+  const outcomes = ["fail", "ok", "ok"];
+  const minted = [];
+  const result = await jc.runBroker({
+    dir,
+    owners: ["metacraft-labs"],
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    mint: async () => {
+      const outcome = outcomes.shift();
+      if (outcome === undefined) {
+        fs.rmSync(dir, { recursive: true }); // the runner emptied RUNNER_TEMP
+        throw new Error("no more fixture tokens");
+      }
+      if (outcome === "fail") throw new Error("HTTP 502");
+      minted.push(clock);
+      return { token: "rotated-" + minted.length, expiresAt: clock + hour };
+    },
+    log: () => {},
+  });
+  assert.equal(result.rotations, 2);
+  // Failed first attempt at t=0, retried 15 s later. The next mint is due 15
+  // minutes before that token's expiry, capped at 40 minutes after the mint.
+  assert.deepEqual(minted, [15 * 1000, 15 * 1000 + 40 * 60 * 1000]);
+  assert.ok(!fs.existsSync(dir));
+});
+
+test("the broker never sleeps past a short-lived token or stays alive past its lifetime", async () => {
+  assert.equal(jc.nextRefreshDelay(10 * 60 * 1000, 0), 60 * 1000);
+  assert.equal(jc.nextRefreshDelay(10 * 3600 * 1000, 0), 40 * 60 * 1000);
+  assert.equal(jc.retryDelay(1), 15 * 1000);
+  assert.equal(jc.retryDelay(20), 5 * 60 * 1000);
+});
+
+test("startBroker mints once in the foreground, masks it, and leaves a detached refresher", async (t) => {
+  const { privateKey, publicKey } = keyPair();
+  const gh = await fakeGitHub(t, publicKey);
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, { "github.com": "gh-token-sentinel" });
+  fs.writeFileSync(
+    path.join(dir, jc.NETRC),
+    "machine github.com login x-access-token password gh-token-sentinel\n",
+    {
+      mode: 0o600,
+    },
+  );
+  // Run in a child so its stdout (the ::add-mask:: command) is observable.
+  const script = `require(${JSON.stringify(path.join(__dirname, "job-credentials.cjs"))}).startBroker().catch(e => { console.error(e.message); process.exit(1); })`;
+  // Asynchronously: the GitHub stand-in is served by THIS process.
+  const run = await new Promise((resolve) => {
+    const child = require("node:child_process").spawn(
+      process.execPath,
+      ["-e", script],
+      {
+        env: {
+          PATH: process.env.PATH,
+          MCL_JOB_CREDENTIALS_DIR: dir,
+          APP_ID: "12345",
+          APP_PRIVATE_KEY: privateKey,
+          TOKEN_OWNERS: "metacraft-labs",
+          GITHUB_API_URL: gh.url,
+        },
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(run.stdout.includes("::add-mask::ghs_minted_sentinel_1\n"));
+  assert.ok(
+    !run.stdout
+      .replace("::add-mask::ghs_minted_sentinel_1", "")
+      .includes("ghs_minted_sentinel_1"),
+  );
+  assert.ok(!(run.stdout + run.stderr).includes("PRIVATE KEY"));
+  assert.deepEqual(jc.readAccessTokens(dir), {
+    "github.com": "ghs_minted_sentinel_1",
+  });
+  assert.ok(
+    fs
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
+      .includes("password ghs_minted_sentinel_1"),
+  );
+  const pid = Number(fs.readFileSync(path.join(dir, "broker.pid"), "utf8"));
+  assert.ok(pid > 0);
+  // The detached child is alive and holds no key in its environment.
+  if (process.platform === "linux") {
+    const environ = fs.readFileSync(`/proc/${pid}/environ`, "utf8");
+    assert.ok(
+      !environ.includes("PRIVATE KEY"),
+      "the App key must not be in the broker's environment",
+    );
+  }
+  const brokerLog = () => fs.readFileSync(path.join(dir, "broker.log"), "utf8");
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.doesNotThrow(
+    () => process.kill(pid, 0),
+    "the broker died at start: " + brokerLog(),
+  );
+  // Asking it to stop is honoured within one poll interval.
+  fs.writeFileSync(path.join(dir, jc.STOP), "");
+  const deadline = Date.now() + 45 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.throws(
+    () => process.kill(pid, 0),
+    "the broker did not exit after broker.stop",
+  );
+  assert.match(brokerLog(), /broker exiting \(stopped\) after 0 rotation\(s\)/);
+  assert.ok(
+    !brokerLog().includes("ghs_minted_sentinel"),
+    "the broker log must not carry a token",
+  );
+});
+
+test("a broker started before setup-nix creates the directory, and setup-nix reuses it", async (t) => {
+  const { privateKey, publicKey } = keyPair();
+  const gh = await fakeGitHub(t, publicKey);
+  const home = tempDir(t);
+  const runnerTemp = path.join(home, "runner-temp");
+  fs.mkdirSync(runnerTemp);
+  const jobEnv = path.join(home, "github-env");
+  fs.writeFileSync(jobEnv, "");
+  const script = `require(${JSON.stringify(path.join(__dirname, "job-credentials.cjs"))}).startBroker().catch(e => { console.error(e.message); process.exit(1); })`;
+  const run = await new Promise((resolve) => {
+    const child = require("node:child_process").spawn(
+      process.execPath,
+      ["-e", script],
+      {
+        env: {
+          PATH: process.env.PATH,
+          RUNNER_TEMP: runnerTemp,
+          GITHUB_ENV: jobEnv,
+          APP_ID: "12345",
+          APP_PRIVATE_KEY: privateKey,
+          TOKEN_OWNERS: "metacraft-labs",
+          GITHUB_API_URL: gh.url,
+        },
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", (status) => resolve({ status, stderr }));
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
+    fs.readFileSync(jobEnv, "utf8"),
+  )[1];
+  assert.equal(path.dirname(dir), runnerTemp);
+  assert.deepEqual(jc.readAccessTokens(dir), {
+    "github.com": "ghs_minted_sentinel_1",
+  });
+  const pid = Number(fs.readFileSync(path.join(dir, "broker.pid"), "utf8"));
+  t.after(() => {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  });
+  // setup-nix's own step, handed the job environment the broker exported.
+  const action = execFileSync(
+    process.execPath,
+    [
+      path.join(repo, ".github/read-workflow.cjs"),
+      path.join(repo, "setup-nix/action.yml"),
+    ],
+    {
+      encoding: "utf8",
+    },
+  );
+  const marker = "    - name: Configure Nix authentication\n";
+  const afterMarker = action.slice(action.indexOf(marker) + marker.length);
+  const step = afterMarker.slice(0, afterMarker.indexOf("\n    - name:"));
+  const lines = step
+    .slice(step.indexOf("run: |\n") + "run: |\n".length)
+    .split("\n");
+  const indent = lines[0].length - lines[0].trimStart().length;
+  const body = [];
+  for (const line of lines) {
+    if (line.trim() && line.length - line.trimStart().length < indent) break;
+    body.push(
+      line.slice(Math.min(indent, line.length - line.trimStart().length)),
+    );
+  }
+  const env = isolatedNixEnv(home, {
+    GH_TOKEN: "job-sentinel",
+    GITHUB_ENV: jobEnv,
+    RUNNER_TEMP: runnerTemp,
+    MCL_JOB_CREDENTIALS_DIR: dir,
+    GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+    EXTRA_SUBSTITUTERS: "",
+    EXTRA_TRUSTED_PUBLIC_KEYS: "",
+    ATTIC_TOKEN: "",
+    ATTIC_ENDPOINT: "",
+  });
+  delete env.NIX_USER_CONF_FILES;
+  const setup = spawnSync("bash", ["-c", body.join("\n")], {
+    env,
+    encoding: "utf8",
+  });
+  assert.equal(setup.status, 0, setup.stdout + setup.stderr);
+  const exported = [
+    ...fs
+      .readFileSync(jobEnv, "utf8")
+      .matchAll(/^MCL_JOB_CREDENTIALS_DIR=(.*)$/gm),
+  ].map((m) => m[1]);
+  assert.deepEqual(
+    exported,
+    [dir, dir],
+    "setup-nix must reuse the broker's directory",
+  );
+  assert.ok(
+    fs
+      .readFileSync(path.join(home, ".config/nix/nix.conf"), "utf8")
+      .includes(jc.includeLine(dir)),
+  );
+  // The broker's next rotation reaches what Nix reads, netrc included.
+  jc.rotate(dir, "ghs_rotated_sentinel", ["metacraft-labs"]);
+  assert.deepEqual(effectiveTokens(env), {
+    "github.com": "ghs_rotated_sentinel",
+  });
+  assert.equal(effectiveSetting(env, "netrc-file"), path.join(dir, jc.NETRC));
+  assert.ok(
+    fs
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
+      .includes("password ghs_rotated_sentinel"),
+  );
+});
