@@ -118,12 +118,38 @@ runs:
         # with status 1 on the empty-token path, which is every caller today.
         if [ -n "${ATTIC_TOKEN:-}" ]; then echo "::add-mask::$ATTIC_TOKEN"; fi
 
-        # nix.conf and netrc both carry the token. `umask 077` is not
-        # cosmetic: on the self-hosted runners in this org $HOME is reused
-        # between jobs, so these files are readable by whatever runs next
-        # unless they are mode 600.
+        # The SECRETS do not go into $HOME. On the persistent self-hosted
+        # runners $HOME outlives the job, and a token written there was
+        # inherited by later jobs that never set up credentials of their own:
+        # an hour after it was minted it answered `401 Bad credentials`, three
+        # minutes into an unrelated job (codetracer-launcher job 126423778474).
+        # The token goes into a private directory under RUNNER_TEMP, which the
+        # runner empties between jobs; nix.conf reaches it through `!include`
+        # (Nix ignores a missing `!include` file) and `netrc-file` through a
+        # symlink that dangles once the directory is gone -- no credential,
+        # rather than a dead one. Keeping the token in files rather than in
+        # NIX_CONFIG is also what lets refresh-build-auth and the credential
+        # broker (setup-dev-env `app-id`) replace it in place for steps, and
+        # daemons, that started before the refresh.
+        # `umask 077` still matters: these files must be mode 600.
         umask 077
         mkdir -p "$HOME/.config/nix"
+        cred_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+        # Reuse the directory the credential broker (setup-dev-env `app-id`)
+        # already rotates, if this job has one.
+        if [ -n "${MCL_JOB_CREDENTIALS_DIR:-}" ] && [ -d "$MCL_JOB_CREDENTIALS_DIR" ] && [ ! -L "$MCL_JOB_CREDENTIALS_DIR" ]; then
+          cred_dir="$MCL_JOB_CREDENTIALS_DIR"
+        else
+          cred_dir="$(mktemp -d "${cred_root%/}/mcl-job-credentials.XXXXXXXX")"
+        fi
+        chmod 700 "$cred_dir"
+        case "$cred_dir" in
+        *[[:space:]]*)
+          echo "::error::RUNNER_TEMP '$cred_root' contains whitespace, which an nix.conf include cannot express"
+          exit 1
+          ;;
+        esac
+        printf 'access-tokens = github.com=%s\n' "$GH_TOKEN" >"$cred_dir/nix-access-tokens.conf"
 
         # NOTE (scoping): unlike the Git CLI credential installed below, these
         # two mechanisms are HOST-granular and stay that way here, deliberately:
@@ -192,7 +218,7 @@ runs:
           substituters = https://cache.nixos.org $EXTRA_SUBSTITUTERS
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $EXTRA_TRUSTED_PUBLIC_KEYS
           netrc-file = $HOME/.config/nix/netrc
-          access-tokens = github.com=$GH_TOKEN
+          !include $cred_dir/nix-access-tokens.conf
         EOF
 
         # The netrc `netrc-file` above names. It carries github.com — for Nix's
@@ -207,7 +233,11 @@ runs:
         # a contract suite that observes what curl — the client nix hands this
         # file to — actually presents to each host. Same reasoning as
         # configure-git-auth.sh below. Suite: setup-nix/nix-netrc-test.sh.
-        bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
+        NETRC_PATH="$cred_dir/netrc" bash "${GITHUB_ACTION_PATH}/write-nix-netrc.sh"
+        # Replaces the regular file earlier versions of this action (and
+        # devops-modules' setup-nix) left in $HOME with this job's credentials.
+        ln -sfn "$cred_dir/netrc" "$HOME/.config/nix/netrc"
+        echo "MCL_JOB_CREDENTIALS_DIR=$cred_dir" >>"$GITHUB_ENV"
 
     - name: Select job-scoped Nix GitHub authentication
       uses: actions/github-script@v7

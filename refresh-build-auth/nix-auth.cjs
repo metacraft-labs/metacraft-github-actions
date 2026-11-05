@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const jobCredentials = require("./job-credentials.cjs");
 
 function refreshNix() {
   const result = spawnSync(
@@ -83,17 +84,46 @@ function refreshNix() {
     }
   }
   let config = (process.env.NIX_CONFIG || "").replace(/\n+$/, "");
-  config +=
-    "\naccess-tokens = " +
-    Object.keys(tokens)
-      .sort()
-      .map((host) => host + "=" + tokens[host])
-      .join(" ") +
-    "\n";
+  let exported = "";
+  let jobDir = jobCredentials.credentialsDir();
+  if (!jobDir && process.env.RUNNER_TEMP) {
+    jobDir = jobCredentials.createCredentialsDir(process.env.RUNNER_TEMP);
+    exported = "MCL_JOB_CREDENTIALS_DIR=" + jobDir + "\n";
+  }
+  if (jobDir) {
+    // The selected map goes into this job's private credential file, and
+    // NIX_CONFIG carries only an `!include` of it. A token written into the
+    // environment itself would be frozen into every later step and every
+    // daemon those steps start, and go stale an hour after it was minted;
+    // a file can be replaced in place by refresh-build-auth or by the
+    // credential broker, and every `nix` process started afterwards reads
+    // the new value. `!include` ignores a missing file, so once the runner
+    // empties RUNNER_TEMP the setting degrades to no credential, not a dead one.
+    jobCredentials.writeAccessTokens(jobDir, tokens);
+    const include = jobCredentials.includeLine(jobDir);
+    config = config
+      .split("\n")
+      .filter(
+        (line) =>
+          !/^\s*(extra-)?access-tokens\s*=/.test(line) &&
+          !jobCredentials.isIncludeLine(line),
+      )
+      .join("\n")
+      .replace(/\n+$/, "");
+    config += (config ? "\n" : "") + include + "\n";
+  } else {
+    config +=
+      "\naccess-tokens = " +
+      Object.keys(tokens)
+        .sort()
+        .map((host) => host + "=" + tokens[host])
+        .join(" ") +
+      "\n";
+  }
   const delimiter = "nix_auth_" + crypto.randomUUID().replaceAll("-", "");
   fs.appendFileSync(
     process.env.GITHUB_ENV,
-    "NIX_CONFIG<<" + delimiter + "\n" + config + delimiter + "\n",
+    exported + "NIX_CONFIG<<" + delimiter + "\n" + config + delimiter + "\n",
     "utf8",
   );
   console.log(
