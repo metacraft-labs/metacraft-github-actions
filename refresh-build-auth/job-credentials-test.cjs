@@ -313,7 +313,10 @@ test("setup-nix keeps every secret out of a persistent HOME", (t) => {
   // The next job on this runner, before RUNNER_TEMP is reused: nothing stale.
   fs.rmSync(dir, { recursive: true });
   assert.deepEqual(effectiveTokens(env), {});
-  assert.equal(effectiveSetting(env, "netrc-file"), netrc);
+  assert.ok(
+    !effectiveSetting(env, "netrc-file").startsWith(dir),
+    "no setting may still name the deleted job directory",
+  );
   // What devops-modules' setup-nix does next on the same runner.
   const touch = spawnSync("sh", [
     "-c",
@@ -696,5 +699,112 @@ test("a broker started before setup-nix creates the directory, and setup-nix reu
     fs
       .readFileSync(path.join(dir, jc.NETRC), "utf8")
       .includes("password ghs_rotated_sentinel"),
+  );
+});
+
+// The setup-nix step body, extracted from the real action.yml.
+function setupNixStepBody() {
+  const action = execFileSync(
+    process.execPath,
+    [
+      path.join(repo, ".github/read-workflow.cjs"),
+      path.join(repo, "setup-nix/action.yml"),
+    ],
+    { encoding: "utf8" },
+  );
+  const marker = "    - name: Configure Nix authentication\n";
+  const afterMarker = action.slice(action.indexOf(marker) + marker.length);
+  const step = afterMarker.slice(0, afterMarker.indexOf("\n    - name:"));
+  const lines = step
+    .slice(step.indexOf("run: |\n") + "run: |\n".length)
+    .split("\n");
+  const indent = lines[0].length - lines[0].trimStart().length;
+  const body = [];
+  for (const line of lines) {
+    if (line.trim() && line.length - line.trimStart().length < indent) break;
+    body.push(
+      line.slice(Math.min(indent, line.length - line.trimStart().length)),
+    );
+  }
+  return body.join("\n");
+}
+
+function runSetupNix(t, { hostConf, attic }) {
+  const home = tempDir(t);
+  const runnerTemp = path.join(home, "runner-temp");
+  fs.mkdirSync(runnerTemp);
+  const jobEnv = path.join(home, "github-env");
+  fs.writeFileSync(jobEnv, "");
+  const systemDir = path.join(home, "system-conf");
+  fs.mkdirSync(systemDir);
+  const hostNetrc = path.join(systemDir, "netrc");
+  fs.writeFileSync(
+    hostNetrc,
+    "machine cache.example.com password host-pull-sentinel\n",
+  );
+  fs.writeFileSync(
+    path.join(systemDir, "nix.conf"),
+    hostConf.replaceAll("@HOST_NETRC@", hostNetrc),
+  );
+  const env = isolatedNixEnv(home, {
+    NIX_CONF_DIR: systemDir,
+    GH_TOKEN: "job-sentinel",
+    GITHUB_ENV: jobEnv,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+    EXTRA_SUBSTITUTERS: "https://cache.example.com/private",
+    EXTRA_TRUSTED_PUBLIC_KEYS: "private:AAAA",
+    ATTIC_TOKEN: attic ? "job-attic-sentinel" : "",
+    ATTIC_ENDPOINT: attic ? "https://cache.example.com/" : "",
+  });
+  delete env.NIX_USER_CONF_FILES;
+  const run = spawnSync("bash", ["-c", setupNixStepBody()], {
+    env,
+    encoding: "utf8",
+  });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
+    fs.readFileSync(jobEnv, "utf8"),
+  )[1];
+  return { env, dir, hostNetrc, stdout: run.stdout };
+}
+
+const HOST_CONF =
+  "substituters = https://host.example/cache https://cache.nixos.org/\n" +
+  "trusted-public-keys = host:BBBB cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=\n" +
+  "netrc-file = @HOST_NETRC@\n";
+
+test("setup-nix appends to the host's caches and keeps the host's netrc without an attic token", (t) => {
+  const { env, dir, hostNetrc, stdout } = runSetupNix(t, {
+    hostConf: HOST_CONF,
+    attic: false,
+  });
+  const substituters = effectiveSetting(env, "substituters");
+  assert.ok(
+    substituters.includes("https://host.example/cache"),
+    "host cache dropped: " + substituters,
+  );
+  assert.ok(substituters.includes("https://cache.example.com/private"));
+  const keys = effectiveSetting(env, "trusted-public-keys");
+  assert.ok(keys.includes("host:BBBB") && keys.includes("private:AAAA"));
+  assert.equal(effectiveSetting(env, "netrc-file"), hostNetrc);
+  assert.ok(!fs.existsSync(path.join(dir, jc.NETRC)));
+  assert.ok(fs.existsSync(path.join(dir, "probe-netrc")));
+  assert.match(stdout, /keeping the host's netrc-file/);
+  assert.deepEqual(effectiveTokens(env), { "github.com": "job-sentinel" });
+});
+
+test("setup-nix uses the job netrc when the job brings the cache credential", (t) => {
+  const { env, dir } = runSetupNix(t, { hostConf: HOST_CONF, attic: true });
+  assert.equal(effectiveSetting(env, "netrc-file"), path.join(dir, jc.NETRC));
+  assert.ok(
+    fs
+      .readFileSync(path.join(dir, jc.NETRC), "utf8")
+      .includes("password job-attic-sentinel"),
+  );
+  assert.ok(
+    effectiveSetting(env, "substituters").includes(
+      "https://host.example/cache",
+    ),
   );
 });
