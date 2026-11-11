@@ -670,9 +670,19 @@ runs:
         # On Windows the env from env.ps1 is already in
         # $GITHUB_ENV / $GITHUB_PATH thanks to the previous step,
         # so subsequent steps inherit it.  `dev-exec` is a
-        # passthrough that invokes the command via Git Bash for
-        # parity with the nix path's bash-c invocation.
-        $binDir = "$env:USERPROFILE\.local\bin"
+        # passthrough that runs the command in that environment.
+        #
+        # One wrapper per shell a step may use: an extensionless bash
+        # script for bash-shelled steps, `dev-exec.ps1` for pwsh (the
+        # default shell on Windows runners, which does not execute an
+        # extensionless file) and a `dev-exec.cmd` trampoline for cmd.
+        # They live in a directory owned by THIS run, prepended to PATH,
+        # as the reprobuild flavor's do. The runner profile is persistent,
+        # so a wrapper an earlier job left in a shared directory such as
+        # %USERPROFILE%\.local\bin must never be the one that resolves:
+        # a stale reprobuild-flavor `dev-exec.ps1` there calls `repro`,
+        # which a windows-diy job does not provide.
+        $binDir = Join-Path $env:RUNNER_TEMP ("windows-diy-dev-exec-" + [guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
         @'
@@ -685,9 +695,31 @@ runs:
         exec "$@"
         '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec"
 
-        # Git Bash on the runner looks at PATH; ensure the wrapper
-        # is reachable for bash-shelled steps.
+        @'
+        # dev-exec (windows-diy flavor, PowerShell): run the requested
+        # command with its arguments unchanged and exit with its status.
+        $ErrorActionPreference = "Stop"
+        if ($args.Count -eq 0) { throw "dev-exec: no command given" }
+        $command = $args[0]
+        $commandArgs = @()
+        if ($args.Count -gt 1) { $commandArgs = $args[1..($args.Count - 1)] }
+        & $command @commandArgs
+        exit $LASTEXITCODE
+        '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec.ps1"
+
+        @'
+        @echo off
+        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
+        exit /b %ERRORLEVEL%
+        '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec.cmd"
+
+        # GITHUB_PATH entries are prepended, so this run's wrappers win
+        # over any older copy elsewhere on PATH.
         Add-Content -Path $env:GITHUB_PATH -Value $binDir
+
+        Write-Host "::group::dev-exec wrappers (windows-diy) in $binDir"
+        Get-ChildItem -LiteralPath $binDir | ForEach-Object { Write-Host $_.Name }
+        Write-Host "::endgroup::"
 
     # ------------------------------------------------------------------
     # env-flavor: reprobuild
