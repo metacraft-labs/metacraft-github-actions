@@ -13,6 +13,9 @@ script="$here/../strip-unknown-installer-settings.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fail=0
+# Without a real nix every nix-dependent case would pass or fail vacuously
+# (the script itself exits 0 when nix is absent), so refuse to run.
+command -v nix >/dev/null 2>&1 || { echo "FAIL - nix is not on PATH; this suite needs a real nix" >&2; exit 1; }
 check() { if [ "$2" = ok ]; then echo "ok   - $1"; else echo "FAIL - $1"; fail=1; fi; }
 
 nix_stderr() {
