@@ -53,6 +53,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: windows-diy dev-exec wrappers through real PowerShell
+        # No Reprobuild involved: the windows-diy flavor's own wrappers, from
+        # the action's real step, run real commands through pwsh (and cmd.exe
+        # on Windows), including a stale wrapper later on PATH.
+        shell: bash
+        run: python setup-dev-env/test-windows-diy-dev-exec.py -v
       - name: Install the verified released compatibility baseline
         id: sdk
         shell: bash
