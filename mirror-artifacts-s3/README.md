@@ -54,3 +54,12 @@ credential is absent (un-onboarded repo), the path is missing, or no S3 client
 e.g. a Windows runner without a usable shell/toolchain. Always pair the `uses:`
 step with `if: always()` + `continue-on-error: true` so it runs on failed jobs
 and can never gate the build.
+
+It also never runs for long. A composite step cannot take `timeout-minutes`, so
+the action bounds the upload itself: after the `timeout-minutes` input (default
+`10`) it stops the S3 client and every process it started, emits a `::warning`
+and exits 0. The S3 copy may then be partial; the GitHub artifact is unaffected.
+The client is also given 20 s connect and 60 s read timeouts, so an unreachable
+store fails fast. Mirror a bounded set of logs rather than a whole build tree
+(`target/`, `.repro/`): a tree that does not fit in the bound is only ever
+mirrored in part.
