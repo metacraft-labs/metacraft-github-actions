@@ -390,8 +390,33 @@ jobs:
       - name: binary-cache preflight contract suite
         run: bash setup-nix/tests/probe-substituters-test.sh
 
+      # Install Nix exactly as setup-nix/action.yml's `Install Nix` step does
+      # (same action version, determinate: false), so the suite below and the
+      # end-to-end step run against the config the installer really writes.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          determinate: false
+
+      # The installer action writes a Determinate-only setting that upstream
+      # Nix warns about on every invocation. Real nix, no mocks.
+      - name: installer-setting strip contract suite
+        run: bash setup-nix/tests/strip-unknown-installer-settings-test.sh
+
+      # End to end: the installer wrote its settings into /etc/nix/nix.conf;
+      # after the real script runs, a plain nix call must print nothing.
+      - name: installer-written config is silent after the strip
+        run: |
+          bash setup-nix/strip-unknown-installer-settings.sh
+          rc=0
+          err="$(nix --extra-experimental-features nix-command eval --expr 1 2>&1 >/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ] || [ -n "$err" ]; then
+            echo "nix eval exited $rc; stderr: $err" >&2
+            exit 1
+          fi
+
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
+        run: shellcheck -S warning setup-nix/strip-unknown-installer-settings.sh setup-nix/tests/strip-unknown-installer-settings-test.sh setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
 
   setup-nix-alignment:
     # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
