@@ -53,9 +53,9 @@ with tempfile.TemporaryDirectory(prefix="submodule-failure-") as directory:
     config = home / ".gitconfig"
     config.touch()
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith("GIT_CONFIG") and key not in ("GIT_AUTH_DIR", "GITHUB_ACTION_PATH")}
+            if not key.startswith("GIT_CONFIG") and key not in ("GIT_AUTH_DIR", "GITHUB_ACTION_PATH")}
     env.update(HOME=str(home), GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1",
-               GIT_CEILING_DIRECTORIES=str(root), LC_ALL="C")
+                GIT_CEILING_DIRECTORIES=str(root), LC_ALL="C")
     srv = root / "srv"
 
     def publish(bare, files, gitlinks=()):
@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix="submodule-failure-") as directory:
     (root / "token").write_text(TOKEN)
     server = subprocess.Popen(
         ["python3", str(SERVER), "--root", str(srv), "--journal", str(root / "journal"),
-         "--auth-prefix", "/other/", "--auth-file", str(root / "token")],
+          "--auth-prefix", "/other/", "--auth-file", str(root / "token")],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         port_line = server.stdout.readline().split()
@@ -106,8 +106,8 @@ with tempfile.TemporaryDirectory(prefix="submodule-failure-") as directory:
             result = subprocess.run(
                 ["bash", str(SCRIPT)], cwd=root, text=True, capture_output=True,
                 env=dict(env, GH_TOKEN=TOKEN, GIT_AUTH_URL_BASE=base,
-                         RUNNER_OS="Windows", RUNNER_TEMP=str(root),
-                         SIBLING_OWNER="fixture", GITHUB_WORKSPACE=str(workspace)))
+                          RUNNER_OS="Windows", RUNNER_TEMP=str(root),
+                          SIBLING_OWNER="fixture", GITHUB_WORKSPACE=str(workspace)))
             output = result.stdout + result.stderr
             assert TOKEN not in output, f"{case}: the token was printed"
             assert result.returncode == 1, f"{case}: rc={result.returncode}\n{output}"
