@@ -227,6 +227,9 @@ jobs:
       - name: status-im/nim-bearssl clone carries the declared credential scope
         run: python3 reprobuild-provision/test-bearssl-auth.py
 
+      - name: codetracer submodule failure reports git's real error
+        run: python3 reprobuild-provision/test-submodule-failure.py
+
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
