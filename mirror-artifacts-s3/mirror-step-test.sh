@@ -209,14 +209,14 @@ else pass "2 control: fails without the CLI timeouts"; fi
 # --- 3. success, file -------------------------------------------------------
 run "${SCRIPT}" c3 "${WORK}/aws-ok" "${WORK}/payload.log"
 if [ "${RC}" -eq 0 ] && [[ "${OUT}" == *"Mirrored"* ]] && ! grep -q -- '--recursive' "${LOG}" \
-   && grep -q -- "s3 cp ${WORK}/payload.log s3://ci-artifacts/case/c3/" "${LOG}"; then
+  && grep -q -- "s3 cp ${WORK}/payload.log s3://ci-artifacts/case/c3/" "${LOG}"; then
   pass "3 success (file): no --recursive"
 else fail "3 success (file)"; explain; cat "${LOG}"; fi
 
 # --- 4. client fails --------------------------------------------------------
 run "${SCRIPT}" c4 "${WORK}/aws-fail" "${WORK}/payload"
 if [ "${RC}" -eq 0 ] && [[ "${OUT}" == *"::warning title=S3 artifact mirror::upload failed with exit 1"* ]] \
-   && [[ "${OUT}" != *"Mirrored"* ]]; then
+  && [[ "${OUT}" != *"Mirrored"* ]]; then
   pass "4 client exits 1: warning, exit 0"
 else fail "4 client exits 1"; explain; fi
 
@@ -242,7 +242,7 @@ else pass "6 control: fails without the SIGKILL escalation (survivors: $(survivo
 # --- 7. nix fallback hangs --------------------------------------------------
 run "${SCRIPT}" c7 "${WORK}/nix-hang" "${WORK}/payload"
 if bounded_ok && grep -q '^nix shell nixpkgs#awscli2 -c aws --endpoint-url ' "${LOG}" \
-   && [ "$(wc -l <"${PIDS}")" -eq 3 ]; then
+  && [ "$(wc -l <"${PIDS}")" -eq 3 ]; then
   pass "7 nix shell … -c aws hangs: nix, aws and its child all stopped in ${ELAPSED}s"
 else fail "7 nix fallback hangs"; explain; cat "${LOG}"; fi
 
@@ -264,7 +264,7 @@ else fail "8 step cancelled"; explain; fi
 # --- 9. malformed timeout-minutes -------------------------------------------
 run "${SCRIPT}" c9 "${WORK}/aws-ok" "${WORK}/payload" MCL_S3_TIMEOUT_MINUTES=ten MCL_S3_TIMEOUT_SECONDS=
 if [ "${RC}" -eq 0 ] && [[ "${OUT}" == *"timeout-minutes 'ten' is not a positive integer; using 10"* ]] \
-   && [[ "${OUT}" == *"Mirrored"* ]]; then
+  && [[ "${OUT}" == *"Mirrored"* ]]; then
   pass "9 malformed timeout-minutes: warned, default used, upload ran"
 else fail "9 malformed timeout-minutes"; explain; fi
 
