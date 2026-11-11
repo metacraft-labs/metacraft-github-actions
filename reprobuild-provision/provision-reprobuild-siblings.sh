@@ -185,6 +185,37 @@ if [ -z "${GH_TOKEN:-}" ]; then
   echo "::warning::reprobuild-provision: no 'gh-token' was supplied. Every clone below will be anonymous and subject to GitHub's per-IP unauthenticated download limit -- the failure mode this step was rewritten to eliminate. Private siblings will fail outright."
 fi
 
+# `report_submodule_failure <exit-code> <log-file>` -- say what git actually
+# said when the selective codetracer submodule update fails.
+#
+# This used to print one fixed sentence blaming the credential's owner scope,
+# with git's own stderr discarded. A transient fault (a dropped connection, a
+# 5xx from the forge) was therefore reported as a credential-scope mistake and
+# the real error was unrecoverable from the log. Now: a bounded tail of git's
+# combined output is always printed (token-scrubbed), the failing submodule URL
+# is named when git names one, and the owner-scope explanation is added ONLY
+# when the evidence supports it -- an authentication/not-found error AND a
+# failing URL that is neither under the sibling owner nor the declared extra
+# prefix. No retry: a failure should be seen, not absorbed.
+report_submodule_failure() {
+  local rc="$1" log="$2" tail_text failing_url="" explanation
+  tail_text="$(tail -n 40 "${log}")"
+  # `fatal: clone of '<url>' into submodule path '<path>' failed`
+  failing_url="$(sed -n "s/.*clone of '\([^']*\)' into submodule path.*/\1/p" "${log}" | head -n 1)"
+  explanation="git reported the error above; it is not an authentication or owner-scope problem as far as the output shows."
+  if [ -n "${failing_url}" ] \
+    && grep -qiE 'Authentication failed|could not read Username|terminal prompts disabled|returned error: (403|404)|Repository not found|not found' "${log}"; then
+    case "${failing_url}" in
+      *"/${SIBLING_OWNER}/"* | *":${SIBLING_OWNER}/"* | "${STATUS_IM_SCOPE}"*) ;;
+      *) explanation="The scoped credential covers '${SIBLING_OWNER}' (plus the declared status-im prefix) only; a submodule hosted under another owner cannot be authenticated by it." ;;
+    esac
+  fi
+  echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed (git exit ${rc}${failing_url:+, submodule URL $(scrub_token "${failing_url}")}). ${explanation}"
+  echo "reprobuild-provision: last lines of git's output (at most 40):"
+  scrub_token "${tail_text}"
+  echo
+}
+
 # ---------------------------------------------------------------------------
 # `clone <owner/name> <rev> [extra authenticated-clone.sh flags...]`
 # ---------------------------------------------------------------------------
@@ -351,15 +382,23 @@ else
   # is why the private submodule resolves without anything being written into
   # any `.git/config`.
   clone "${SIBLING_OWNER}/codetracer" dev
-  if ! git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
+  submodule_log="$(mktemp "${NEUTRAL_DIR}/codetracer-submodules.XXXXXX")" || exit 1
+  submodule_rc=0
+  git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
     libs/nim-serialization \
     libs/nim-faststreams \
     libs/nim-json-serialization \
     libs/nim-stew \
-    libs/nimcrypto; then
-    echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed. The scoped credential covers '${SIBLING_OWNER}' (plus the declared status-im prefix) only; a private submodule hosted under another owner cannot be authenticated by it."
+    libs/nimcrypto >"${submodule_log}" 2>&1 || submodule_rc=$?
+  if [ "${submodule_rc}" -ne 0 ]; then
+    report_submodule_failure "${submodule_rc}" "${submodule_log}"
+    rm -f "${submodule_log}"
     exit 1
   fi
+  # Keep git's progress in the job log, as it was when it streamed.
+  scrub_token "$(cat "${submodule_log}")"
+  echo
+  rm -f "${submodule_log}"
 
   # -----------------------------------------------------------------------
   # status-im/nim-bearssl -- the third-party clone, authenticated too.
