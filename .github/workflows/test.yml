@@ -53,6 +53,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: windows-diy dev-exec wrappers through real PowerShell
+        # No Reprobuild involved: the windows-diy flavor's own wrappers, from
+        # the action's real step, run real commands through pwsh (and cmd.exe
+        # on Windows), including a stale wrapper later on PATH.
+        shell: bash
+        run: python setup-dev-env/test-windows-diy-dev-exec.py -v
       - name: Install the verified released compatibility baseline
         id: sdk
         shell: bash
@@ -227,6 +233,9 @@ jobs:
       - name: status-im/nim-bearssl clone carries the declared credential scope
         run: python3 reprobuild-provision/test-bearssl-auth.py
 
+      - name: codetracer submodule failure reports git's real error
+        run: python3 reprobuild-provision/test-submodule-failure.py
+
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
@@ -277,8 +286,18 @@ jobs:
       - name: ensure-host-decompressors step contract suite
         run: bash setup-dev-env/ensure-host-decompressors-step-test.sh
 
+      # `mirror-artifacts-s3` is advertised as non-blocking, and a step that
+      # never ends blocks the job as surely as one that fails: stalled uploads
+      # held recorder jobs open for hours. The suite runs the shipped script
+      # against stub `aws` / `nix` clients that succeed, fail, hang, and ignore
+      # SIGTERM, and requires the step to end within its bound with nothing of
+      # the client's process tree left running. Each guard is paired with a
+      # mutant that must make its case fail. Stubs only: no network, no store.
+      - name: mirror-artifacts-s3 step contract suite
+        run: bash mirror-artifacts-s3/mirror-step-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit
@@ -390,8 +409,33 @@ jobs:
       - name: binary-cache preflight contract suite
         run: bash setup-nix/tests/probe-substituters-test.sh
 
+      # Install Nix exactly as setup-nix/action.yml's `Install Nix` step does
+      # (same action version, determinate: false), so the suite below and the
+      # end-to-end step run against the config the installer really writes.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          determinate: false
+
+      # The installer action writes a Determinate-only setting that upstream
+      # Nix warns about on every invocation. Real nix, no mocks.
+      - name: installer-setting strip contract suite
+        run: bash setup-nix/tests/strip-unknown-installer-settings-test.sh
+
+      # End to end: the installer wrote its settings into /etc/nix/nix.conf;
+      # after the real script runs, a plain nix call must print nothing.
+      - name: installer-written config is silent after the strip
+        run: |
+          bash setup-nix/strip-unknown-installer-settings.sh
+          rc=0
+          err="$(nix --extra-experimental-features nix-command eval --expr 1 2>&1 >/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ] || [ -n "$err" ]; then
+            echo "nix eval exited $rc; stderr: $err" >&2
+            exit 1
+          fi
+
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
+        run: shellcheck -S warning setup-nix/strip-unknown-installer-settings.sh setup-nix/tests/strip-unknown-installer-settings-test.sh setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
 
   setup-nix-alignment:
     # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
