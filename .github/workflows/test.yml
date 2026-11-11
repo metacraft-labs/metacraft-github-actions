@@ -390,8 +390,13 @@ jobs:
       - name: binary-cache preflight contract suite
         run: bash setup-nix/tests/probe-substituters-test.sh
 
+      # The installer action writes a Determinate-only setting that upstream
+      # Nix warns about on every invocation. Real nix, no mocks.
+      - name: installer-setting strip contract suite
+        run: bash setup-nix/tests/strip-unknown-installer-settings-test.sh
+
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
+        run: shellcheck -S warning setup-nix/strip-unknown-installer-settings.sh setup-nix/tests/strip-unknown-installer-settings-test.sh setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
 
   setup-nix-alignment:
     # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
