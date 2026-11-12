@@ -5,6 +5,7 @@ files prevent the test from observing or changing the operator's credentials.
 The old-token control proves Nix would otherwise keep using the expired value.
 """
 
+import atexit
 import base64
 import json
 import os
@@ -234,3 +235,63 @@ setup_control("")
 setup_control("fresh-fixture-token", flavor="windows-diy")
 setup_control("fresh-fixture-token", nix_missing=True)
 print("Actual setup auth respects fresh/anonymous/refusal cases, scope, masks and HOME ownership")
+
+
+# refresh-build-auth in a job whose credential broker is running. The broker
+# owns the job's Nix GitHub credential (job-credentials.cjs brokerGithubToken):
+# the refresh must keep the broker's token in the job's files and must not
+# install the token it was handed over it, while the Git CLI channel, which the
+# broker does not serve, still takes the refreshed token. The broker is stood
+# in for by an idle process whose argv ends like the real broker's
+# (`<...>/job-credentials.cjs daemon`); a real broker is exercised in
+# job-credentials-test.cjs.
+stand_in_broker = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(600)", "/stand-in/job-credentials.cjs", "daemon"])
+atexit.register(stand_in_broker.kill)
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    empty = directory / "empty"
+    empty.write_text("")
+    environment_file = directory / "job-env"
+    environment_file.write_text("")
+    credentials = directory / "mcl-job-credentials.fixture"
+    credentials.mkdir(mode=0o700)
+    tokens_file = credentials / "nix-access-tokens.conf"
+    netrc = credentials / "netrc"
+    netrc.write_text("machine github.com login x-access-token password broker-fixture-token\n")
+    netrc.chmod(0o600)
+    tokens_file.write_text(
+        "access-tokens = github.com=broker-fixture-token gitlab.com=preserved-fixture-token\n"
+        "netrc-file = " + str(netrc) + "\n")
+    tokens_file.chmod(0o600)
+    (credentials / "broker.pid").write_text(f"{stand_in_broker.pid}\n")
+    environment = dict(os.environ)
+    environment.update(
+        GITHUB_ENV=str(environment_file),
+        GH_TOKEN="refreshed-fixture-token",
+        TOKEN_OWNERS="metacraft-labs",
+        MCL_JOB_CREDENTIALS_DIR=str(credentials),
+        NIX_CONF_DIR=temporary,
+        NIX_USER_CONF_FILES=str(empty),
+        GIT_CONFIG_SYSTEM=str(empty),
+        GIT_CONFIG_GLOBAL=str(empty),
+        GIT_CONFIG_COUNT="0",
+        NIX_CONFIG="!include " + str(tokens_file) + "\n",
+    )
+    run = subprocess.run(["bash", str(root / "refresh.sh")], env=environment,
+        capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    apply_job_environment(environment_file, environment)
+    assert nix_settings(environment)["access-tokens"]["value"] == {
+        "github.com": "broker-fixture-token",
+        "gitlab.com": "preserved-fixture-token",
+    }, "refresh-build-auth installed its token over the running broker's"
+    assert "refreshed-fixture-token" not in tokens_file.read_text() + netrc.read_text()
+    header = subprocess.check_output(
+        ["git", "config", "--get-urlmatch", "http.extraHeader", "https://github.com/metacraft-labs/runquota"],
+        env=environment, cwd=temporary, text=True).strip()
+    assert header == "AUTHORIZATION: basic " + base64.b64encode(b"x-access-token:refreshed-fixture-token").decode()
+    public = "\n".join(line for line in run.stdout.splitlines() if not line.startswith("::add-mask::"))
+    for secret in ["refreshed-fixture-token", "broker-fixture-token"]:
+        assert secret not in public + run.stderr
+print("refresh-build-auth keeps a running broker's Nix token and still refreshes Git")

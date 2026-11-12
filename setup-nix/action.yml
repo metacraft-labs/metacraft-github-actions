@@ -158,6 +158,34 @@ runs:
           exit 1
           ;;
         esac
+        # A credential broker running in this directory owns its GitHub token
+        # (refresh-build-auth/job-credentials.cjs, brokerGithubToken; keep the
+        # two tests in step). Its token is never older than gh-token, and
+        # writing gh-token over it left a job on a token that expired 18
+        # minutes before the broker's next mint (2026-11-12, 401 at minute 60).
+        # No `broker.stop`, and `broker.pid` a positive decimal naming a
+        # process we can signal whose argv (where /proc shows it) ends in
+        # `job-credentials.cjs daemon`, so a reused pid is no owner. An empty
+        # gh-token is unchanged.
+        tokens_file="$cred_dir/nix-access-tokens.conf"
+        broker_owns_token() {
+          local pid argv=()
+          [ -n "$GH_TOKEN" ] && [ ! -e "$cred_dir/broker.stop" ] && [ -f "$tokens_file" ] || return 1
+          [[ $(cat "$cred_dir/broker.pid" 2>/dev/null) =~ ^[[:space:]]*([1-9][0-9]*)[[:space:]]*$ ]] || return 1
+          pid="${BASH_REMATCH[1]}"
+          kill -0 "$pid" 2>/dev/null || return 1
+          [ -e /proc/self ] || return 0
+          mapfile -d '' -t argv 2>/dev/null <"/proc/$pid/cmdline" || return 1
+          [ "${#argv[@]}" -ge 2 ] && [ "${argv[-1]}" = daemon ] && [ "${argv[-2]##*/}" = job-credentials.cjs ]
+        }
+        if broker_owns_token; then
+          broker_entries=" $(sed -n 's/^[[:space:]]*access-tokens[[:space:]]*=//p' "$tokens_file" | tr -s '[:space:]' ' ') "
+          if [[ $broker_entries =~ \ github\.com=([^[:space:]]+)\  ]]; then
+            GH_TOKEN="${BASH_REMATCH[1]}"
+            echo "::add-mask::$GH_TOKEN"
+            echo "setup-nix: the job credential broker owns this job's GitHub token; keeping it rather than gh-token"
+          fi
+        fi
 
         # NOTE (scoping): unlike the Git CLI credential installed below, these
         # two mechanisms are HOST-granular and stay that way here, deliberately:

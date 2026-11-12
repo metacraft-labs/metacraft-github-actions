@@ -164,7 +164,10 @@ inputs:
       next `nix` invocation. Tokens it mints are restricted to `contents:
       read`. It covers Nix (its `access-tokens` and netrc); the Git CLI
       credential is still `gh-token`, refreshed between phases by
-      `refresh-build-auth`.
+      `refresh-build-auth`. While the broker runs it owns the job's Nix
+      GitHub credential: a later setup-nix, Nix-auth selection or
+      refresh-build-auth keeps the broker's token instead of installing the
+      older one it was handed.
     required: false
     default: ""
   app-private-key:
