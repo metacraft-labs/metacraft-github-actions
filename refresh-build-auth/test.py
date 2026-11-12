@@ -42,8 +42,27 @@ def apply_job_environment(path, environment):
 
 NIX = shutil.which("nix")
 assert NIX, "the owning environment must provide Nix for real parser controls"
+node = os.environ.get("GHA_NIX_AUTH_NODE", "")
+assert Path(node).is_absolute() and os.access(node, os.X_OK), "declared Node binding required"
 
 root = Path(__file__).resolve().parent
+
+
+def isolated_tools(directory):
+    # Only what refresh.sh itself needs from PATH. No python3 and no node: the
+    # Nix refresh must run on the declared GHA_NIX_AUTH_NODE alone, as on the
+    # self-hosted bench runners that have no python3 (codetracer-ci PR #93,
+    # job 131538166833).
+    tools = directory / "tools"
+    tools.mkdir()
+    for name in ["bash", "dirname", "base64", "tr", "git", "nix"]:
+        executable = shutil.which(name)
+        assert executable, name
+        (tools / name).symlink_to(executable)
+    for absent in ["python3", "python", "node"]:
+        assert shutil.which(absent, path=str(tools)) is None, absent
+    return str(tools)
+
 for isolated_path in [False, True]:
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
@@ -65,19 +84,14 @@ for isolated_path in [False, True]:
         )
 
         if isolated_path:
-            tools = directory / "tools"
-            tools.mkdir()
-            for name in ["bash", "dirname", "base64", "tr", "git", "nix"]:
-                executable = shutil.which(name)
-                assert executable, name
-                (tools / name).symlink_to(executable)
-            environment["PATH"] = str(tools)
-            environment["REPROBUILD_BOOTSTRAP_PYTHON"] = sys.executable
-            assert shutil.which("python3", path=str(tools)) is None
+            environment["PATH"] = isolated_tools(directory)
+            # The removed Python hop honoured this override; nothing may need it.
+            environment.pop("REPROBUILD_BOOTSTRAP_PYTHON", None)
 
         assert nix_settings(environment)["access-tokens"]["value"]["github.com"] == "old-fixture-token"
-        subprocess.run(["bash", str(root / "refresh.sh")], env=environment,
-                        check=True, capture_output=True, text=True)
+        run = subprocess.run([shutil.which("bash"), str(root / "refresh.sh")], env=environment,
+                              capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
         apply_job_environment(environment_file, environment)
         effective = nix_settings(environment)
         assert effective["access-tokens"]["value"] == {
@@ -96,14 +110,50 @@ for isolated_path in [False, True]:
         assert empty.read_text() == ""
 print("Real Git and Nix use fresh credentials; other settings and scopes survive")
 
+# A missing or unusable Node binding must stop the refresh with a message that
+# names the binding, before any Nix credential is exported. It must never fall
+# back to a runtime found on PATH, so the isolated PATH carries a real Node
+# under the name the relative binding asks for.
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    tools = isolated_tools(directory)
+    (directory / "tools" / "node").symlink_to(node)
+    not_executable = directory / "not-executable"
+    not_executable.write_text("")
+    for binding in [None, "", "node", str(directory / "missing-node"), str(not_executable), temporary]:
+        empty = directory / "empty"
+        empty.write_text("")
+        environment_file = directory / "job-env"
+        environment_file.write_text("")
+        environment = dict(
+            os.environ, PATH=tools, GITHUB_ENV=str(environment_file),
+            GH_TOKEN="fresh-fixture-token", TOKEN_OWNERS="metacraft-labs",
+            NIX_CONF_DIR=temporary, NIX_USER_CONF_FILES=str(empty),
+            GIT_CONFIG_SYSTEM=str(empty), GIT_CONFIG_GLOBAL=str(empty),
+            GIT_CONFIG_COUNT="0",
+            NIX_CONFIG="access-tokens = github.com=old-fixture-token\n",
+        )
+        environment.pop("REPROBUILD_BOOTSTRAP_PYTHON", None)
+        environment.pop("MCL_JOB_CREDENTIALS_DIR", None)
+        environment.pop("RUNNER_TEMP", None)
+        if binding is None:
+            environment.pop("GHA_NIX_AUTH_NODE", None)
+        else:
+            environment["GHA_NIX_AUTH_NODE"] = binding
+        run = subprocess.run([shutil.which("bash"), str(root / "refresh.sh")], env=environment,
+                              capture_output=True, text=True)
+        assert run.returncode != 0, f"refresh accepted Node binding {binding!r}"
+        assert "GHA_NIX_AUTH_NODE" in run.stderr, run.stderr
+        assert "NIX_CONFIG" not in environment_file.read_text()
+        assert "fresh-fixture-token" not in run.stdout.replace("::add-mask::", "") + run.stderr
+print("refresh-build-auth refuses a missing, relative or non-executable Node binding")
+
 # Drive the actual known composite steps, using the same complete-file reader
 # and named-step convention as the authenticated Cargo fixture. This is not an
 # action-runner emulator: only these fixed input/output bindings are replayed.
 # All credentials below are inert sentinels; the real Nix parser uses isolated
 # configuration and never performs a network acquisition or reads host config.
 repo = root.parent
-node = os.environ.get("GHA_NIX_AUTH_NODE", "")
-assert Path(node).is_absolute() and os.access(node, os.X_OK), "declared Node binding required"
 reader = repo / ".github/read-workflow.cjs"
 action = subprocess.check_output([node, str(reader), str(repo / "setup-dev-env/action.yml")], text=True)
 
