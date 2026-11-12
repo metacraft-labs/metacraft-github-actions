@@ -702,17 +702,75 @@ runs:
         # dev-exec (windows-diy flavor, PowerShell): run the requested
         # command with its arguments unchanged and exit with its status.
         $ErrorActionPreference = "Stop"
-        if ($args.Count -eq 0) { throw "dev-exec: no command given" }
-        $command = $args[0]
+
+        # Recover the caller's arguments exactly as written.
+        #
+        # PowerShell's parameter binder runs on every script call, even a script
+        # that declares no parameters, and it rewrites a bare token shaped like
+        # `-name:value`: $args receives `-name:` and `value` as two elements
+        # (`nim c -d:release` would reach the child as `-d:` `release`). `--path:src`
+        # and `/opt:val` stay whole in-process, but `pwsh -File` splits every
+        # `-x:y` / `--x:y` into `-x` `y` and loses the colon, which is what the .cmd
+        # trampoline would otherwise do. A bare `--` is also consumed by the parser;
+        # quote it (`'--'`) to pass it on. Neither rewrite can be turned off from
+        # inside the script, so undo the first and sidestep the second:
+        #   - in-process: a `-name:` element is always the first half of a token the
+        #     binder split, because a quoted '-name:' is indistinguishable from it;
+        #     rejoin it with the element that follows. Only an argument that is
+        #     literally `-name:` with nothing after the colon is misread.
+        #   - from dev-exec.cmd: the trampoline hands over its raw command line in
+        #     DEV_EXEC_CMDLINE (prefixed with a dummy program name, so it is never
+        #     empty) and this script splits it with CommandLineToArgvW, the same
+        #     parser every native Windows program's argv goes through.
+        $cmdArgs = New-Object 'System.Collections.Generic.List[string]'
+        if ($args.Count -eq 1 -and $args[0] -ceq "dev-exec-cmdline-from-env" -and
+            -not [string]::IsNullOrEmpty($env:DEV_EXEC_CMDLINE)) {
+          $rawCommandLine = $env:DEV_EXEC_CMDLINE
+          # Do not leak it to the command, which may itself run a dev-exec.cmd.
+          Remove-Item Env:\DEV_EXEC_CMDLINE
+          $api = Add-Type -Namespace DevExec -Name ("Argv" + [guid]::NewGuid().ToString("N")) -PassThru `
+            -MemberDefinition ('[DllImport("shell32.dll")] public static extern IntPtr CommandLineToArgvW(' +
+              '[MarshalAs(UnmanagedType.LPWStr)] string line, out int count); ' +
+              '[DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr handle);')
+          $count = 0
+          $vector = $api::CommandLineToArgvW($rawCommandLine, [ref]$count)
+          if ($vector -eq [IntPtr]::Zero) { throw "dev-exec: cannot parse the command line" }
+          try {
+            # Element 0 is the dummy program name the trampoline prepended.
+            for ($i = 1; $i -lt $count; $i++) {
+              $cmdArgs.Add([Runtime.InteropServices.Marshal]::PtrToStringUni(
+                [Runtime.InteropServices.Marshal]::ReadIntPtr($vector, $i * [IntPtr]::Size)))
+            }
+          } finally {
+            [void]$api::LocalFree($vector)
+          }
+        } else {
+          for ($i = 0; $i -lt $args.Count; $i++) {
+            $element = [string]$args[$i]
+            if ($element -cmatch '^-[\p{L}_?][^\s:]*:$' -and $i + 1 -lt $args.Count) {
+              $i++
+              $element += [string]$args[$i]
+            }
+            $cmdArgs.Add($element)
+          }
+        }
+
+        if ($cmdArgs.Count -eq 0) { throw "dev-exec: no command given" }
+        $command = $cmdArgs[0]
         $commandArgs = @()
-        if ($args.Count -gt 1) { $commandArgs = $args[1..($args.Count - 1)] }
+        if ($cmdArgs.Count -gt 1) { $commandArgs = $cmdArgs.GetRange(1, $cmdArgs.Count - 1).ToArray() }
         & $command @commandArgs
         exit $LASTEXITCODE
         '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec.ps1"
 
         @'
         @echo off
-        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
+        rem Hand the raw command line over in the environment: `pwsh -File`
+        rem would split `-d:release` into `-d` `release` (see dev-exec.ps1).
+        rem No quotes around the assignment: they would invert cmd's quote
+        rem parity inside the arguments and expose an `&` in a quoted one.
+        set DEV_EXEC_CMDLINE=x %*
+        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" dev-exec-cmdline-from-env
         exit /b %ERRORLEVEL%
         '@ | Out-File -Encoding ascii -FilePath "$binDir\dev-exec.cmd"
 
@@ -1102,7 +1160,59 @@ runs:
           cat > "$WIN_BIN_DIR/dev-exec.ps1" <<'EOF'
         $ErrorActionPreference = "Stop"
 
-        $cmdArgs = @($args)
+        # Recover the caller's arguments exactly as written.
+        #
+        # PowerShell's parameter binder runs on every script call, even a script
+        # that declares no parameters, and it rewrites a bare token shaped like
+        # `-name:value`: $args receives `-name:` and `value` as two elements
+        # (`nim c -d:release` would reach the child as `-d:` `release`). `--path:src`
+        # and `/opt:val` stay whole in-process, but `pwsh -File` splits every
+        # `-x:y` / `--x:y` into `-x` `y` and loses the colon, which is what the .cmd
+        # trampoline would otherwise do. A bare `--` is also consumed by the parser;
+        # quote it (`'--'`) to pass it on. Neither rewrite can be turned off from
+        # inside the script, so undo the first and sidestep the second:
+        #   - in-process: a `-name:` element is always the first half of a token the
+        #     binder split, because a quoted '-name:' is indistinguishable from it;
+        #     rejoin it with the element that follows. Only an argument that is
+        #     literally `-name:` with nothing after the colon is misread.
+        #   - from dev-exec.cmd: the trampoline hands over its raw command line in
+        #     DEV_EXEC_CMDLINE (prefixed with a dummy program name, so it is never
+        #     empty) and this script splits it with CommandLineToArgvW, the same
+        #     parser every native Windows program's argv goes through.
+        $cmdArgs = New-Object 'System.Collections.Generic.List[string]'
+        if ($args.Count -eq 1 -and $args[0] -ceq "dev-exec-cmdline-from-env" -and
+            -not [string]::IsNullOrEmpty($env:DEV_EXEC_CMDLINE)) {
+          $rawCommandLine = $env:DEV_EXEC_CMDLINE
+          # Do not leak it to the command, which may itself run a dev-exec.cmd.
+          Remove-Item Env:\DEV_EXEC_CMDLINE
+          $api = Add-Type -Namespace DevExec -Name ("Argv" + [guid]::NewGuid().ToString("N")) -PassThru `
+            -MemberDefinition ('[DllImport("shell32.dll")] public static extern IntPtr CommandLineToArgvW(' +
+              '[MarshalAs(UnmanagedType.LPWStr)] string line, out int count); ' +
+              '[DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr handle);')
+          $count = 0
+          $vector = $api::CommandLineToArgvW($rawCommandLine, [ref]$count)
+          if ($vector -eq [IntPtr]::Zero) { throw "dev-exec: cannot parse the command line" }
+          try {
+            # Element 0 is the dummy program name the trampoline prepended.
+            for ($i = 1; $i -lt $count; $i++) {
+              $cmdArgs.Add([Runtime.InteropServices.Marshal]::PtrToStringUni(
+                [Runtime.InteropServices.Marshal]::ReadIntPtr($vector, $i * [IntPtr]::Size)))
+            }
+          } finally {
+            [void]$api::LocalFree($vector)
+          }
+        } else {
+          for ($i = 0; $i -lt $args.Count; $i++) {
+            $element = [string]$args[$i]
+            if ($element -cmatch '^-[\p{L}_?][^\s:]*:$' -and $i + 1 -lt $args.Count) {
+              $i++
+              $element += [string]$args[$i]
+            }
+            $cmdArgs.Add($element)
+          }
+        }
+
+        $cmdArgs = @($cmdArgs)
         if ($cmdArgs.Count -ge 2 -and
             $cmdArgs[0] -eq "repro" -and
             ($cmdArgs[1] -eq "build" -or $cmdArgs[1] -eq "test")) {
@@ -1145,10 +1255,16 @@ runs:
           exit $LASTEXITCODE
         }
         $callerDirectory = (Get-Location).ProviderPath
+        # `pwsh -File` would rewrite `-d:release` / `--path:src` into two
+        # arguments, so the command's arguments cross it encoded: the count,
+        # then each argument as UTF-8 base64, comma separated. Base64 never
+        # starts with `-`, and an empty argument survives as an empty field.
+        $encoded = "$($cmdArgs.Count):" + ((@($cmdArgs | ForEach-Object {
+          [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_)) })) -join ",")
         $execArgs = @("exec", $projectRoot, "--", "pwsh", "-NoLogo", "-NoProfile",
           "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
           (Join-Path $PSScriptRoot "dev-exec-run.ps1"),
-          $callerDirectory) + $cmdArgs
+          $callerDirectory, $encoded)
         & repro @execArgs
         exit $LASTEXITCODE
         EOF
@@ -1156,18 +1272,33 @@ runs:
         # This child already has the selected project's activated environment.
         # Change only its cwd; retain the command's argument array and status.
         $ErrorActionPreference = "Stop"
-        if ($args.Count -lt 2) { throw "caller directory and command are required" }
+        if ($args.Count -ne 2) { throw "caller directory and encoded command are required" }
         $callerDirectory = $args[0]
-        $command = $args[1]
+        # Decode what dev-exec.ps1 encoded; `-File` must not see the raw
+        # arguments because it splits `-d:release` into `-d` `release`.
+        $separator = $args[1].IndexOf(":")
+        $expected = [int]$args[1].Substring(0, $separator)
+        $decoded = @()
+        if ($expected -gt 0) {
+          $decoded = @($args[1].Substring($separator + 1).Split(",") | ForEach-Object {
+            [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) })
+        }
+        if ($decoded.Count -ne $expected -or $expected -lt 1) { throw "malformed encoded command" }
+        $command = $decoded[0]
         $commandArgs = @()
-        if ($args.Count -gt 2) { $commandArgs = $args[2..($args.Count - 1)] }
+        if ($decoded.Count -gt 1) { $commandArgs = $decoded[1..($decoded.Count - 1)] }
         Set-Location -LiteralPath $callerDirectory
         & $command @commandArgs
         exit $LASTEXITCODE
         EOF
           cat > "$WIN_BIN_DIR/dev-exec.cmd" <<'EOF'
         @echo off
-        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" %*
+        rem Hand the raw command line over in the environment: `pwsh -File`
+        rem would split `-d:release` into `-d` `release` (see dev-exec.ps1).
+        rem No quotes around the assignment: they would invert cmd's quote
+        rem parity inside the arguments and expose an `&` in a quoted one.
+        set DEV_EXEC_CMDLINE=x %*
+        pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" dev-exec-cmdline-from-env
         exit /b %ERRORLEVEL%
         EOF
           echo "$WIN_BIN_DIR_WIN" >> "$GITHUB_PATH"
