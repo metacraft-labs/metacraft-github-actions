@@ -171,15 +171,24 @@ runs:
         broker_owns_token() {
           local pid argv=()
           [ -n "$GH_TOKEN" ] && [ ! -e "$cred_dir/broker.stop" ] && [ -f "$tokens_file" ] || return 1
-          [[ $(cat "$cred_dir/broker.pid" 2>/dev/null) =~ ^[[:space:]]*([1-9][0-9]*)[[:space:]]*$ ]] || return 1
+          [[ $(<"$cred_dir/broker.pid") =~ ^[[:space:]]*([1-9][0-9]*)[[:space:]]*$ ]] 2>/dev/null || return 1
           pid="${BASH_REMATCH[1]}"
           kill -0 "$pid" 2>/dev/null || return 1
           [ -e /proc/self ] || return 0
           mapfile -d '' -t argv 2>/dev/null <"/proc/$pid/cmdline" || return 1
           [ "${#argv[@]}" -ge 2 ] && [ "${argv[-1]}" = daemon ] && [ "${argv[-2]##*/}" = job-credentials.cjs ]
         }
+        # Bash builtins only, here and in broker_owns_token: a runner's PATH
+        # need not carry sed, tr or even cat (macOS mcl-bench-001 had no sed,
+        # codetracer-ruby-recorder job 131126540101, "sed: command not found").
         if broker_owns_token; then
-          broker_entries=" $(sed -n 's/^[[:space:]]*access-tokens[[:space:]]*=//p' "$tokens_file" | tr -s '[:space:]' ' ') "
+          broker_entries=" "
+          while IFS= read -r tokens_line || [ -n "$tokens_line" ]; do
+            if [[ $tokens_line =~ ^[[:space:]]*access-tokens[[:space:]]*=(.*)$ ]]; then
+              broker_entries+="${BASH_REMATCH[1]} "
+            fi
+          done <"$tokens_file"
+          broker_entries="${broker_entries//[[:space:]]/ }"
           if [[ $broker_entries =~ \ github\.com=([^[:space:]]+)\  ]]; then
             GH_TOKEN="${BASH_REMATCH[1]}"
             echo "::add-mask::$GH_TOKEN"
