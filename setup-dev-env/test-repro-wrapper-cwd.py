@@ -225,8 +225,8 @@ def main():
                 tokens = ['--path:src', '-d:release', '-x:y', '/opt:val', 'a:b']
                 ps_python = sys.executable.replace("'", "''")
                 command = ("& '" + str(first_directory / 'dev-exec.ps1').replace("'", "''") +
-                           "' '" + ps_python + "' '" + str(child).replace("'", "''") +
-                           "' " + ' '.join(tokens) + " 'space argument' 0; exit $LASTEXITCODE")
+                            "' '" + ps_python + "' '" + str(child).replace("'", "''") +
+                            "' " + ' '.join(tokens) + " 'space argument' 0; exit $LASTEXITCODE")
                 code, output, error = run([native_tools['pwsh'], '-NoProfile', '-Command',
                                             command], nested, env)
                 observed = json.loads(output.strip().splitlines()[-1])['args'] if code == 0 else None

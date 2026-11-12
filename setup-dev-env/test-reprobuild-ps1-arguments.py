@@ -96,7 +96,7 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
         python = sys.executable.replace("'", "''")
         wrapper = str(self.wrappers / 'dev-exec.ps1').replace("'", "''")
         command = ("& '" + wrapper + "' '" + python + "' -c '" + ARGV_PROGRAM +
-                   "' " + arguments_source + '; exit $LASTEXITCODE')
+                    "' " + arguments_source + '; exit $LASTEXITCODE')
         return subprocess.run([self.pwsh, '-NoLogo', '-NoProfile', '-Command', command],
                               cwd=self.root, env=self.env, text=True,
                               capture_output=True, timeout=120)
@@ -112,8 +112,8 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
         wrapper = str(self.wrappers / 'dev-exec.ps1').replace("'", "''")
         run = subprocess.run(
             [self.pwsh, '-NoLogo', '-NoProfile', '-Command',
-             "& '" + wrapper + "' '" + python + "' -c 'import sys; sys.exit(7)' "
-             '-d:release; exit $LASTEXITCODE'],
+            "& '" + wrapper + "' '" + python + "' -c 'import sys; sys.exit(7)' "
+            '-d:release; exit $LASTEXITCODE'],
             cwd=self.root, env=self.env, text=True, capture_output=True, timeout=120)
         self.assertEqual(run.returncode, 7, run.stdout + run.stderr)
 
