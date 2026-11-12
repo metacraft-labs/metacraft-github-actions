@@ -264,9 +264,31 @@ the step runs, is masked. Its log is `broker.log` in the credential directory.
     app-private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
 ```
 
+**Once the broker runs, it owns the job's GitHub credential.** It is then the
+only writer of the GitHub entries in the credential directory
+(`access-tokens` and the job netrc's `machine github.com`). Every later step
+that would install a token there (`setup-nix`, including the copy
+`setup-reprobuild` runs to build repro, this action's Nix-auth selection, and
+`refresh-build-auth`) keeps the broker's current token, not the one it was
+handed. The broker schedules its next mint from the expiry of the token it
+installed. A token written over it is older, so it expires before that mint and
+the job fails with `401 Bad credentials`. That happened in
+codetracer-trace-format PR #70, job 131107655430, on 2026-11-12: it failed at
+minute 60, 18 minutes before the broker's next refresh. The broker owns the
+credential while `broker.pid` names its live process (where `/proc` exists,
+one whose command line is the broker's, so a reused pid does not count) and
+`broker.stop` is absent.
+If the broker has exited, the caller's token is installed as before. An empty
+`gh-token` still refuses every inherited GitHub credential. See
+`brokerGithubToken` in `refresh-build-auth/job-credentials.cjs`.
+
 The broker covers Nix. The Git CLI credential setup installs is still
-`gh-token` in numbered `GIT_CONFIG_*` variables; refresh it between phases
-with `refresh-build-auth`.
+`gh-token` in numbered `GIT_CONFIG_*` variables. The broker cannot rotate
+those: they are frozen into each step's environment, and its tokens are
+`contents: read` only. So a Git operation more than an hour after `gh-token`
+was minted fails, broker or not. Refresh it between phases with
+`refresh-build-auth`, which re-mints Git's token and leaves Nix to a running
+broker.
 
 ## Which reprobuild store a job builds into
 

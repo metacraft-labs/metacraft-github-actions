@@ -35,7 +35,17 @@ function refreshNix() {
   } catch {
     throw new Error("Cannot decode effective Nix authentication settings");
   }
-  const fresh = process.env.GH_TOKEN || "";
+  const given = process.env.GH_TOKEN || "";
+  // A broker running in this job's credential directory owns the GitHub
+  // credential (see brokerGithubToken in job-credentials.cjs): its token is
+  // never older than `given`, and writing `given` over it would leave the job
+  // holding a token that expires before the broker's next mint. The no-token
+  // path below is unchanged: an empty `given` still refuses every inherited
+  // GitHub credential, the broker's included.
+  const existingDir = jobCredentials.credentialsDir();
+  const brokerToken =
+    given && existingDir ? jobCredentials.brokerGithubToken(existingDir) : "";
+  const fresh = brokerToken || given;
   const github = Object.keys(tokens).filter(
     (host) => host === "github.com" || host.startsWith("github.com/"),
   );
@@ -68,7 +78,7 @@ function refreshNix() {
     throw new Error("GitHub job environment file is required");
   // Synchronous writes provide the same before-export guarantee as Python's
   // flush=True. Workflow-command escaping is data escaping, not shell quoting.
-  for (const value of new Set([...originalValues, fresh])) {
+  for (const value of new Set([...originalValues, given, fresh])) {
     if (value) {
       const line = Buffer.from(
         "::add-mask::" +
@@ -85,7 +95,7 @@ function refreshNix() {
   }
   let config = (process.env.NIX_CONFIG || "").replace(/\n+$/, "");
   let exported = "";
-  let jobDir = jobCredentials.credentialsDir();
+  let jobDir = existingDir;
   if (!jobDir && process.env.RUNNER_TEMP) {
     jobDir = jobCredentials.createCredentialsDir(process.env.RUNNER_TEMP);
     exported = "MCL_JOB_CREDENTIALS_DIR=" + jobDir + "\n";
@@ -100,6 +110,9 @@ function refreshNix() {
     // the new value. `!include` ignores a missing file, so once the runner
     // empties RUNNER_TEMP the setting degrades to no credential, not a dead one.
     jobCredentials.writeAccessTokens(jobDir, tokens);
+    // The job netrc's `machine github.com` entry is the same credential and
+    // must not be left behind on an older token than access-tokens carries.
+    if (fresh) jobCredentials.rotateNetrc(jobDir, fresh);
     const include = jobCredentials.includeLine(jobDir);
     config = config
       .split("\n")
@@ -127,9 +140,11 @@ function refreshNix() {
     "utf8",
   );
   console.log(
-    fresh
-      ? "Refreshed job-scoped Nix GitHub authentication"
-      : "Configured no GitHub access-token entry",
+    brokerToken
+      ? "Kept the job credential broker's GitHub token; the broker owns this job's Nix GitHub authentication"
+      : fresh
+        ? "Refreshed job-scoped Nix GitHub authentication"
+        : "Configured no GitHub access-token entry",
   );
 }
 

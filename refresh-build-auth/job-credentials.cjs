@@ -325,6 +325,77 @@ function retryDelay(failures) {
   return Math.min(5 * 60 * 1000, 15 * 1000 * 2 ** Math.max(0, failures - 1));
 }
 
+/**
+ * Whether `pid` is this job's credential broker. The pid must be a positive
+ * decimal, the process must exist and be signalable by us (the broker always
+ * runs as the user that started it, so EPERM means some other user's process
+ * took the pid over), and, where /proc exposes it, its argv must end with
+ * `<...>/job-credentials.cjs daemon` -- so a pid reused by an unrelated process
+ * after the broker died is not mistaken for it. Without /proc (macOS) liveness
+ * is the whole test. setup-nix's "Configure Nix authentication" step applies
+ * the same test in bash; keep the two in step.
+ */
+function isBrokerProcess(pidText) {
+  if (!/^[1-9][0-9]*$/.test(pidText)) return false;
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid)) return false;
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  let argv;
+  try {
+    argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+  } catch {
+    // No procfs on this platform: liveness alone decides. With procfs, an
+    // unreadable entry is a pid that exited after the signal: no broker.
+    return !fs.existsSync("/proc/self");
+  }
+  if (argv.at(-1) === "") argv.pop();
+  return (
+    argv.length >= 2 &&
+    argv.at(-1) === "daemon" &&
+    path.basename(argv.at(-2)) === "job-credentials.cjs"
+  );
+}
+
+/**
+ * The GitHub token a running broker has installed in `dir`, or "" when no
+ * broker owns the job's GitHub credential.
+ *
+ * OWNERSHIP RULE. Once a broker is running in a job's credential directory it
+ * is the only writer of the GitHub entries in that directory. Every other
+ * writer -- setup-nix, the Nix-auth selection, refresh-build-auth -- installs
+ * this token instead of the one it was handed. The token it was handed is at
+ * best as old as the broker's, and usually older: the broker schedules its
+ * next mint from the expiry of the token IT installed, so an older token
+ * written over it expires with nothing due to replace it. That is the
+ * 2026-11-12 incident (codetracer-trace-format PR #70, job 131107655430): a
+ * setup-nix run 4 minutes after the broker started wrote the workflow's
+ * 42-minute-old `gh-token` back over the broker's fresh one, it expired at
+ * minute 60, and the next Nix fetch answered 401 18 minutes before the broker
+ * would have rotated.
+ *
+ * "Running" means: `broker.pid` names a live broker process (isBrokerProcess)
+ * and `broker.stop` is absent. A broker that crashed or was stopped owns nothing, and the caller's
+ * token is installed as before. setup-nix's "Configure Nix authentication"
+ * step applies the same test in bash, because it runs before a Node runtime
+ * is bound; keep the two in step.
+ */
+function brokerGithubToken(dir) {
+  if (fs.existsSync(path.join(dir, STOP))) return "";
+  let pidText;
+  try {
+    pidText = fs.readFileSync(path.join(dir, BROKER_PID), "utf8").trim();
+  } catch {
+    return "";
+  }
+  if (!isBrokerProcess(pidText)) return "";
+  const token = readAccessTokens(dir)["github.com"] || "";
+  return /\s/.test(token) ? "" : token;
+}
+
 function brokerShouldStop(dir) {
   return (
     !fs.existsSync(path.join(dir, NIX_TOKENS)) ||
@@ -519,6 +590,7 @@ module.exports = {
   mintInstallationToken,
   nextRefreshDelay,
   retryDelay,
+  brokerGithubToken,
   runBroker,
   startBroker,
 };

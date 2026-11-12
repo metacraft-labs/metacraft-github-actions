@@ -808,3 +808,227 @@ test("setup-nix uses the job netrc when the job brings the cache credential", (t
     ),
   );
 });
+
+// The 2026-11-12 incident, replayed (codetracer-trace-format PR #70, job
+// 131107655430): a job's first setup-nix installed gh-token A, setup-dev-env's
+// broker then minted B into the same directory, and a later setup-nix (the one
+// setup-reprobuild runs to build repro) plus its selection step wrote A back
+// over B. A expired an hour after it was minted, and the broker -- which
+// schedules its next mint from B's expiry -- would not have repaired the file
+// for another 18 minutes, so the next `nix` fetch answered 401. Once the
+// broker owns the credential, no later writer may install an older token.
+test("once the broker owns the GitHub credential, setup-nix and refreshNix keep its token", async (t) => {
+  const { privateKey, publicKey } = keyPair();
+  const gh = await fakeGitHub(t, publicKey);
+  const home = tempDir(t);
+  const runnerTemp = path.join(home, "runner-temp");
+  fs.mkdirSync(runnerTemp);
+  const jobEnv = path.join(home, "github-env");
+  fs.writeFileSync(jobEnv, "");
+  const stale = "gh-token-sentinel-A";
+  const env = isolatedNixEnv(home, {
+    GH_TOKEN: stale,
+    TOKEN_OWNERS: "metacraft-labs",
+    GITHUB_ENV: jobEnv,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+    EXTRA_SUBSTITUTERS: "",
+    EXTRA_TRUSTED_PUBLIC_KEYS: "",
+    ATTIC_TOKEN: "",
+    ATTIC_ENDPOINT: "",
+  });
+  delete env.NIX_USER_CONF_FILES;
+  const setupNix = () => {
+    const run = spawnSync("bash", ["-c", setupNixStepBody()], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    return run;
+  };
+  const selectNix = () => {
+    const run = spawnSync(
+      process.execPath,
+      [path.join(__dirname, "nix-auth.cjs")],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    return run;
+  };
+  const netrcOf = (dir) => fs.readFileSync(path.join(dir, jc.NETRC), "utf8");
+
+  // 10:19 -- the workflow's own setup-nix, before any broker: A is installed.
+  setupNix();
+  const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
+    fs.readFileSync(jobEnv, "utf8"),
+  )[1];
+  env.MCL_JOB_CREDENTIALS_DIR = dir;
+  selectNix();
+  assert.deepEqual(effectiveTokens(env), { "github.com": stale });
+
+  // 10:56 -- setup-dev-env starts the broker in the same directory.
+  const start = await new Promise((resolve) => {
+    const child = require("node:child_process").spawn(
+      process.execPath,
+      [
+        "-e",
+        `require(${JSON.stringify(path.join(__dirname, "job-credentials.cjs"))}).startBroker().catch(e => { console.error(e.message); process.exit(1); })`,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          MCL_JOB_CREDENTIALS_DIR: dir,
+          APP_ID: "12345",
+          APP_PRIVATE_KEY: privateKey,
+          TOKEN_OWNERS: "metacraft-labs",
+          GITHUB_API_URL: gh.url,
+        },
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", (status) => resolve({ status, stderr }));
+  });
+  assert.equal(start.status, 0, start.stderr);
+  const pid = Number(fs.readFileSync(path.join(dir, "broker.pid"), "utf8"));
+  t.after(() => {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  });
+  const minted = "ghs_minted_sentinel_1";
+  assert.deepEqual(effectiveTokens(env), { "github.com": minted });
+
+  // 11:00 -- a second setup-nix and its selection step, both still handed A.
+  const setup = setupNix();
+  assert.deepEqual(
+    effectiveTokens(env),
+    { "github.com": minted },
+    "setup-nix installed an older gh-token over the broker's token",
+  );
+  assert.match(setup.stdout, /credential broker owns/);
+  const select = selectNix();
+  assert.deepEqual(
+    effectiveTokens(env),
+    { "github.com": minted },
+    "refreshNix installed an older gh-token over the broker's token",
+  );
+  const tokenFile = fs.readFileSync(path.join(dir, jc.NIX_TOKENS), "utf8");
+  assert.ok(!tokenFile.includes(stale), "A reached the token file");
+  assert.ok(netrcOf(dir).includes("password " + minted));
+  assert.ok(!netrcOf(dir).includes(stale), "A reached the job netrc");
+  // Both tokens are still registered with the runner, and neither is printed.
+  for (const secret of [stale, minted])
+    for (const run of [setup, select]) {
+      assert.ok(run.stdout.includes("::add-mask::" + secret + "\n"));
+      assert.ok(
+        !run.stdout.replaceAll("::add-mask::" + secret, "").includes(secret),
+      );
+      assert.ok(!run.stderr.includes(secret));
+    }
+
+  // The broker's next rotation still reaches everything Nix reads.
+  jc.rotate(dir, "ghs_rotated_sentinel", ["metacraft-labs"]);
+  assert.deepEqual(effectiveTokens(env), {
+    "github.com": "ghs_rotated_sentinel",
+  });
+
+  // Control: once the broker has been asked to stop it no longer owns the
+  // credential, and the caller's token is installed as before.
+  fs.writeFileSync(path.join(dir, jc.STOP), "");
+  env.GH_TOKEN = "gh-token-sentinel-C";
+  setupNix();
+  selectNix();
+  assert.deepEqual(effectiveTokens(env), {
+    "github.com": "gh-token-sentinel-C",
+  });
+  assert.ok(netrcOf(dir).includes("password gh-token-sentinel-C"));
+});
+
+// A stand-in broker: an idle process whose argv ends the way the real one's
+// does (`<node> <...>/job-credentials.cjs daemon`), which is what the procfs
+// half of the ownership test looks for. Spawning the real daemon would need a
+// GitHub App key and would rotate the file under the assertions.
+function standInBroker(t) {
+  const child = require("node:child_process").spawn(
+    process.execPath,
+    [
+      "-e",
+      "setInterval(() => {}, 1e9)",
+      "/stand-in/job-credentials.cjs",
+      "daemon",
+    ],
+    { stdio: "ignore" },
+  );
+  t.after(() => child.kill("SIGKILL"));
+  return child.pid;
+}
+
+// The bash half of the ownership test, run on its own: setup-nix's step body
+// up to (and including) the ownership function, then a probe of it.
+function bashBrokerOwns(dir) {
+  const body = setupNixStepBody();
+  const end = body.indexOf("if broker_owns_token; then");
+  assert.ok(end > 0, "setup-nix no longer defines broker_owns_token");
+  const probe =
+    body.slice(body.indexOf("tokens_file="), end) +
+    "if broker_owns_token; then echo owned; else echo free; fi\n";
+  const run = spawnSync(
+    "bash",
+    ["-c", 'set -euo pipefail\ncred_dir="$1"\n' + probe, "-", dir],
+    {
+      env: { PATH: process.env.PATH, GH_TOKEN: "given-sentinel" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout.trim() === "owned";
+}
+
+test("only a live, unstopped broker owns the job's GitHub credential", async (t) => {
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, { "github.com": "broker-sentinel" });
+  const pidFile = path.join(dir, "broker.pid");
+  // Every case is asked of both the JS test and setup-nix's bash test, which
+  // must agree: they guard the same file from two different writers.
+  const owns = (expected, why) => {
+    assert.equal(
+      jc.brokerGithubToken(dir),
+      expected ? "broker-sentinel" : "",
+      "JS: " + why,
+    );
+    assert.equal(bashBrokerOwns(dir), expected, "bash: " + why);
+  };
+  owns(false, "no broker ever started here");
+  const broker = standInBroker(t);
+  fs.writeFileSync(pidFile, String(broker) + "\n");
+  owns(true, "a live broker owns the credential");
+  // A broker that has exited (pid of a child that has been reaped).
+  const exited = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
+  fs.writeFileSync(pidFile, String(exited.pid) + "\n");
+  owns(false, "an exited broker");
+  for (const bad of ["not-a-pid", "0", "-1", "+1", "1 2", ""]) {
+    fs.writeFileSync(pidFile, bad + "\n");
+    owns(false, `a malformed pid file (${JSON.stringify(bad)})`);
+  }
+  if (fs.existsSync("/proc/self")) {
+    // The broker died and its pid went to an unrelated live process: this
+    // test runner stands in for it.
+    fs.writeFileSync(pidFile, String(process.pid) + "\n");
+    owns(false, "a reused pid naming some other process");
+  }
+  if (process.getuid && process.getuid() !== 0) {
+    // pid 1 is alive but another user's: not a broker this job started.
+    fs.writeFileSync(pidFile, "1\n");
+    owns(false, "a pid owned by another user");
+  }
+  // A live broker that has been told to stop no longer owns it.
+  fs.writeFileSync(pidFile, " " + String(broker) + "\n");
+  owns(true, "surrounding whitespace in the pid file");
+  fs.writeFileSync(path.join(dir, jc.STOP), "");
+  owns(false, "a stopped broker");
+  fs.rmSync(path.join(dir, jc.STOP));
+  // A live broker whose file holds no GitHub token yet has nothing to defer to.
+  jc.writeAccessTokens(dir, { "gitlab.com": "kept-sentinel" });
+  assert.equal(jc.brokerGithubToken(dir), "");
+});
