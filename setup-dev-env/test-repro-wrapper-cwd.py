@@ -219,6 +219,22 @@ def main():
                         rows.append({'installation': installation, 'wrapper': name,
                                       'status': status, 'expected': expected, 'observed': observed,
                                       'sameDirectory': same_directory})
+            if native_tools and not args.expect_old_cwd_bug:
+                # What a pwsh step does: call the wrapper in-process with
+                # tokens PowerShell's binder and `pwsh -File` would split.
+                tokens = ['--path:src', '-d:release', '-x:y', '/opt:val', 'a:b']
+                ps_python = sys.executable.replace("'", "''")
+                command = ("& '" + str(first_directory / 'dev-exec.ps1').replace("'", "''") +
+                           "' '" + ps_python + "' '" + str(child).replace("'", "''") +
+                           "' " + ' '.join(tokens) + " 'space argument' 0; exit $LASTEXITCODE")
+                code, output, error = run([native_tools['pwsh'], '-NoProfile', '-Command',
+                                            command], nested, env)
+                observed = json.loads(output.strip().splitlines()[-1])['args'] if code == 0 else None
+                if observed != tokens + ['space argument', '0']:
+                    raise RuntimeError('colon arguments changed through the pwsh wrapper:\n'
+                                        + repr(observed) + '\n' + output + error)
+                rows.append({'installation': 'first', 'wrapper': 'pwsh-in-process',
+                              'status': 0, 'expected': tokens, 'observed': observed})
             if not args.expect_old_cwd_bug:
                 code, output, error = run([
                     sys.executable, str(HERE / 'test-repro-exec.py'),

@@ -59,6 +59,11 @@ jobs:
         # on Windows), including a stale wrapper later on PATH.
         shell: bash
         run: python setup-dev-env/test-windows-diy-dev-exec.py -v
+      - name: reprobuild dev-exec PowerShell wrappers keep colon arguments intact
+        # `dev-exec nim c --path:src -d:release` must reach the command as
+        # written: PowerShell's binder and `pwsh -File` both split such tokens.
+        shell: bash
+        run: python setup-dev-env/test-reprobuild-ps1-arguments.py -v
       - name: Install the verified released compatibility baseline
         id: sdk
         shell: bash

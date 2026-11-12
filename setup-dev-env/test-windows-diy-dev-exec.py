@@ -11,10 +11,15 @@ Windows, real cmd.exe). The checks:
   Windows, the default shell there) forwards every argument unchanged and exiting with the command's status;
 - a stale `dev-exec.ps1` in a directory later on PATH, as a reprobuild-flavor
   job used to leave in %USERPROFILE%\\.local\\bin, is not the one that runs;
+- tokens PowerShell's parameter binder would split (`-d:release` reaches a
+  script's `$args` as `-d:` and `release`) reach the command intact, through
+  the in-process call a pwsh step makes and through the `dev-exec.cmd`
+  trampoline;
 - on Windows, the `dev-exec.cmd` trampoline forwards status the same way.
 
 pwsh must be on PATH; GitHub-hosted Ubuntu and Windows images carry it.
 """
+import json
 import os
 from pathlib import Path
 import shutil
@@ -33,6 +38,16 @@ WINDOWS = os.name == 'nt'
 # PowerShell wrapper is named explicitly; PATH order is still what decides
 # which `dev-exec.ps1` runs.
 PS_NAME = 'dev-exec' if WINDOWS else 'dev-exec.ps1'
+
+
+# Arguments typed bare in a pwsh step, as a Nim build writes them. PowerShell
+# splits `-d:release`, `-x:y`, `-I:C:\\inc` etc. into two `$args` elements; the
+# `--x:y` and `/x:y` forms stay whole in-process but `pwsh -File` splits them.
+BARE_ARGUMENTS = ['--path:src', '-d:release', '-x:y', '/opt:val', '--daemon=off',
+                  'a:b', '-I:C:\\inc', '-x:-y', '-x:1.5']
+# Arguments that need quoting to be typed at all; they must survive as well.
+QUOTED_ARGUMENTS = ['', 'with space', '--', 'quoted:arg', '-quoted:value']
+ARGV_PROGRAM = 'import json, sys; print(json.dumps(sys.argv[1:]))'
 
 
 def step_body():
@@ -111,6 +126,19 @@ class WindowsDiyDevExec(unittest.TestCase):
         self.assertEqual(run.stdout.strip(), '42')
         self.assertNotIn('stale wrapper ran', run.stdout)
 
+    def test_powershell_keeps_colon_arguments_intact(self):
+        # The regression: `dev-exec nim c --path:src` reached Nim as
+        # `--path:` plus `src` (and `-d:release` as `-d:` plus `release`).
+        directory = self.install()
+        python = sys.executable.replace("'", "''")
+        quoted = ' '.join("'" + a.replace("'", "''") + "'" for a in QUOTED_ARGUMENTS)
+        run = self.pwsh_in([directory],
+                            PS_NAME + " '" + python + "' -c '" + ARGV_PROGRAM + "' " +
+                            ' '.join(BARE_ARGUMENTS) + ' ' + quoted +
+                            '; exit $LASTEXITCODE')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(json.loads(run.stdout), BARE_ARGUMENTS + QUOTED_ARGUMENTS)
+
     def test_no_command_is_refused(self):
         directory = self.install()
         run = self.pwsh_in([directory], PS_NAME + '; exit $LASTEXITCODE')
@@ -129,6 +157,21 @@ class WindowsDiyDevExec(unittest.TestCase):
                               capture_output=True, timeout=60)
         self.assertEqual(run.returncode, 5, run.stdout + run.stderr)
         self.assertEqual(run.stdout.strip(), 'ok')
+
+    @unittest.skipUnless(WINDOWS, 'cmd.exe exists only on Windows')
+    def test_cmd_trampoline_keeps_colon_arguments_intact(self):
+        directory = self.install()
+        environment = dict(os.environ,
+                            PATH=str(directory) + os.pathsep + os.environ['PATH'])
+        # Every one of these reaches `pwsh -File` unless the trampoline avoids
+        # it, and -File splits the colon forms in two and drops the colon.
+        arguments = BARE_ARGUMENTS + QUOTED_ARGUMENTS
+        run = subprocess.run(['cmd.exe', '/d', '/c', 'dev-exec.cmd',
+                              sys.executable, '-c', ARGV_PROGRAM, *arguments],
+                              cwd=self.root, env=environment, text=True,
+                              capture_output=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(json.loads(run.stdout), arguments)
 
 
 if __name__ == '__main__':
