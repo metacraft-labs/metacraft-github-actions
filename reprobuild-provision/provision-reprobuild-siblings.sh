@@ -98,6 +98,18 @@ WS="${MCL_WORKSPACE_ROOT//\\//}"
 SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
 RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 IO_MON_REF="${IO_MON_REF:-dev}"
+# `test-certificates-tools` is cloned at a REVISION, not at `dev`, unlike the
+# neighbouring siblings, because its `dev` is the wrong source. Reprobuild's
+# flake.nix pins the `test-certificates-tools-src` input (and its repro.lock the
+# sibling) at this commit, which lives on that repo's `agents` branch only:
+# `dev` is an ancestor of it and 11 commits behind, missing what the engine's
+# `test_certificates` imports were written against. The engine's
+# `config.nims` puts `../test-certificates-tools/src` on the Nim path and
+# `repro_cli_support` links it, so a `dev` checkout would compile (or not)
+# against a library the pinned engine never saw. Move this together with that
+# flake input; `test-certificates-tools-ref` overrides it for a reprobuild
+# release that pins a different revision.
+TEST_CERTIFICATES_TOOLS_REF="${TEST_CERTIFICATES_TOOLS_REF:-4b395de551d86c745d6eb8ebf7c7228df25298f5}"
 STACKABLE_HOOKS_PIN="${STACKABLE_HOOKS_PIN:-}"
 if [[ -n "$STACKABLE_HOOKS_PIN" && ! "$STACKABLE_HOOKS_PIN" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::stackable-hooks-pin must be a full lowercase source SHA" >&2
@@ -352,7 +364,8 @@ else
     "${SIBLING_OWNER}/nim-shm-gset:dev" \
     "${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
     "${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
-    "${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev"
+    "${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev" \
+    "${SIBLING_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
 
   clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
   clone "${SIBLING_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
@@ -369,6 +382,12 @@ else
   clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
   clone "${SIBLING_OWNER}/reprobuild-ct-test-runner" dev
   clone "${SIBLING_OWNER}/reprobuild-llm-agent-packages" dev
+  # The engine links the `test_certificates` package (store, note framing,
+  # two-note merge) from this sibling: without `../test-certificates-tools/src`
+  # the engine compile stops at `certificate_store.nim: cannot open file:
+  # test_certificates/roots` and the whole source build produces no `repro`.
+  # Linux/macOS get it from the `test-certificates-tools-src` flake input.
+  clone "${SIBLING_OWNER}/test-certificates-tools" "$TEST_CERTIFICATES_TOOLS_REF"
 
   # `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
   # tree carries far more submodules than the Windows env.ps1 build reads, and

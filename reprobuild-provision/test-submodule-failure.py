@@ -33,7 +33,7 @@ TOKEN = "ghs_TESTONLYnotarealtoken0000000000000000"
 SIBLINGS = (
     "runquota", "nim-stackable-hooks", "io-mon", "nim-shm-lease", "nim-shm-queue",
     "nim-shm-gset", "reprobuild-test-adapters", "reprobuild-ct-test-runner",
-    "reprobuild-llm-agent-packages",
+    "reprobuild-llm-agent-packages", "test-certificates-tools",
 )
 NIM_LIBS = ("nim-serialization", "nim-faststreams", "nim-json-serialization",
             "nim-stew", "nimcrypto")
@@ -107,7 +107,8 @@ with tempfile.TemporaryDirectory(prefix="submodule-failure-") as directory:
                 ["bash", str(SCRIPT)], cwd=root, text=True, capture_output=True,
                 env=dict(env, GH_TOKEN=TOKEN, GIT_AUTH_URL_BASE=base,
                           RUNNER_OS="Windows", RUNNER_TEMP=str(root),
-                          SIBLING_OWNER="fixture", GITHUB_WORKSPACE=str(workspace)))
+                          SIBLING_OWNER="fixture", GITHUB_WORKSPACE=str(workspace),
+                          TEST_CERTIFICATES_TOOLS_REF="dev"))
             output = result.stdout + result.stderr
             assert TOKEN not in output, f"{case}: the token was printed"
             assert result.returncode == 1, f"{case}: rc={result.returncode}\n{output}"
