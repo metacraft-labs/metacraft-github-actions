@@ -37,11 +37,13 @@ with tempfile.TemporaryDirectory(prefix="test-certificates-tools-") as directory
     root = Path(directory)
     config = root / "gitconfig"
     config.touch()
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith("GIT_CONFIG") and k != "GIT_AUTH_DIR"}
-    env.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
-               RUNNER_TEMP=str(root), SIBLING_OWNER="fixture", RUNQUOTA_REF="dev",
-               IO_MON_REF="dev", LC_ALL="C")
+    env = {
+        k: v for k, v in os.environ.items()
+        if not k.startswith("GIT_CONFIG") and k != "GIT_AUTH_DIR"}
+    env.update(
+        GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
+        RUNNER_TEMP=str(root), SIBLING_OWNER="fixture", RUNQUOTA_REF="dev",
+        IO_MON_REF="dev", LC_ALL="C")
     run("git", "config", "--file", str(config), "protocol.file.allow", "always", env=env)
     run("git", "config", "--file", str(config),
         f"url.file://{root}/remotes/.insteadOf", "https://github.com/fixture/", env=env)
@@ -69,8 +71,9 @@ with tempfile.TemporaryDirectory(prefix="test-certificates-tools-") as directory
         workspace.mkdir(parents=True)
         result = subprocess.run(
             ["bash", str(SCRIPT)], cwd=root, text=True, capture_output=True,
-            env=dict(env, RUNNER_OS=os_name, GITHUB_WORKSPACE=str(workspace),
-                     TEST_CERTIFICATES_TOOLS_REF=ref))
+            env=dict(
+                env, RUNNER_OS=os_name, GITHUB_WORKSPACE=str(workspace),
+                TEST_CERTIFICATES_TOOLS_REF=ref))
         return workspace, result
 
     # Windows: cloned, at the pinned revision rather than the dev tip.
