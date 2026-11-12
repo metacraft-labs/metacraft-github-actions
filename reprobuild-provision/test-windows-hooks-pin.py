@@ -15,6 +15,7 @@ REPOS = (
     "runquota", "nim-stackable-hooks", "io-mon", "codetracer", "nim-shm-lease",
     "nim-shm-queue", "nim-shm-gset", "reprobuild-test-adapters",
     "reprobuild-ct-test-runner", "reprobuild-llm-agent-packages",
+    "test-certificates-tools",
 )
 
 
@@ -30,7 +31,8 @@ with tempfile.TemporaryDirectory(prefix="windows-hook-pin-") as directory:
             if not key.startswith("GIT_CONFIG") and key != "GIT_AUTH_DIR"}
     env.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
                 RUNNER_OS="Windows", RUNNER_TEMP=str(root), SIBLING_OWNER="fixture",
-                RUNQUOTA_REF="dev", IO_MON_REF="dev", LC_ALL="C")
+                RUNQUOTA_REF="dev", IO_MON_REF="dev", LC_ALL="C",
+                TEST_CERTIFICATES_TOOLS_REF="dev")
     run("git", "config", "--file", str(config), "protocol.file.allow", "always", env=env)
     run("git", "config", "--file", str(config),
         f"url.file://{root}/remotes/.insteadOf", "https://github.com/fixture/", env=env)

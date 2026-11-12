@@ -233,6 +233,9 @@ jobs:
       - name: status-im/nim-bearssl clone carries the declared credential scope
         run: python3 reprobuild-provision/test-bearssl-auth.py
 
+      - name: Windows path provisions test-certificates-tools for the engine build
+        run: python3 reprobuild-provision/test-test-certificates-tools.py
+
       - name: codetracer submodule failure reports git's real error
         run: python3 reprobuild-provision/test-submodule-failure.py
 
