@@ -92,7 +92,11 @@ inputs:
     required: false
     default: ""
   sibling-owner:
-    description: GitHub owner used by the canonical source dependency provisioner.
+    description: >
+      GitHub owner(s) forwarded to the source dependency provisioner
+      (`reprobuild-provision`'s input of the same name). A whitespace-separated
+      list is accepted: the FIRST word is the owner the siblings are cloned
+      from, and the provisioner's credential is scoped to every listed owner.
     required: false
     default: "metacraft-labs"
   runquota-ref:

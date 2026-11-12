@@ -89,6 +89,11 @@ inputs:
       `clone-siblings` gives under its input of the same name: when the two can
       disagree, a mismatch surfaces as a bare 404 on a private repo and reads
       as a typo rather than as an auth failure.
+
+      Accepts a whitespace-separated list, as `setup-dev-env` passes its
+      `token-owner` here unchanged. The FIRST word is the owner every sibling
+      is cloned from; the credential is scoped to every listed owner. An
+      empty or whitespace-only value means `metacraft-labs`.
     required: false
     default: "metacraft-labs"
 

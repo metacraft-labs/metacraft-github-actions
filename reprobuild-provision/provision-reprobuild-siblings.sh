@@ -95,7 +95,26 @@ GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" 
 # does: this script runs under bash on the Windows runners too, where
 # $GITHUB_WORKSPACE arrives backslashed.
 WS="${MCL_WORKSPACE_ROOT//\\//}"
-SIBLING_OWNER="${SIBLING_OWNER:-metacraft-labs}"
+# `SIBLING_OWNER` may be a whitespace-separated list: `setup-dev-env` passes
+# its `token-owner` here, and that input accepts several owners (for example
+# `metacraft-labs aiken-lang`). The list is kept whole for the credential scope
+# (`TOKEN_OWNERS` below); the siblings are cloned from its FIRST word, exactly as
+# `clone-siblings.sh` takes its default owner. Using the list verbatim built
+# `metacraft-labs aiken-lang/runquota` as a repository name, and every source
+# build of a multi-owner caller failed its preflight.
+# First word only; see the `sibling-owner` input description.
+CLONE_OWNER=""
+for _w in ${SIBLING_OWNER:-}; do
+  CLONE_OWNER="${_w}"
+  break
+done
+# Unset, empty and whitespace-only all mean the documented default. Without
+# this, a whitespace-only value would yield an EMPTY owner and clone
+# `/runquota`.
+if [ -z "${CLONE_OWNER}" ]; then
+  CLONE_OWNER="metacraft-labs"
+  SIBLING_OWNER="metacraft-labs"
+fi
 RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
 IO_MON_REF="${IO_MON_REF:-dev}"
 # `test-certificates-tools` is cloned at a REVISION, not at `dev`, unlike the
@@ -170,9 +189,10 @@ scrub_token() {
 #
 # The OWNER prefix rather than the one repository, because `nim-bearssl`'s
 # `bearssl/csources` submodule is `status-im/BearSSL`, a second fetch on the
-# same budget. This does NOT widen any default: `TOKEN_OWNERS` is still the one
-# sibling owner, and `setup-nix/configure-git-auth-test.sh` still asserts that
-# `status-im` receives no credential under the default scope. The declaration
+# same budget. This does NOT widen any default: `TOKEN_OWNERS` is still the
+# sibling owner list (by default the one owner `metacraft-labs`), and
+# `setup-nix/configure-git-auth-test.sh` still asserts that `status-im`
+# receives no credential under the default scope. The declaration
 # is pinned on the wire by `test-bearssl-auth.py`.
 #
 # Built on GIT_AUTH_URL_BASE for the same reason `authenticated-clone.sh` is: it
@@ -180,6 +200,9 @@ scrub_token() {
 # authenticating git server. `scoped_git_auth_build` refuses any base that is
 # not github.com or loopback.
 URL_BASE="${GIT_AUTH_URL_BASE:-https://github.com/}"
+# The WHOLE `SIBLING_OWNER` list, not just the clone owner: this is the same
+# value `setup-nix` scopes its credential to, and `scoped_git_auth_build`
+# installs one owner-scoped header per whitespace-separated word.
 export TOKEN_OWNERS="${SIBLING_OWNER}"
 STATUS_IM_SCOPE="${URL_BASE}status-im/"
 export EXTRA_TOKEN_URL_PREFIXES="${STATUS_IM_SCOPE}"
@@ -207,20 +230,28 @@ fi
 # combined output is always printed (token-scrubbed), the failing submodule URL
 # is named when git names one, and the owner-scope explanation is added ONLY
 # when the evidence supports it -- an authentication/not-found error AND a
-# failing URL that is neither under the sibling owner nor the declared extra
+# failing URL that is neither under a `TOKEN_OWNERS` owner nor the declared extra
 # prefix. No retry: a failure should be seen, not absorbed.
 report_submodule_failure() {
-  local rc="$1" log="$2" tail_text failing_url="" explanation
+  local rc="$1" log="$2" tail_text failing_url="" explanation _o covered
   tail_text="$(tail -n 40 "${log}")"
   # `fatal: clone of '<url>' into submodule path '<path>' failed`
   failing_url="$(sed -n "s/.*clone of '\([^']*\)' into submodule path.*/\1/p" "${log}" | head -n 1)"
   explanation="git reported the error above; it is not an authentication or owner-scope problem as far as the output shows."
   if [ -n "${failing_url}" ] \
     && grep -qiE 'Authentication failed|could not read Username|terminal prompts disabled|returned error: (403|404)|Repository not found|not found' "${log}"; then
+    covered=0
     case "${failing_url}" in
-      *"/${SIBLING_OWNER}/"* | *":${SIBLING_OWNER}/"* | "${STATUS_IM_SCOPE}"*) ;;
-      *) explanation="The scoped credential covers '${SIBLING_OWNER}' (plus the declared status-im prefix) only; a submodule hosted under another owner cannot be authenticated by it." ;;
+      "${STATUS_IM_SCOPE}"*) covered=1 ;;
     esac
+    for _o in ${TOKEN_OWNERS}; do
+      case "${failing_url}" in
+        *"/${_o}/"* | *":${_o}/"*) covered=1 ;;
+      esac
+    done
+    if [ "${covered}" = 0 ]; then
+      explanation="The scoped credential covers '${TOKEN_OWNERS}' (plus the declared status-im prefix) only; a submodule hosted under another owner cannot be authenticated by it."
+    fi
   fi
   echo "::error::reprobuild-provision: updating codetracer's source-only Nim submodules failed (git exit ${rc}${failing_url:+, submodule URL $(scrub_token "${failing_url}")}). ${explanation}"
   echo "reprobuild-provision: last lines of git's output (at most 40):"
@@ -342,11 +373,11 @@ if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
   # overridden to the local paths.
   # -----------------------------------------------------------------------
   check_pins \
-    "${SIBLING_OWNER}/codetracer-native-recorder:stable" \
-    "${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}"
+    "${CLONE_OWNER}/codetracer-native-recorder:stable" \
+    "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}"
 
-  clone "${SIBLING_OWNER}/codetracer-native-recorder" stable
-  clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF"
+  clone "${CLONE_OWNER}/codetracer-native-recorder" stable
+  clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF"
 else
   # -----------------------------------------------------------------------
   # Windows: reprobuild's env.ps1 reads sibling repos for source-only Nim deps.
@@ -355,39 +386,39 @@ else
   # the archived repo-workspaces framework.
   # -----------------------------------------------------------------------
   check_pins \
-    "${SIBLING_OWNER}/runquota:${RUNQUOTA_REF}" \
-    "${SIBLING_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
-    "${SIBLING_OWNER}/io-mon:${IO_MON_REF}" \
-    "${SIBLING_OWNER}/codetracer:dev" \
-    "${SIBLING_OWNER}/nim-shm-lease:dev" \
-    "${SIBLING_OWNER}/nim-shm-queue:dev" \
-    "${SIBLING_OWNER}/nim-shm-gset:dev" \
-    "${SIBLING_OWNER}/reprobuild-test-adapters:dev" \
-    "${SIBLING_OWNER}/reprobuild-ct-test-runner:dev" \
-    "${SIBLING_OWNER}/reprobuild-llm-agent-packages:dev" \
-    "${SIBLING_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
+    "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}" \
+    "${CLONE_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
+    "${CLONE_OWNER}/io-mon:${IO_MON_REF}" \
+    "${CLONE_OWNER}/codetracer:dev" \
+    "${CLONE_OWNER}/nim-shm-lease:dev" \
+    "${CLONE_OWNER}/nim-shm-queue:dev" \
+    "${CLONE_OWNER}/nim-shm-gset:dev" \
+    "${CLONE_OWNER}/reprobuild-test-adapters:dev" \
+    "${CLONE_OWNER}/reprobuild-ct-test-runner:dev" \
+    "${CLONE_OWNER}/reprobuild-llm-agent-packages:dev" \
+    "${CLONE_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
 
-  clone "${SIBLING_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
-  clone "${SIBLING_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
+  clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
+  clone "${CLONE_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
   hooks_sha=$(git -C "${WS}/nim-stackable-hooks" rev-parse HEAD) || exit 1
   if [[ -n "$STACKABLE_HOOKS_PIN" && "$hooks_sha" != "$STACKABLE_HOOKS_PIN" ]]; then
     echo "::error::Windows hook bootstrap checkout does not match stackable-hooks-pin" >&2
     exit 1
   fi
   echo "reprobuild-provision: Windows hook source ${hooks_sha}"
-  clone "${SIBLING_OWNER}/io-mon" "$IO_MON_REF" --submodules
-  clone "${SIBLING_OWNER}/nim-shm-lease" dev
-  clone "${SIBLING_OWNER}/nim-shm-queue" dev
-  clone "${SIBLING_OWNER}/nim-shm-gset" dev
-  clone "${SIBLING_OWNER}/reprobuild-test-adapters" dev
-  clone "${SIBLING_OWNER}/reprobuild-ct-test-runner" dev
-  clone "${SIBLING_OWNER}/reprobuild-llm-agent-packages" dev
+  clone "${CLONE_OWNER}/io-mon" "$IO_MON_REF" --submodules
+  clone "${CLONE_OWNER}/nim-shm-lease" dev
+  clone "${CLONE_OWNER}/nim-shm-queue" dev
+  clone "${CLONE_OWNER}/nim-shm-gset" dev
+  clone "${CLONE_OWNER}/reprobuild-test-adapters" dev
+  clone "${CLONE_OWNER}/reprobuild-ct-test-runner" dev
+  clone "${CLONE_OWNER}/reprobuild-llm-agent-packages" dev
   # The engine links the `test_certificates` package (store, note framing,
   # two-note merge) from this sibling: without `../test-certificates-tools/src`
   # the engine compile stops at `certificate_store.nim: cannot open file:
   # test_certificates/roots` and the whole source build produces no `repro`.
   # Linux/macOS get it from the `test-certificates-tools-src` flake input.
-  clone "${SIBLING_OWNER}/test-certificates-tools" "$TEST_CERTIFICATES_TOOLS_REF"
+  clone "${CLONE_OWNER}/test-certificates-tools" "$TEST_CERTIFICATES_TOOLS_REF"
 
   # `codetracer` gets a SELECTIVE submodule update, not `--submodules`. Its
   # tree carries far more submodules than the Windows env.ps1 build reads, and
@@ -400,7 +431,7 @@ else
   # process's environment -- which is inherited at every submodule depth, and
   # is why the private submodule resolves without anything being written into
   # any `.git/config`.
-  clone "${SIBLING_OWNER}/codetracer" dev
+  clone "${CLONE_OWNER}/codetracer" dev
   submodule_log="$(mktemp "${NEUTRAL_DIR}/codetracer-submodules.XXXXXX")" || exit 1
   submodule_rc=0
   git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \
