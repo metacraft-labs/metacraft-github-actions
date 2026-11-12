@@ -185,7 +185,13 @@ def setup_control(token, *, github_credentials=True, flavor="reprobuild", nix_mi
             if caller == "setup-dev-env":
                 assert "if: ${{ inputs.env-flavor == 'reprobuild' }}" in step
             assert "uses: actions/github-script@v7" in step
-            assert "GH_TOKEN: ${{ inputs.gh-token }}" in step
+            # setup-dev-env's step runs after its repro CLI install and takes the
+            # broker's current token when one runs (the "Select the job's
+            # current GitHub token" step); refreshNix also defers to it.
+            token_binding = "inputs.gh-token"
+            if caller == "setup-dev-env":
+                token_binding = "steps.job-token.outputs.token || inputs.gh-token"
+            assert "GH_TOKEN: ${{ " + token_binding + " }}" in step
             assert "TOKEN_OWNERS: ${{ inputs.token-owner }}" in step
             binding = "roots" if caller == "setup-dev-env" else "nix_check"
             assert "GHA_NIX_AUTH_MODULE: ${{ steps." + binding + ".outputs.nix-auth-module }}" in step

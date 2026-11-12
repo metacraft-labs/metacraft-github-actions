@@ -832,6 +832,32 @@ runs:
     # and for what happens to a declared `siblings:` list on this path.
     # ------------------------------------------------------------------
 
+    - name: Select the job's current GitHub token
+      # The steps below run after the repro CLI install, which can build
+      # reprobuild from source for most of an hour. gh-token is the token the
+      # workflow minted at job start and expires an hour after that, so a
+      # sibling fetch handed it after a long build failed with "could not
+      # read Username" (codetracer-evm-recorder job 131224155136, 55 minutes
+      # in). While the job credential broker runs, it owns the job's GitHub
+      # credential and keeps it fresh; take its current token then, and
+      # gh-token otherwise (no broker, a stopped one, or Windows).
+      id: job-token
+      if: ${{ inputs.gh-token != '' && inputs.app-id != '' && inputs.app-private-key != '' && runner.os != 'Windows' }}
+      uses: actions/github-script@v7
+      env:
+        GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
+      with:
+        script: |
+          const path = require('node:path');
+          const jc = require(path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs'));
+          const dir = process.env.MCL_JOB_CREDENTIALS_DIR || '';
+          const token = dir ? jc.brokerGithubToken(dir) : '';
+          if (token) {
+            core.setSecret(token);
+            core.setOutput('token', token);
+            core.info("setup-dev-env: the job credential broker owns this job's GitHub token; using it rather than gh-token");
+          }
+
     - name: Provision cross-repo siblings from the committed repro.lock
       id: repro-siblings
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
@@ -842,7 +868,7 @@ runs:
         SIBLING_STRATEGY: ${{ inputs.sibling-strategy }}
         SIBLINGS_INPUT: ${{ inputs.siblings }}
         LOCK_STORE: ${{ inputs.lock-store }}
-        GH_TOKEN: ${{ inputs.gh-token }}
+        GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         SCOPED_GIT_AUTH_MASK: "1"
@@ -865,7 +891,7 @@ runs:
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
-        gh-token: ${{ inputs.gh-token }}
+        gh-token: ${{ steps.job-token.outputs.token || inputs.gh-token }}
         siblings: ${{ steps.repro-siblings.outputs.late-siblings }}
         sibling-owner: ${{ inputs.token-owner }}
         token-owner: ${{ inputs.token-owner }}
@@ -923,7 +949,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.gh-token }}
+        GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
       run: bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"
 
@@ -931,7 +957,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       uses: actions/github-script@v7
       env:
-        GH_TOKEN: ${{ inputs.gh-token }}
+        GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
         GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
       with:

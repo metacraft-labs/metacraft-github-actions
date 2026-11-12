@@ -222,7 +222,7 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
     def test_composite_routes_existing_token_to_the_real_script(self):
         action = (ROOT / 'setup-dev-env/action.yml').read_text()
         block = action.split('id: repro-siblings', 1)[1].split('\n    - name:', 1)[0]
-        for binding in ('GH_TOKEN: ${{ inputs.gh-token }}',
+        for binding in ('GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}',
                         'TOKEN_OWNERS: ${{ inputs.token-owner }}',
                         'GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth',
                         'SCOPED_GIT_AUTH_MASK: "1"'):
@@ -236,7 +236,7 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         block = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
         self.assertIn("inputs.env-flavor == 'reprobuild'", block)
         self.assertIn("inputs.gh-token != ''", block)
-        self.assertIn('GH_TOKEN: ${{ inputs.gh-token }}', block)
+        self.assertIn('GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}', block)
         self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', block)
         self.assertIn('bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"', block)
         self.assertLess(action.index(marker), action.index('    - name: Verify Reprobuild development-environment execution'))
