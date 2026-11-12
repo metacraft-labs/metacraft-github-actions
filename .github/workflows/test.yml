@@ -224,6 +224,9 @@ jobs:
       - name: RunQuota bootstrap revision with real Git repositories
         run: python3 reprobuild-provision/test-runquota-ref.py
 
+      - name: Multi-owner sibling-owner clones from its first owner
+        run: python3 reprobuild-provision/test-multi-owner.py
+
       # Real local HTTP and archive operations test SDK selection, not the SDK
       # runtime itself; release smoke tests own the native bundle qualification.
       - name: Requested release selection and installer contract

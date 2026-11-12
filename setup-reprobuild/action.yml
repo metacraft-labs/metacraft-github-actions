@@ -92,7 +92,11 @@ inputs:
     required: false
     default: ""
   sibling-owner:
-    description: GitHub owner used by the canonical source dependency provisioner.
+    description: >
+      GitHub owner(s) forwarded to the source dependency provisioner
+      (`reprobuild-provision`'s input of the same name). A whitespace-separated
+      list is accepted: the FIRST word is the owner the siblings are cloned
+      from, and the provisioner's credential is scoped to every listed owner.
     required: false
     default: "metacraft-labs"
   runquota-ref:
@@ -307,7 +311,7 @@ runs:
     # existing provisioner and its defaults; this only changes when it runs.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@f6cd7b898178a58cc7dd6b29146aa1c0ee9ddad8
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@d0ccf045e517efbc6eee6b7bfb8ee1a4c6df899b
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
