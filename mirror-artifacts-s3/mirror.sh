@@ -77,6 +77,23 @@ else
   exit 0
 fi
 
+# Reachability: the store is routable only over the NetBird VPN, so a
+# GitHub-hosted runner cannot open a connection to it. Without this probe the
+# client attempted every file anyway, each attempt ending in
+# AWS_IO_SOCKET_TIMEOUT after its retries: one io-mon run logged ~3000 failed
+# and 0 completed uploads per job, and the step held each job until the
+# caller's timeout cancelled it. Any HTTP answer (an unauthenticated S3
+# endpoint answers 403) proves the endpoint is reachable, and curl exits 0 for
+# it without `--fail`; only a failure to connect or to get an answer at all
+# skips. An upload error on a reachable store is still reported below as one.
+# Without curl, fall through to the upload.
+if command -v curl >/dev/null 2>&1; then
+  if ! curl -sS -o /dev/null --connect-timeout 10 --max-time 30 "$MCL_S3_ENDPOINT" </dev/null; then
+    warn "endpoint $MCL_S3_ENDPOINT is unreachable from this runner (not on the NetBird VPN?); skipping mirror (GitHub artifact retained)"
+    exit 0
+  fi
+fi
+
 prefix="${MCL_S3_PREFIX:-}"
 if [[ -z "$prefix" ]]; then
   prefix="$(basename "$MCL_S3_PATH")/${GITHUB_RUN_ID:-manual}"

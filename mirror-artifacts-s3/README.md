@@ -49,7 +49,9 @@ for the immediate-run convenience copy); this action is the durable copy. See
 ## Safety
 
 The action never exits non-zero, and skips (with a `::warning`) when: the
-credential is absent (un-onboarded repo), the path is missing, or no S3 client
+credential is absent (un-onboarded repo), the path is missing, the endpoint
+does not answer an HTTP request within 30 s (a runner that is not on the
+NetBird VPN, such as a GitHub-hosted one), or no S3 client
 (`aws` on `PATH`, or `nix` to borrow `awscli2`) is available on the runner —
 e.g. a Windows runner without a usable shell/toolchain. Always pair the `uses:`
 step with `if: always()` + `continue-on-error: true` so it runs on failed jobs
