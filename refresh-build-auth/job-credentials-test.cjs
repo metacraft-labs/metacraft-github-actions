@@ -1032,3 +1032,50 @@ test("only a live, unstopped broker owns the job's GitHub credential", async (t)
   jc.writeAccessTokens(dir, { "gitlab.com": "kept-sentinel" });
   assert.equal(jc.brokerGithubToken(dir), "");
 });
+
+// A runner's PATH need not carry sed, tr or cat: macOS mcl-bench-001 had no
+// sed, and setup-nix failed with "sed: command not found" once a broker
+// owned the credential. The ownership test and the token read must use bash
+// builtins only, so run them with a PATH that holds bash and nothing else.
+test("setup-nix reads the broker's token with bash builtins only", (t) => {
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, {
+    "gitlab.com": "kept-sentinel",
+    "github.com": "broker-sentinel",
+  });
+  fs.writeFileSync(
+    path.join(dir, "broker.pid"),
+    String(standInBroker(t)) + "\n",
+  );
+  const bashOnly = tempDir(t);
+  const bash = spawnSync("bash", ["-c", "command -v bash"], {
+    encoding: "utf8",
+  }).stdout.trim();
+  fs.symlinkSync(bash, path.join(bashOnly, "bash"));
+  const body = setupNixStepBody();
+  const start = body.indexOf("tokens_file=");
+  const end = body.indexOf("\n\n", body.indexOf("if broker_owns_token; then"));
+  assert.ok(start > 0 && end > start, "setup-nix's broker block moved");
+  const run = spawnSync(
+    path.join(bashOnly, "bash"),
+    [
+      "-c",
+      // PATH is set inside the script as well: a host's shell startup can
+      // put its system profile back on PATH (NixOS does), which would let a
+      // sed or cat slip through unnoticed.
+      'set -euo pipefail\nPATH="$2"\ncred_dir="$1"\n' +
+        body.slice(start, end) +
+        '\necho "token=$GH_TOKEN"\n',
+      "-",
+      dir,
+      bashOnly,
+    ],
+    {
+      env: { PATH: bashOnly, GH_TOKEN: "given-sentinel" },
+      encoding: "utf8",
+    },
+  );
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /^token=broker-sentinel$/m);
+  assert.equal(run.stderr, "");
+});
