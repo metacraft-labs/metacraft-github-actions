@@ -27,14 +27,18 @@
 #                                        -> exit 0, client tree gone
 #   9. malformed timeout-minutes         -> warning naming it; upload still runs
 #  10. client exits but leaves a child   -> exit 0, the straggler is ended
+#  11. endpoint unreachable (real curl)  -> exit 0, warning, client never run
+#  12. endpoint answers (stub curl)      -> probe bounded, upload runs, its
+#                                           failure still reported as one
 #
 # NEGATIVE CONTROLS
 # -----------------
-# Cases 2, 5, 6 and 10 are each paired with a MUTANT of the shipped script with one
+# Cases 2, 5, 6, 10 and 11 are each paired with a MUTANT of the shipped script with one
 # guard removed, and the suite requires the case to FAIL against it: no CLI
 # timeouts (2), no separate process group (5: the grandchild survives), no
 # deadline check (5: the script outlives the outer bound), no SIGKILL (6), no
-# sweep of the group after the client exits (10: the straggler survives).
+# sweep of the group after the client exits (10: the straggler survives), no
+# reachability probe (11: the client runs against a dead endpoint).
 # Mutants are made by exact-line replacement, and `mutate` aborts if the line
 # is not there.
 #
@@ -44,7 +48,8 @@
 # every holder of the pipe, so a surviving client would hang the suite instead
 # of failing a case.
 #
-# No network. Stock runner: bash, coreutils (incl. `timeout`), procps `ps`.
+# No network beyond a connection refused on 127.0.0.1. Stock runner: bash,
+# coreutils (incl. `timeout`), procps `ps`, curl.
 #
 # Run:  bash mirror-artifacts-s3/mirror-step-test.sh
 set -uo pipefail
@@ -279,6 +284,46 @@ else fail "10 client exits leaving a child"; explain; fi
 if case10 "$(mutate 'kill -s KILL -- "-$client_pid" 2>/dev/null' ':')"; then
   fail "10 control: passes without the post-exit group sweep"
 else pass "10 control: fails without the post-exit group sweep (survivors: $(survivors))"; fi
+
+# --- 11. endpoint unreachable -----------------------------------------------
+# The real curl against a closed local port (the suite's endpoint,
+# 127.0.0.1:9): no connection, so the step skips without running the client.
+REAL_CURL="$(command -v curl || true)"
+if [ -z "${REAL_CURL}" ]; then
+  fail "11 endpoint unreachable: curl is not installed on this host"
+else
+  make_aws "${WORK}/aws-ok-curl" ok
+  ln -s "${REAL_CURL}" "${WORK}/aws-ok-curl/curl"
+  case11() {
+    run "$1" c11 "${WORK}/aws-ok-curl" "${WORK}/payload"
+    [ "${RC}" -eq 0 ] && [[ "${OUT}" == *"::warning title=S3 artifact mirror::endpoint http://127.0.0.1:9 is unreachable"* ]] \
+      && [[ "${OUT}" != *"Mirrored"* ]] && [ ! -s "${LOG}" ]
+  }
+  if case11 "${SCRIPT}"; then pass "11 endpoint unreachable: warning, exit 0, client never run"
+  else fail "11 endpoint unreachable"; explain; cat "${LOG}"; fi
+  if case11 "$(mutate '  if ! curl -sS -o /dev/null --connect-timeout 10 --max-time 30 "$MCL_S3_ENDPOINT" </dev/null; then' '  if false; then')"; then
+    fail "11 control: passes without the reachability probe"
+  else pass "11 control: fails without the reachability probe"; fi
+fi
+
+# --- 12. endpoint answers ---------------------------------------------------
+# A stub curl that exits 0, as curl does for ANY HTTP answer (403 included)
+# without --fail. The upload must then run, and the probe must carry bounds.
+mkdir -p "${WORK}/aws-fail-curl-ok"
+cp "${WORK}/aws-fail/aws" "${WORK}/aws-fail-curl-ok/aws"
+cat >"${WORK}/aws-fail-curl-ok/curl" <<EOF
+#!${BASH_BIN}
+printf 'curl %s\n' "\$*" >>"\${STUB_LOG}"
+exit 0
+EOF
+chmod +x "${WORK}/aws-fail-curl-ok/curl"
+run "${SCRIPT}" c12 "${WORK}/aws-fail-curl-ok" "${WORK}/payload"
+if [ "${RC}" -eq 0 ] && grep -q -- '^curl .*--connect-timeout 10 --max-time 30 http://127.0.0.1:9$' "${LOG}" \
+  && grep -q -- '--endpoint-url http://127.0.0.1:9 ' "${LOG}" \
+  && [[ "${OUT}" == *"::warning title=S3 artifact mirror::upload failed with exit 1"* ]] \
+  && [[ "${OUT}" != *"unreachable"* ]]; then
+  pass "12 endpoint answers: probe bounded, upload ran, its failure reported as one"
+else fail "12 endpoint answers"; explain; cat "${LOG}"; fi
 
 echo
 if [ "${fails}" -ne 0 ]; then echo "${fails} case(s) failed"; exit 1; fi
