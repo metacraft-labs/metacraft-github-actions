@@ -1079,3 +1079,117 @@ test("setup-nix reads the broker's token with bash builtins only", (t) => {
   assert.match(run.stdout, /^token=broker-sentinel$/m);
   assert.equal(run.stderr, "");
 });
+
+// setup-dev-env's steps after the repro CLI install can start most of an
+// hour into the job, when the workflow's gh-token has expired (a sibling
+// fetch then failed with "could not read Username", 55 minutes in). Its
+// "Select the job's current GitHub token" step hands them the broker's
+// token while the broker runs.
+function setupDevEnvAction() {
+  return execFileSync(
+    process.execPath,
+    [
+      path.join(repo, ".github/read-workflow.cjs"),
+      path.join(repo, "setup-dev-env/action.yml"),
+    ],
+    { encoding: "utf8" },
+  );
+}
+
+function setupDevEnvSteps() {
+  // Split on the step headers; each chunk is one step's text.
+  return setupDevEnvAction()
+    .split(/\n(?= {4}- name: )/)
+    .slice(1)
+    .map((text) => ({ name: /^ {4}- name: (.*)$/m.exec(text)[1], text }));
+}
+
+function selectTokenScript() {
+  const step = setupDevEnvSteps().find(
+    (s) => s.name === "Select the job's current GitHub token",
+  );
+  assert.ok(step, "setup-dev-env no longer selects the job's current token");
+  const lines = step.text.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "script: |") + 1;
+  const indent = lines[start].length - lines[start].trimStart().length;
+  const body = [];
+  for (const line of lines.slice(start)) {
+    if (line.trim() && line.length - line.trimStart().length < indent) break;
+    body.push(
+      line.slice(Math.min(indent, line.length - line.trimStart().length)),
+    );
+  }
+  return body.join("\n");
+}
+
+// Runs the step's real script as github-script would: an async function with
+// `core` and `require` in scope. `core` records what the step publishes.
+async function runSelectToken(dir) {
+  const published = { outputs: {}, secrets: [] };
+  const core = {
+    setOutput: (name, value) => (published.outputs[name] = value),
+    setSecret: (value) => published.secrets.push(value),
+    info: () => {},
+  };
+  const saved = { ...process.env };
+  process.env.GHA_NIX_AUTH_MODULE = path.join(
+    repo,
+    "refresh-build-auth/nix-auth.cjs",
+  );
+  if (dir) process.env.MCL_JOB_CREDENTIALS_DIR = dir;
+  else delete process.env.MCL_JOB_CREDENTIALS_DIR;
+  try {
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+    await new AsyncFunction("core", "require", selectTokenScript())(
+      core,
+      require,
+    );
+  } finally {
+    process.env = saved;
+  }
+  return published;
+}
+
+test("setup-dev-env hands post-install steps the broker's token while it runs", async (t) => {
+  const dir = privateDir(tempDir(t));
+  jc.writeAccessTokens(dir, { "github.com": "broker-sentinel" });
+  fs.writeFileSync(
+    path.join(dir, "broker.pid"),
+    String(standInBroker(t)) + "\n",
+  );
+  const owned = await runSelectToken(dir);
+  assert.equal(owned.outputs.token, "broker-sentinel");
+  assert.deepEqual(owned.secrets, ["broker-sentinel"]);
+  // A stopped broker owns nothing: no output, so gh-token is used.
+  fs.writeFileSync(path.join(dir, jc.STOP), "");
+  assert.deepEqual((await runSelectToken(dir)).outputs, {});
+  // No credential directory at all (no broker was started).
+  assert.deepEqual((await runSelectToken("")).outputs, {});
+});
+
+test("no setup-dev-env step after the repro CLI install uses gh-token as its credential", () => {
+  const steps = setupDevEnvSteps();
+  const install = steps.findIndex(
+    (s) => s.name === "Install the repro CLI (reprobuild)",
+  );
+  const select = steps.findIndex(
+    (s) => s.name === "Select the job's current GitHub token",
+  );
+  assert.ok(
+    install >= 0 && select > install,
+    "the token is selected after the CLI install",
+  );
+  for (const step of steps.slice(select + 1)) {
+    for (const line of step.text.split("\n")) {
+      // `if:` conditions may test whether a token was given at all.
+      if (/^\s*if:/.test(line)) continue;
+      if (
+        /(GH_TOKEN|gh-token):\s*\$\{\{\s*inputs\.gh-token\s*\}\}/.test(line)
+      ) {
+        assert.fail(
+          `${step.name}: passes the job-start gh-token: ${line.trim()}`,
+        );
+      }
+    }
+  }
+});

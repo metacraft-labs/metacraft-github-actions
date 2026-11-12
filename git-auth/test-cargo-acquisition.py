@@ -84,7 +84,7 @@ class CargoGitAcquisition(PrivateGlobalConfig):
         if marker in action:
             step = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
             self.assertIn("if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}", step)
-            self.assertIn('GH_TOKEN: ${{ inputs.gh-token }}', step)
+            self.assertIn('GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}', step)
             self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', step)
         else:
             # Exact pre-fix source performs no such setup. Its positive arm
