@@ -162,10 +162,14 @@ inputs:
       broker rewrites the job's private credential files in place, so steps
       and daemons started before a refresh pick the new token up on their
       next `nix` invocation. Tokens it mints are restricted to `contents:
-      read`. It covers Nix (its `access-tokens` and netrc); the Git CLI
-      credential is still `gh-token`, refreshed between phases by
-      `refresh-build-auth`. While the broker runs it owns the job's Nix
-      GitHub credential: a later setup-nix, Nix-auth selection or
+      read`. It covers Nix (its `access-tokens` and netrc). This action's own
+      sibling clones and repro CLI install are handed the broker's current
+      token rather than `gh-token`, so an already old `gh-token` cannot fail
+      them. The Git CLI credential exported to later steps is frozen when it is
+      installed, and is refreshed between phases by `refresh-build-auth`
+      (README, "Which token each step is handed"). While the broker runs it
+      owns the job's Nix GitHub credential: a later setup-nix, Nix-auth
+      selection or
       refresh-build-auth keeps the broker's token instead of installing the
       older one it was handed.
     required: false
@@ -494,6 +498,26 @@ runs:
     # write their own checkout/resolve/clone steps.
     # ------------------------------------------------------------------
 
+    - name: Select the job's current GitHub token for the sibling clones
+      # The broker started above minted its first token moments ago, from the
+      # App key and independently of gh-token. gh-token is as old as the job:
+      # a runner that sat in a queue, or a host that stalled before this
+      # action, hands it over already near or past its hour. The clones below
+      # are reads, which the broker's `contents: read` token covers, so take
+      # the broker's token while it runs, and gh-token otherwise (no broker, a
+      # stopped one, or Windows). `clone-siblings` scopes the credential to
+      # its own process (scoped-git-auth.sh) and never exports it to the job,
+      # so this changes no later step's Git credential.
+      id: clone-token
+      if: ${{ inputs.gh-token != '' && inputs.app-id != '' && inputs.app-private-key != '' && runner.os != 'Windows' }}
+      uses: actions/github-script@v7
+      env:
+        GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
+      with:
+        script: |
+          const path = require('node:path');
+          require(path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs')).publishJobGithubToken(core);
+
     - name: Clone cross-repo siblings from the workspace lock
       # Skipped only when the step above chose the repro path, which resolves
       # the same siblings from the repo's own committed lock instead. Every
@@ -504,7 +528,7 @@ runs:
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
-        gh-token: ${{ inputs.gh-token }}
+        gh-token: ${{ steps.clone-token.outputs.token || inputs.gh-token }}
         siblings: ${{ inputs.siblings }}
         # ONE value reaching both inputs. `sibling-owner` selects the remote
         # bare sibling names are cloned from and `token-owner` is what
@@ -853,6 +877,34 @@ runs:
     # every repo this one reaches into, so the next `uses:` that points at a
     # large repo fails HERE instead of in a consumer's `Set up job`.
 
+    - name: Select the job's current GitHub token for the repro CLI install
+      # Selected again here, not reused from the sibling clones: setup-nix and
+      # the toolchain steps above can hold a job for an hour on a loaded host,
+      # and by now the broker may have rotated. The install clones reprobuild
+      # and its source dependencies and queries the release API, all reads.
+      # gh-token was handed to these clones even with a broker running, and
+      # failed with "could not read Username" once it had expired
+      # (codetracer-snapshot-codecs job 131544370486: minted 22:39, a Nix GC
+      # stall, the reprobuild clone at 23:59).
+      #
+      # Only for env-flavor reprobuild. A source build runs setup-nix again,
+      # and setup-nix installs the token it is handed as the job's Git CLI
+      # credential. The reprobuild flavor installs the broker's token there
+      # anyway ("Configure Git authentication (reprobuild)" below). The nix
+      # flavor keeps gh-token, whose permissions may be wider than `contents:
+      # read`; whether such a job should take the broker's token for Git is
+      # undecided (metacraft-pm issue
+      # 2026-11-12-shared-actions-git-cli-credential-expires-an-hour-after-gh-token-and-the-broker-cannot-rotate-it).
+      id: install-token
+      if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' && inputs.app-id != '' && inputs.app-private-key != '' && runner.os != 'Windows' }}
+      uses: actions/github-script@v7
+      env:
+        GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
+      with:
+        script: |
+          const path = require('node:path');
+          require(path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs')).publishJobGithubToken(core);
+
     - name: Install the repro CLI (reprobuild)
       id: repro-cli
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
@@ -862,7 +914,7 @@ runs:
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
-        gh-token: ${{ inputs.gh-token }}
+        gh-token: ${{ steps.install-token.outputs.token || inputs.gh-token }}
         substituters: ${{ inputs.substituters }}
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
         attic-token: ${{ inputs.attic-token }}
@@ -907,14 +959,7 @@ runs:
       with:
         script: |
           const path = require('node:path');
-          const jc = require(path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs'));
-          const dir = process.env.MCL_JOB_CREDENTIALS_DIR || '';
-          const token = dir ? jc.brokerGithubToken(dir) : '';
-          if (token) {
-            core.setSecret(token);
-            core.setOutput('token', token);
-            core.info("setup-dev-env: the job credential broker owns this job's GitHub token; using it rather than gh-token");
-          }
+          require(path.join(path.dirname(process.env.GHA_NIX_AUTH_MODULE), 'job-credentials.cjs')).publishJobGithubToken(core);
 
     - name: Provision cross-repo siblings from the committed repro.lock
       id: repro-siblings

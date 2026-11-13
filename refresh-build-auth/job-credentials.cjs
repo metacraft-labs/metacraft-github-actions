@@ -396,6 +396,30 @@ function brokerGithubToken(dir) {
   return /\s/.test(token) ? "" : token;
 }
 
+/**
+ * The body of setup-dev-env's "Select the job's current GitHub token" steps,
+ * run by actions/github-script with its `core`. While a broker owns the job's
+ * GitHub credential (brokerGithubToken), publish its current token as the
+ * step's `token` output; otherwise publish nothing, and the consuming step's
+ * `steps.<id>.outputs.token || inputs.gh-token` falls back to gh-token.
+ *
+ * MASKING. The broker's daemon mints after its own step has ended, so a token
+ * it rotated in cannot have been masked when it was minted. This step is
+ * running, so `setSecret` masks whatever token it reads here, for the rest of
+ * the job, before any step is handed it. Nothing here prints the token.
+ */
+function publishJobGithubToken(core, env = process.env) {
+  const dir = env.MCL_JOB_CREDENTIALS_DIR || "";
+  const token = dir ? brokerGithubToken(dir) : "";
+  if (!token) return "";
+  core.setSecret(token);
+  core.setOutput("token", token);
+  core.info(
+    "setup-dev-env: the job credential broker owns this job's GitHub token; using it rather than gh-token",
+  );
+  return token;
+}
+
 function brokerShouldStop(dir) {
   return (
     !fs.existsSync(path.join(dir, NIX_TOKENS)) ||
@@ -591,6 +615,7 @@ module.exports = {
   nextRefreshDelay,
   retryDelay,
   brokerGithubToken,
+  publishJobGithubToken,
   runBroker,
   startBroker,
 };

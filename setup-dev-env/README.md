@@ -282,13 +282,36 @@ If the broker has exited, the caller's token is installed as before. An empty
 `gh-token` still refuses every inherited GitHub credential. See
 `brokerGithubToken` in `refresh-build-auth/job-credentials.cjs`.
 
-The broker covers Nix. The Git CLI credential setup installs is still
-`gh-token` in numbered `GIT_CONFIG_*` variables. The broker cannot rotate
-those: they are frozen into each step's environment, and its tokens are
-`contents: read` only. So a Git operation more than an hour after `gh-token`
-was minted fails, broker or not. Refresh it between phases with
-`refresh-build-auth`, which re-mints Git's token and leaves Nix to a running
-broker.
+**Which token each step is handed.** The broker mints from the App key, not
+from `gh-token`, so it starts even when `gh-token` has already expired. From
+then on this action hands its own Git and API work the broker's current token,
+read again just before the work starts, in place of `gh-token`:
+
+| Step                                                                                                        | Token while the broker runs                                  |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Sibling clones (`clone-siblings`)                                                                           | broker's, selected just before the clones                    |
+| repro CLI install (`setup-reprobuild`)                                                                      | broker's, selected just before it (`reprobuild` flavor only) |
+| Sibling provisioning from `repro.lock` and the late clone; Git and Nix authentication (`reprobuild` flavor) | broker's, selected again after the install                   |
+| `setup-nix` (`nix` flavor)                                                                                  | `gh-token` (its Nix credential is the broker's)              |
+
+Each selection step reads the token while it runs and masks it, so a token the
+broker rotated in after its own step had ended is masked before any step sees
+it. All of these steps are reads, which `contents: read` covers. Without a
+broker (no `app-id`, a broker that has stopped, Windows) or with an empty
+`gh-token`, every step is handed `gh-token` as before. The `nix` flavor's
+`setup-nix`, and the copy `setup-reprobuild` runs for a source build under the
+`nix` flavor, keep `gh-token` because `setup-nix` installs the token it is
+handed as the job's Git CLI credential, and `gh-token` may carry wider
+permissions than `contents: read`.
+
+The broker covers Nix. The Git CLI credential setup installs for later steps
+is frozen into numbered `GIT_CONFIG_*` variables: `gh-token` under the `nix`
+flavor, and the broker's token selected after the install under the
+`reprobuild` flavor. The broker cannot rotate those variables, because they are
+copied into each step's environment when it starts. So a Git operation more
+than an hour after that token was minted fails, broker or not. Refresh it
+between phases with `refresh-build-auth`, which re-mints Git's token and
+leaves Nix to a running broker.
 
 ## Which reprobuild store a job builds into
 

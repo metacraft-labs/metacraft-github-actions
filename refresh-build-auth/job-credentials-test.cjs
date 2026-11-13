@@ -1080,11 +1080,17 @@ test("setup-nix reads the broker's token with bash builtins only", (t) => {
   assert.equal(run.stderr, "");
 });
 
-// setup-dev-env's steps after the repro CLI install can start most of an
-// hour into the job, when the workflow's gh-token has expired (a sibling
-// fetch then failed with "could not read Username", 55 minutes in). Its
-// "Select the job's current GitHub token" step hands them the broker's
-// token while the broker runs.
+// setup-dev-env starts the broker before anything else, but gh-token is as
+// old as the job. Its sibling clones and repro CLI install can start with
+// that token already near or past its hour (codetracer-snapshot-codecs job
+// 131544370486: a Nix GC stall, then the reprobuild clone failed with "could
+// not read Username"), and the steps after the install most of an hour in
+// (codetracer-evm-recorder job 131224155136, 55 minutes in). Its "Select the
+// job's current GitHub token" steps hand each of them the broker's token
+// while the broker runs.
+const SELECT_PREFIX = "Select the job's current GitHub token";
+const BROKER_START = "Start the job credential broker";
+
 function setupDevEnvAction() {
   return execFileSync(
     process.execPath,
@@ -1101,16 +1107,28 @@ function setupDevEnvSteps() {
   return setupDevEnvAction()
     .split(/\n(?= {4}- name: )/)
     .slice(1)
-    .map((text) => ({ name: /^ {4}- name: (.*)$/m.exec(text)[1], text }));
+    .map((text) => ({
+      name: /^ {4}- name: (.*)$/m.exec(text)[1],
+      id: (/^ {6}id: (\S+)$/m.exec(text) || [])[1] || "",
+      text,
+    }));
 }
 
-function selectTokenScript() {
-  const step = setupDevEnvSteps().find(
-    (s) => s.name === "Select the job's current GitHub token",
+function selectionSteps() {
+  const steps = setupDevEnvSteps().filter((s) =>
+    s.name.startsWith(SELECT_PREFIX),
   );
-  assert.ok(step, "setup-dev-env no longer selects the job's current token");
+  assert.ok(
+    steps.length > 0,
+    "setup-dev-env no longer selects the job's current token",
+  );
+  return steps;
+}
+
+function stepScript(step) {
   const lines = step.text.split("\n");
   const start = lines.findIndex((l) => l.trim() === "script: |") + 1;
+  assert.ok(start > 0, `${step.name}: no github-script body`);
   const indent = lines[start].length - lines[start].trimStart().length;
   const body = [];
   for (const line of lines.slice(start)) {
@@ -1122,9 +1140,10 @@ function selectTokenScript() {
   return body.join("\n");
 }
 
-// Runs the step's real script as github-script would: an async function with
-// `core` and `require` in scope. `core` records what the step publishes.
-async function runSelectToken(dir) {
+// Runs a selection step's real script as github-script would: an async
+// function with `core` and `require` in scope. `core` records what the step
+// publishes.
+async function runSelectToken(step, dir) {
   const published = { outputs: {}, secrets: [] };
   const core = {
     setOutput: (name, value) => (published.outputs[name] = value),
@@ -1140,46 +1159,106 @@ async function runSelectToken(dir) {
   else delete process.env.MCL_JOB_CREDENTIALS_DIR;
   try {
     const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-    await new AsyncFunction("core", "require", selectTokenScript())(
-      core,
-      require,
-    );
+    await new AsyncFunction("core", "require", stepScript(step))(core, require);
   } finally {
     process.env = saved;
   }
   return published;
 }
 
-test("setup-dev-env hands post-install steps the broker's token while it runs", async (t) => {
+// A credential directory owned by a live stand-in broker.
+function brokerOwnedDir(t) {
   const dir = privateDir(tempDir(t));
   jc.writeAccessTokens(dir, { "github.com": "broker-sentinel" });
   fs.writeFileSync(
     path.join(dir, "broker.pid"),
     String(standInBroker(t)) + "\n",
   );
-  const owned = await runSelectToken(dir);
-  assert.equal(owned.outputs.token, "broker-sentinel");
-  assert.deepEqual(owned.secrets, ["broker-sentinel"]);
-  // A stopped broker owns nothing: no output, so gh-token is used.
-  fs.writeFileSync(path.join(dir, jc.STOP), "");
-  assert.deepEqual((await runSelectToken(dir)).outputs, {});
-  // No credential directory at all (no broker was started).
-  assert.deepEqual((await runSelectToken("")).outputs, {});
+  return dir;
+}
+
+test("each setup-dev-env token selection hands on the broker's token while it runs, masked", async (t) => {
+  for (const step of selectionSteps()) {
+    const dir = brokerOwnedDir(t);
+    const owned = await runSelectToken(step, dir);
+    assert.equal(owned.outputs.token, "broker-sentinel", step.name);
+    assert.deepEqual(owned.secrets, ["broker-sentinel"], step.name);
+    // A stopped broker owns nothing: no output, so gh-token is used.
+    fs.writeFileSync(path.join(dir, jc.STOP), "");
+    assert.deepEqual((await runSelectToken(step, dir)).outputs, {}, step.name);
+    // No credential directory at all (no broker was started).
+    assert.deepEqual((await runSelectToken(step, "")).outputs, {}, step.name);
+    // Never selected where the broker cannot have started, nor when the
+    // caller gave no gh-token (which refuses every inherited credential).
+    const condition = /^ {6}if: (.*)$/m.exec(step.text)[1];
+    for (const clause of [
+      "inputs.gh-token != ''",
+      "inputs.app-id != ''",
+      "inputs.app-private-key != ''",
+      "runner.os != 'Windows'",
+    ])
+      assert.ok(condition.includes(clause), `${step.name}: if lacks ${clause}`);
+  }
 });
 
-test("no setup-dev-env step after the repro CLI install uses gh-token as its credential", () => {
+// Regression: before this, the sibling clones and the repro CLI install were
+// handed `inputs.gh-token` although the broker had started before them.
+test("with a broker running, setup-dev-env's sibling clones and repro CLI install get its token, not gh-token", async (t) => {
   const steps = setupDevEnvSteps();
+  const broker = steps.findIndex((s) => s.name === BROKER_START);
+  assert.ok(broker >= 0, "setup-dev-env no longer starts the broker");
+  for (const name of [
+    "Clone cross-repo siblings from the workspace lock",
+    "Install the repro CLI (reprobuild)",
+  ]) {
+    const at = steps.findIndex((s) => s.name === name);
+    assert.ok(at > broker, `${name}: runs after the broker starts`);
+    const binding = /^ {8}gh-token: \$\{\{ (.*) \}\}$/m.exec(steps[at].text);
+    assert.ok(binding, `${name}: passes no gh-token`);
+    const selected =
+      /^steps\.([\w-]+)\.outputs\.token \|\| inputs\.gh-token$/.exec(
+        binding[1],
+      );
+    assert.ok(
+      selected,
+      `${name}: is handed ${binding[1]}, not the job's current token`,
+    );
+    const select = steps.findIndex((s) => s.id === selected[1]);
+    assert.ok(
+      select > broker && select < at,
+      `${name}: its token is selected between the broker start and the step`,
+    );
+    assert.ok(steps[select].name.startsWith(SELECT_PREFIX), steps[select].name);
+    const owned = await runSelectToken(steps[select], brokerOwnedDir(t));
+    assert.equal(owned.outputs.token, "broker-sentinel", name);
+  }
+});
+
+// The steps that may still be handed the job-start gh-token after the broker
+// starts, each with the reason. Anything else is a regression.
+const GH_TOKEN_AFTER_BROKER = {
+  // setup-nix installs the token it is handed as the job's Git CLI
+  // credential, for every later step. The nix flavor keeps gh-token there:
+  // the broker's token is `contents: read`, and narrowing a job's Git
+  // credential to it is undecided (metacraft-pm issue
+  // 2026-11-12-shared-actions-git-cli-credential-expires-an-hour-after-gh-token-and-the-broker-cannot-rotate-it).
+  // Its Nix credential is the broker's anyway (setup-nix keeps it).
+  "Setup Nix": true,
+};
+
+test("no setup-dev-env step after the broker starts uses gh-token as its credential", () => {
+  const steps = setupDevEnvSteps();
+  const broker = steps.findIndex((s) => s.name === BROKER_START);
   const install = steps.findIndex(
     (s) => s.name === "Install the repro CLI (reprobuild)",
   );
-  const select = steps.findIndex(
-    (s) => s.name === "Select the job's current GitHub token",
-  );
+  const select = steps.findIndex((s) => s.id === "job-token");
   assert.ok(
-    install >= 0 && select > install,
-    "the token is selected after the CLI install",
+    broker >= 0 && install > broker && select > install,
+    "the post-install token is selected after the CLI install",
   );
-  for (const step of steps.slice(select + 1)) {
+  for (const step of steps.slice(broker + 1)) {
+    if (Object.hasOwn(GH_TOKEN_AFTER_BROKER, step.name)) continue;
     for (const line of step.text.split("\n")) {
       // `if:` conditions may test whether a token was given at all.
       if (/^\s*if:/.test(line)) continue;
@@ -1191,5 +1270,11 @@ test("no setup-dev-env step after the repro CLI install uses gh-token as its cre
         );
       }
     }
+  }
+  // A step that runs after the install takes the post-install selection,
+  // not one made before the install's possibly hour-long build.
+  for (const step of steps.slice(install + 1)) {
+    for (const match of step.text.matchAll(/steps\.([\w-]+)\.outputs\.token/g))
+      assert.equal(match[1], "job-token", `${step.name}: stale selection`);
   }
 });
