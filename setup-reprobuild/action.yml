@@ -374,8 +374,11 @@ runs:
             test -x "${helper}"
             "${helper}" --help >/dev/null
             echo "REPROBUILD_NIX_DAEMON_BIN=${helper}" >> "${GITHUB_ENV}"
-            # Later authentication refreshes run outside this shell too.
-            # Preserve the rooted interpreter rather than assuming PATH has Python.
+            # Later job steps that run Python helpers (diagnostics, consumer
+            # workflows) run outside this shell. Preserve the rooted
+            # interpreter rather than assuming PATH has Python.
+            # refresh-build-auth does not use it: it runs on the declared
+            # Node runtime.
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
             echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
