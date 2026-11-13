@@ -349,6 +349,18 @@ inputs:
       caller set itself is never overwritten.
     required: false
     default: "/srv/repro-store"
+  runquota-socket:
+    description: >
+      RunQuota endpoint to export as `RUNQUOTA_SOCKET` to the steps that follow
+      this action. Normally empty: the action then looks for the host's RunQuota
+      daemon on the host's rendezvous socket and exports that when a daemon
+      answers there, so build scripts and test runners in the job use the
+      host's one budget instead of starting a daemon of their own. When no host
+      daemon is found nothing is exported and the job does not fail (`repro`
+      then adopts or starts the user's shared daemon itself). A
+      `RUNQUOTA_SOCKET` the caller already set is never overwritten.
+    required: false
+    default: ""
   on-lock-override:
     description: >
       Passed straight through to `clone-siblings`. `warn` (the default) reports
@@ -1357,3 +1369,13 @@ runs:
         echo "::group::dev-exec wrapper (reprobuild)"
         cat "$BIN_DIR/dev-exec"
         echo "::endgroup::"
+
+    # The last step, so that nothing above (the source-built repro, whose
+    # bootstrap has its own daemon) is redirected by it. The rationale and the
+    # decision table live in export-runquota-endpoint.sh's header.
+    - name: Export the host RunQuota endpoint
+      id: runquota-endpoint
+      shell: bash
+      env:
+        MCL_RUNQUOTA_SOCKET_INPUT: ${{ inputs.runquota-socket }}
+      run: bash "${GITHUB_ACTION_PATH}/export-runquota-endpoint.sh"

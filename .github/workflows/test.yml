@@ -290,6 +290,15 @@ jobs:
       - name: store-root step contract suite
         run: bash setup-dev-env/store-root-step-test.sh
 
+      # Steps after setup-dev-env must draw on the host's RunQuota daemon, never
+      # a private one, and exporting a socket nothing answers on would break the
+      # per-user fallback. Cases cover answering, absent, stale and unverifiable
+      # sockets, a caller's own value and the input; the stale case is paired
+      # with a mutant that must fail it. A real-daemon case runs where the
+      # runquota binaries are on PATH and is reported as skipped where not.
+      - name: export-runquota-endpoint step contract suite
+        run: bash setup-dev-env/export-runquota-endpoint-step-test.sh
+
       # `repro` unpacks provisioned tools with the host tar, which needs gzip /
       # xz / bzip2 on PATH as child processes; setup-dev-env now provides them
       # or fails naming them. Each guard is paired with a mutant that must make
@@ -308,7 +317,7 @@ jobs:
         run: bash mirror-artifacts-s3/mirror-step-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/export-runquota-endpoint.sh setup-dev-env/export-runquota-endpoint-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit
