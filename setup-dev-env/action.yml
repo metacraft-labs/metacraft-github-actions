@@ -882,10 +882,12 @@ runs:
       # the toolchain steps above can hold a job for an hour on a loaded host,
       # and by now the broker may have rotated. The install clones reprobuild
       # and its source dependencies and queries the release API, all reads.
-      # gh-token was handed to these clones even with a broker running, and
-      # failed with "could not read Username" once it had expired
-      # (codetracer-snapshot-codecs job 131544370486: minted 22:39, a Nix GC
-      # stall, the reprobuild clone at 23:59).
+      # Before this step the install was handed gh-token even with a broker
+      # running, and an expired gh-token fails its reprobuild clone with
+      # "could not read Username" (codetracer-snapshot-codecs job
+      # 131544370486: minted 22:39, a Nix GC stall before this action, the
+      # clone at 23:59). That job ran no broker; starting one, as that repo
+      # then did, would not have reached this clone without this selection.
       #
       # Only for env-flavor reprobuild. A source build runs setup-nix again,
       # and setup-nix installs the token it is handed as the job's Git CLI
