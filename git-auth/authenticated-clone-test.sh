@@ -163,6 +163,8 @@ THIRD_SHA="$(mk_repo third-party/dep.git)"
 # not, and journals whether one turned up anyway.
 # ---------------------------------------------------------------------------
 JOURNAL="$TMPROOT/journal"
+# One line per request: how many Authorization headers arrived, and the path.
+AUTH_COUNTS="$TMPROOT/auth-counts"
 # The HTTP route is not a filesystem path. Preserve inherited MSYS argument
 # policy and exclude only this named route argument for the native server.
 _server_arg_conv_excl="${MSYS2_ARG_CONV_EXCL:-}"
@@ -172,6 +174,7 @@ fi
 MSYS2_ARG_CONV_EXCL="$_server_arg_conv_excl" \
   "$TEST_PYTHON" "$SERVER" --root "$SRV" --journal "$JOURNAL" \
   --auth-prefix=/metacraft-labs/ --auth-file "$TMPROOT/token" \
+  --header-count-journal "$AUTH_COUNTS" \
   >"$TMPROOT/port" 2>"$TMPROOT/server.err" &
 SRV_PID=$!
 for _ in $(seq 1 100); do
@@ -874,6 +877,156 @@ check "setup-dev-env feeds every token-owner from the same input" \
 # One for `setup-nix` (the job-wide Git credential scope) and one per
 # `clone-siblings` invocation; fewer than two means the coupling is gone.
 check "  and it reaches setup-nix as well as clone-siblings" "$((TOK_TOTAL >= 2))" "1"
+
+# ===========================================================================
+# 9. A stale credential header in the runner's PERSISTENT home.
+#
+# Self-hosted runners reuse $HOME across jobs, and some carry an
+# `http.https://github.com/<owner>/.extraheader` an earlier job left in
+# `~/.gitconfig`. Git combines it with the job's scoped header:
+#
+#   * at the SAME URL both are sent, and GitHub answers
+#     `Duplicate header: "Authorization"` / 400 (m3-mcl-006);
+#   * at a NARROWER URL the stale one wins the longest-prefix match, so the
+#     fresh credential is never sent and GitHub answers 401 (m3-mcl-005).
+#
+# `scoped_git_auth_build` evicts these before anything uses the credential.
+# Each case runs twice: once with the eviction stubbed out -- the code before
+# the fix, which must FAIL here or the case proves nothing -- and once as
+# shipped. Both arms count the headers on the wire.
+# ===========================================================================
+STALE_TOKEN="ghs_STALEtokenFromAPreviousJob00000000000"
+STALE_B64="$(printf 'x-access-token:%s' "$STALE_TOKEN" | base64 | tr -d '\r\n')"
+
+# `stale_clone <name> <home> <control|fixed>` -- the real library and the real
+# clone script, as run_clone does, in a HOME of the caller's making.
+stale_clone() {
+  local name="$1" home="$2" arm="$3"
+  CASE_OUT="$TMPROOT/$name.out"
+  CASE_RC=0
+  CASE_FROM="$(wc -l <"$AUTH_COUNTS" | tr -d ' ')"
+  CASE_JFROM="$(wc -l <"$JOURNAL" | tr -d ' ')"
+  rm -rf "${TMPROOT:?}/${name:?}.clone"
+  env -i PATH="$PATH" HOME="$home" GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CEILING_DIRECTORIES="$TMPROOT" \
+    GH_TOKEN="$TOKEN" GIT_AUTH_URL_BASE="$BASE" TOKEN_OWNERS=metacraft-labs \
+    ARM="$arm" \
+    bash -c '
+      set -euo pipefail
+      . "$1"; shift
+      if [[ $ARM == control ]]; then
+        scoped_git_auth_evict_stale_home_headers() { :; }
+      fi
+      scoped_git_auth_build
+      scoped_git_auth_export
+      exec bash "$@"
+    ' _ "$LIB" "$CLONE" --repo metacraft-labs/host --dest "$TMPROOT/$name.clone" \
+    --rev "$HOST_SHA" --shallow >"$CASE_OUT" 2>&1 || CASE_RC=$?
+}
+# Requests this case made: the header counts, and the verdicts.
+case_counts() { tail -n +"$((CASE_FROM + 1))" "$AUTH_COUNTS" | while read -r n _; do printf '%s ' "$n"; done; }
+case_verdicts() { tail -n +"$((CASE_JFROM + 1))" "$JOURNAL" | while read -r v _; do printf '%s ' "$v"; done; }
+
+# A poisoned home: the stale header at the scope's own URL (spelled
+# `extraHeader`, the case this repo writes), next to keys that must survive --
+# an unrelated setting, a non-credential key in the SAME http section, and an
+# extraheader for a different host, which is not ours to touch.
+poison_home() { # <home>
+  local home="$1"
+  rm -rf "$home"
+  mkdir -p "$home"
+  git config --file "$home/.gitconfig" user.name "Runner Keep"
+  git config --file "$home/.gitconfig" "http.${BASE}metacraft-labs/.extraHeader" \
+    "AUTHORIZATION: basic ${STALE_B64}"
+  git config --file "$home/.gitconfig" "http.${BASE}metacraft-labs/.postBuffer" 524288000
+  git config --file "$home/.gitconfig" "http.https://example.invalid/.extraheader" \
+    "X-Unrelated: keep-me"
+}
+
+# --- 9a. same URL: two headers -> 400 -------------------------------------
+poison_home "$TMPROOT/stale-dup-control"
+stale_clone stale-dup-control "$TMPROOT/stale-dup-control" control
+check "CONTROL: without the eviction, the clone fails" "$((CASE_RC != 0))" "1"
+case "$(case_counts)" in
+*2*) ok "CONTROL: without the eviction, git sends 2 Authorization headers" ;;
+*) bad "CONTROL: without the eviction, git sends 2 Authorization headers" "counts: $(case_counts)" ;;
+esac
+case "$(case_verdicts)" in
+*duplicate*) ok "CONTROL: the server refuses the duplicate header, as GitHub does" ;;
+*) bad "CONTROL: the server refuses the duplicate header, as GitHub does" "verdicts: $(case_verdicts)" ;;
+esac
+
+H="$TMPROOT/stale-dup-fixed"
+poison_home "$H"
+stale_clone stale-dup-fixed "$H" fixed
+check "a stale same-URL header in ~/.gitconfig no longer breaks the clone" "$CASE_RC" "0"
+check "every request carried exactly one Authorization header" \
+  "$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "1"
+case "$(case_verdicts)" in
+*duplicate* | *mismatch* | *none*) bad "the fresh credential authenticated" "verdicts: $(case_verdicts)" ;;
+*ok*) ok "the fresh credential authenticated" ;;
+*) bad "the fresh credential authenticated" "verdicts: $(case_verdicts)" ;;
+esac
+check "the stale header is gone from ~/.gitconfig" \
+  "$(git config --file "$H/.gitconfig" --get-all "http.${BASE}metacraft-labs/.extraheader" | wc -l | tr -d ' ')" "0"
+check "an unrelated key is preserved" \
+  "$(git config --file "$H/.gitconfig" user.name)" "Runner Keep"
+check "a non-credential key in the same http section is preserved" \
+  "$(git config --file "$H/.gitconfig" "http.${BASE}metacraft-labs/.postBuffer")" "524288000"
+check "an extraheader for another host is preserved" \
+  "$(git config --file "$H/.gitconfig" "http.https://example.invalid/.extraheader")" "X-Unrelated: keep-me"
+check "the eviction names the key it removed" \
+  "$(grep -cF "removed stale 'http.${BASE}metacraft-labs/.extraheader'" "$CASE_OUT")" "1"
+check "the eviction reports its count" \
+  "$(grep -cF "evicted 1 stale credential header(s) from $H/.gitconfig; 0 left" "$CASE_OUT")" "1"
+check "...and never prints the stale value" \
+  "$(grep -cF -e "$STALE_TOKEN" -e "$STALE_B64" "$CASE_OUT" || true)" "0"
+check "...nor the job's token" "$(grep -cF "$TOKEN" "$CASE_OUT" || true)" "0"
+
+# --- 9b. narrower URL, in the XDG file: stale header wins -> refused -------
+# The XDG global file is read by git exactly like ~/.gitconfig, and
+# `git config --global` would not have edited it while ~/.gitconfig exists.
+xdg_poison() { # <home>
+  local home="$1"
+  rm -rf "$home"
+  mkdir -p "$home/.config/git"
+  git config --file "$home/.gitconfig" user.name "Runner Keep"
+  git config --file "$home/.config/git/config" \
+    "http.${BASE}metacraft-labs/host.git/.extraheader" "AUTHORIZATION: basic ${STALE_B64}"
+}
+xdg_poison "$TMPROOT/stale-xdg-control"
+stale_clone stale-xdg-control "$TMPROOT/stale-xdg-control" control
+check "CONTROL: a narrower stale header makes the clone fail" "$((CASE_RC != 0))" "1"
+case "$(case_verdicts)" in
+*mismatch*) ok "CONTROL: the stale credential replaced the fresh one on the wire" ;;
+*) bad "CONTROL: the stale credential replaced the fresh one on the wire" "verdicts: $(case_verdicts)" ;;
+esac
+
+H="$TMPROOT/stale-xdg-fixed"
+xdg_poison "$H"
+stale_clone stale-xdg-fixed "$H" fixed
+check "a narrower stale header in the XDG global file no longer breaks the clone" "$CASE_RC" "0"
+case "$(case_verdicts)" in
+*mismatch* | *duplicate* | *none*) bad "...and the fresh credential is what arrived" "verdicts: $(case_verdicts)" ;;
+*ok*) ok "...and the fresh credential is what arrived" ;;
+*) bad "...and the fresh credential is what arrived" "verdicts: $(case_verdicts)" ;;
+esac
+check "the emptied [http] section is removed from the XDG file" \
+  "$(git config --file "$H/.config/git/config" --list --name-only | wc -l | tr -d ' ')" "0"
+check "the home .gitconfig is left as it was" \
+  "$(git config --file "$H/.gitconfig" user.name)" "Runner Keep"
+
+# --- 9c. a clean home is not touched, and nothing is said about it --------
+H="$TMPROOT/stale-clean"
+rm -rf "$H"
+mkdir -p "$H"
+git config --file "$H/.gitconfig" user.name "Runner Keep"
+cp "$H/.gitconfig" "$TMPROOT/stale-clean.before"
+stale_clone stale-clean "$H" fixed
+check "a clean home still clones" "$CASE_RC" "0"
+check "a clean home's ~/.gitconfig is byte-identical afterwards" \
+  "$(cmp -s "$TMPROOT/stale-clean.before" "$H/.gitconfig" && echo same)" "same"
+check "a clean home produces no eviction log" "$(grep -c 'evicted\|removed stale' "$CASE_OUT" || true)" "0"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

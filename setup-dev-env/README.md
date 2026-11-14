@@ -52,6 +52,7 @@ jobs:
 | `sibling-strategy`      | no       | `auto` (default) \| `repro-lock` \| `clone-siblings`. Which mechanism provisions cross-repo siblings — see below.                                                         |
 | `siblings`              | no       | Whitespace/newline-separated sibling list, overriding `.github/sibling-repos`. Reconciled against `repro.lock` on the repro path — see below.                             |
 | `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                           |
+| `runquota-socket`       | no       | RunQuota endpoint to export as `RUNQUOTA_SOCKET`. Empty (default) looks for the host's daemon and exports it when it answers. See below.                                  |
 
 ### Reprobuild release selection
 
@@ -357,6 +358,33 @@ run, including the ones that export nothing. The gap this closes went unnoticed
 for months precisely because nothing ever printed a store root.
 
 `shared-store-path: ""` switches the probe off entirely.
+
+## Which RunQuota daemon a job's builds use
+
+RunQuota admits builds against one budget per machine, which only works when
+every build on the machine talks to the same daemon. A build script or test
+runner that starts a daemon of its own gives itself a whole budget, and two jobs
+sharing a runner then overrun it. As its last step on every flavor, this action
+looks for the host's daemon and tells the rest of the job where it is:
+
+| what it finds                                           | what it does                                           |
+| ------------------------------------------------------- | ------------------------------------------------------ |
+| a daemon answering on the host's rendezvous socket      | exports `RUNQUOTA_SOCKET` to `$GITHUB_ENV`             |
+| `runquota-socket` input set                             | exports that endpoint as given (warns if it is silent) |
+| no socket                                               | exports nothing; **does not fail**                     |
+| a socket nothing answers on, or no `runquota` on `PATH` | exports nothing; **does not fail**                     |
+| `RUNQUOTA_SOCKET` already set                           | leaves the caller's value alone                        |
+| Windows (a fixed named pipe every client uses)          | exports nothing                                        |
+
+The host's rendezvous socket is `/run/runquota/runquotad.sock` on Linux and
+`/var/run/runquota/runquotad.sock` on macOS. "Answers" means `runquota status`
+succeeds there: a socket file alone is not an answer, because it outlives a
+daemon that was killed. Where nothing is exported, `repro` still finds a daemon
+by its own discovery (the host service, else the user's shared per-user daemon,
+started on first use), so a runner with no RunQuota service keeps working; the
+only steps that lose out are scripts that start their own daemon when they find
+none, and those should now do the same. The decision is printed on one line and
+added to the job summary on every run.
 
 ## Sibling-repo overrides
 

@@ -38,6 +38,10 @@
 #   scoped_git_auth_build   Derive the scope + credential. Sets the array
 #                           SCOPED_GIT_AUTH_PAIRS (KEY VALUE KEY VALUE ...) and
 #                           SCOPED_GIT_AUTH_SCOPES (the URL prefixes covered).
+#                           First evicts stale credential headers from the
+#                           runner's persistent global git config files (see
+#                           scoped_git_auth_evict_stale_home_headers): that is
+#                           its only effect outside this shell.
 #   scoped_git_auth_export  Export SCOPED_GIT_AUTH_PAIRS into THIS process as
 #                           GIT_CONFIG_COUNT/KEY_n/VALUE_n, appending to whatever
 #                           was already there. Nothing touches disk; child
@@ -129,6 +133,116 @@ scoped_git_auth_b64() {
   printf '%s' "$out"
 }
 
+# `scoped_git_auth_evict_stale_home_headers <url-base>` -- remove every
+# `http.<url>.extraHeader` whose <url> lies under <url-base> from the runner's
+# PERSISTENT global git config files.
+#
+# WHY. Self-hosted runners in this org reuse their home directories across
+# jobs, and some carry a `http.https://github.com/<owner>/.extraheader` in
+# `~/.gitconfig` that an earlier job left there, holding that job's long-expired
+# token. (This file never writes one there -- it hands the credential to git
+# through process-scoped config -- but something on those runners does, and
+# until that is found every entry point has to assume the poison can come
+# back.) Git combines `http.<url>.*`
+# from every config source, so that stale key is in effect for every job that
+# runs on the host afterwards, in one of two ways:
+#
+#   * SAME URL as the scope built below: `extraHeader` is multi-valued, so git
+#     sends BOTH headers and GitHub refuses the request with
+#     `remote: Duplicate header: "Authorization"` / HTTP 400. Measured on
+#     m3-mcl-006 (codetracer-snapshot-codecs job 131621245984,
+#     codetracer-image-diff job 131623808481).
+#   * A NARROWER URL: git uses the longest matching prefix only, so the stale
+#     header REPLACES the fresh one, GitHub answers 401, and git reports
+#     `could not read Username` (m3-mcl-005, job 131544370486).
+#
+# An extraheader in a home directory reused across jobs is never legitimate --
+# it is a minted token outliving the job that minted it -- so it is removed
+# whether or not this run installs a credential.
+#
+# WHICH FILES, AND WHY BY PATH. Git reads two global files, `~/.gitconfig` and
+# `${XDG_CONFIG_HOME:-~/.config}/git/config`, and both are edited by path.
+# `git config --global` writes to only ONE of them (and to `$GIT_CONFIG_GLOBAL`
+# when that is set), so an `--unset --global` can report success while the
+# offending file is left untouched. `$GIT_CONFIG_GLOBAL` itself is not edited:
+# a file a caller named for this process is not the runner's persistent home.
+#
+# WHAT IS LEFT ALONE. Any key that is not an extraheader; any extraheader
+# outside <url-base> (another host, or a bare `http.extraHeader`); and the
+# section itself while anything else is still in it -- removing the whole
+# `[http "<url>"]` section would also drop, say, its `sslVerify`.
+#
+# Key NAMES and counts are logged to stderr, and only when something was found.
+# Values are never read into a variable, let alone printed: they hold tokens.
+#
+# Pure bash plus git. `grep`/`sed` are not on PATH in a raw `run:` step on the
+# nix-darwin runners, and bash may be 3.2 there, hence `nocasematch` (3.1+)
+# rather than `${var,,}` (4.0+).
+scoped_git_auth_evict_stale_home_headers() {
+  local base="${1%/}" home="${HOME:-}" cfg key k2 url sub other removed left seen
+  local nocase_was_set=0
+  [[ -n $home ]] || return 0
+  shopt -q nocasematch && nocase_was_set=1
+  shopt -s nocasematch
+  for cfg in "$home/.gitconfig" "${XDG_CONFIG_HOME:-$home/.config}/git/config"; do
+    [[ -f $cfg ]] || continue
+    removed=0
+    left=0
+    seen=$'\n'
+    # `--name-only` lists section and variable names lower-cased and the
+    # subsection (the URL) as written; `--null` keeps a URL containing a
+    # newline from splitting into two bogus names.
+    while IFS= read -r -d '' key; do
+      case "$key" in
+      http.*.extraheader) ;;
+      *) continue ;;
+      esac
+      url="${key#http.}"
+      url="${url%.*}"
+      # Host and scheme compare case-insensitively, as git's URL normaliser
+      # does. `<base>` alone (no trailing slash) also matches every repo.
+      case "$url" in
+      "$base" | "$base"/*) ;;
+      *) continue ;;
+      esac
+      # A multi-valued key is listed once per value; `--unset-all` took them all.
+      case "$seen" in *$'\n'"$key"$'\n'*) continue ;; esac
+      seen+="$key"$'\n'
+      if git config --file "$cfg" --unset-all "$key" 2>/dev/null; then
+        removed=$((removed + 1))
+        echo "scoped-git-auth: removed stale '$key' from $cfg (value withheld)" >&2
+      else
+        echo "scoped-git-auth: WARNING could not remove stale '$key' from $cfg" >&2
+      fi
+      # Drop the now-empty `[http "<url>"]` section, and only if it is empty.
+      sub="http.${url}."
+      other=0
+      while IFS= read -r -d '' k2; do
+        [[ ${k2:0:${#sub}} == "$sub" ]] && other=1 && break
+      done < <(git config --file "$cfg" --list --name-only --null 2>/dev/null || true)
+      [[ $other == 0 ]] &&
+        { git config --file "$cfg" --remove-section "http.${url}" 2>/dev/null || true; }
+    done < <(git config --file "$cfg" --list --name-only --null 2>/dev/null || true)
+    [[ $removed == 0 ]] && continue
+    # Recount from the file. An `--unset` that silently did nothing reads
+    # exactly like one that worked, so the result is checked, not assumed.
+    while IFS= read -r -d '' key; do
+      case "$key" in
+      http.*.extraheader) ;;
+      *) continue ;;
+      esac
+      url="${key#http.}"
+      url="${url%.*}"
+      case "$url" in "$base" | "$base"/*) left=$((left + 1)) ;; esac
+    done < <(git config --file "$cfg" --list --name-only --null 2>/dev/null || true)
+    echo "scoped-git-auth: evicted ${removed} stale credential header(s) from $cfg; ${left} left" >&2
+    [[ $left == 0 ]] ||
+      echo "scoped-git-auth: WARNING ${left} stale credential header(s) survived in $cfg" >&2
+  done
+  [[ $nocase_was_set == 1 ]] || shopt -u nocasematch
+  return 0
+}
+
 # `scoped_git_auth_build` -- derive the scope and the credential pairs.
 scoped_git_auth_build() {
   local url_base="${GIT_AUTH_URL_BASE:-https://github.com/}"
@@ -145,6 +259,15 @@ scoped_git_auth_build() {
     return 2
     ;;
   esac
+  # Before anything that could hand git a credential -- and before the no-token
+  # early return too, because a stale header breaks a public clone as surely as
+  # a private one (GitHub answers a bad credential with 401 even on a public
+  # repository). Every entry point in this repo that runs git with the job's
+  # credential calls this function first, so this is the one place that covers
+  # all of them; scoped_git_auth_with_global's private GIT_CONFIG_GLOBAL already
+  # hides these files from its own command, and the eviction then simply
+  # cleans the host for the next job.
+  scoped_git_auth_evict_stale_home_headers "$url_base"
   local owners="${TOKEN_OWNERS:-metacraft-labs}"
   local extra="${EXTRA_TOKEN_URL_PREFIXES:-}"
   local _owner _prefix

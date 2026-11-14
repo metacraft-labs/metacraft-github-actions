@@ -303,6 +303,41 @@ else
   ok "the stale token is gone from ~/.gitconfig"
 fi
 
+# The same migration for the OTHER credential shape a reused home carries: an
+# owner-scoped `http.<url>.extraHeader` holding an earlier job's token. Left in
+# place it is combined with the header emitted above -- two `Authorization`
+# headers at the same URL (GitHub: 400), or a narrower one that wins the match
+# outright (GitHub: 401). The wire-level proof of both is in
+# git-auth/authenticated-clone-test.sh section 9; this pins the setup-nix path.
+XH_HOME="$TMPROOT/stale-xh/home"
+mkdir -p "$XH_HOME"
+XH_STALE="ghs_STALEheaderFromAPreviousJob0000000000"
+HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" \
+  http."https://github.com/metacraft-labs/".extraheader "AUTHORIZATION: basic $XH_STALE"
+HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" \
+  http."https://github.com/metacraft-labs/codetracer.git/".extraHeader "AUTHORIZATION: basic $XH_STALE"
+HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" \
+  http."https://gitlab.com/".extraheader "X-Not-Ours: keep"
+HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" core.autocrlf false
+CASE_RC=0
+env -i PATH="$PATH" HOME="$XH_HOME" GITHUB_ENV="$TMPROOT/stale-xh/env" GH_TOKEN="$TOKEN" \
+  bash "$SCRIPT" >"$TMPROOT/stale-xh/out" 2>&1 || CASE_RC=$?
+check "the run over a home with stale extraheaders succeeds" "$CASE_RC" "0"
+check "every stale github.com extraheader is evicted from ~/.gitconfig" \
+  "$(git config --file "$XH_HOME/.gitconfig" --list --name-only | grep -ci '^http\.https://github\.com/.*\.extraheader$')" "0"
+check "an extraheader for another host is left alone" \
+  "$(git config --file "$XH_HOME/.gitconfig" http."https://gitlab.com/".extraheader)" "X-Not-Ours: keep"
+check "unrelated settings are left alone" \
+  "$(git config --file "$XH_HOME/.gitconfig" core.autocrlf)" "false"
+check "the eviction is reported by count" \
+  "$(grep -c 'evicted 2 stale credential header(s) from .*; 0 left' "$TMPROOT/stale-xh/out")" "1"
+check "the stale value is never printed" \
+  "$(grep -cF "$XH_STALE" "$TMPROOT/stale-xh/out" || true)" "0"
+# The narrower `.../codetracer.git/` key would otherwise win this URL outright.
+check "only the job's own header is now in effect for an own-org repo" \
+  "$(CASE_HOME="$XH_HOME" CASE_ENV="$TMPROOT/stale-xh/env" urlmatch \
+    https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_HEADER"
+
 # Re-running in the same HOME must not accumulate duplicate rewrite values.
 env -i PATH="$PATH" HOME="$STALE_HOME" GITHUB_ENV="$TMPROOT/stale/env" GH_TOKEN="$TOKEN" \
   bash "$SCRIPT" >/dev/null 2>&1

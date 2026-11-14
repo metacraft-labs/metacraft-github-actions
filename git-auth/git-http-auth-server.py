@@ -35,7 +35,7 @@ WHAT IT NEVER DOES
 It never writes a credential anywhere. The expected credential is read from a
 file (so it is not in this process's argv, which is world-readable in /proc) and
 is compared with `hmac.compare_digest`. The request journal records only the
-request path and one of `none` / `ok` / `mismatch` -- never a header value, not
+request path and one of `none` / `ok` / `mismatch` / `duplicate` -- never a header value, not
 even truncated, not even hashed. A test fixture that logs the secret it is
 testing is a worse leak than the one it is testing for, because fixtures get
 pasted into issues.
@@ -86,6 +86,19 @@ class Handler(BaseHTTPRequestHandler):
             with JOURNAL_LOCK:
                 with open(ARGS.header_count_journal, "a", encoding="utf-8") as fh:
                     fh.write(f"{count} {path}\n")
+        # More than one Authorization header is refused before anything else,
+        # the way github.com refuses it (`remote: Duplicate header:
+        # "Authorization"`, HTTP 400). Accepting the first one instead would let
+        # a suite pass on a request the real forge rejects -- which is exactly
+        # how a stale `~/.gitconfig` extraheader plus the job's scoped header
+        # broke CI on the self-hosted macOS runners while every local check
+        # stayed green.
+        if len(self.headers.get_all("Authorization", [])) > 1:
+            journal(path, "duplicate")
+            self.send_response(400)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
         supplied = self.headers.get("Authorization")
         if not self._protected(path):
             journal(path, "public-auth" if supplied else "public-noauth")
