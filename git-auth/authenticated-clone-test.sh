@@ -1028,6 +1028,195 @@ check "a clean home's ~/.gitconfig is byte-identical afterwards" \
   "$(cmp -s "$TMPROOT/stale-clean.before" "$H/.gitconfig" && echo same)" "same"
 check "a clean home produces no eviction log" "$(grep -c 'evicted\|removed stale' "$CASE_OUT" || true)" "0"
 
+# ===========================================================================
+# 10. A credential header INHERITED from an earlier step of the same job.
+#
+# `setup-nix` emits the job's credential into `$GITHUB_ENV` as
+# GIT_CONFIG_KEY_0 = http.https://github.com/<owner>/.extraHeader. A later
+# step that clones (setup-reprobuild, reprobuild-provision, clone-siblings,
+# clone-repo) builds the same scope again, often with a DIFFERENT token --
+# setup-dev-env hands those steps the credential broker's fresher one -- and
+# exports it. The export used to skip only an identical key AND value, so it
+# appended a second header for the same URL, git sent both, and GitHub refused
+# every request with `Duplicate header: "Authorization"` / HTTP 400.
+#
+# The control arm runs that previous export (`legacy_export`, reproduced
+# below); it must fail here or the case proves nothing. Both arms count the
+# headers on the wire.
+# ===========================================================================
+EARLIER_TOKEN="ghs_EARLIERtokenFromSetupNix0000000000000"
+EARLIER_B64="$(printf 'x-access-token:%s' "$EARLIER_TOKEN" | base64 | tr -d '\r\n')"
+LEGACY_EXPORT="$TMPROOT/legacy-export.sh"
+# The export as it was before the replace rule: append, skipping only exact
+# duplicates. This is the mutation.
+cat >"$LEGACY_EXPORT" <<'LEGACY'
+scoped_git_auth_export() {
+  local n="${GIT_CONFIG_COUNT:-0}" i key value j have kn vn
+  for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
+    key="${SCOPED_GIT_AUTH_PAIRS[i]}"
+    value="${SCOPED_GIT_AUTH_PAIRS[i + 1]}"
+    have=0
+    for ((j = 0; j < n; j++)); do
+      kn="GIT_CONFIG_KEY_${j}"
+      vn="GIT_CONFIG_VALUE_${j}"
+      if [[ ${!kn-} == "$key" && ${!vn-} == "$value" ]]; then
+        have=1
+        break
+      fi
+    done
+    [[ $have == 1 ]] && continue
+    printf -v "GIT_CONFIG_KEY_${n}" '%s' "$key"
+    printf -v "GIT_CONFIG_VALUE_${n}" '%s' "$value"
+    export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
+    n=$((n + 1))
+  done
+  export GIT_CONFIG_COUNT="$n"
+  export GIT_TERMINAL_PROMPT=0
+}
+LEGACY
+
+# `inherited_clone <name> <control|fixed> <env assignments...>` -- the real
+# library and the real clone script, as stale_clone does, in a clean HOME,
+# with the given numbered configuration already in the environment (what the
+# runner hands a step after an earlier step wrote `$GITHUB_ENV`).
+inherited_clone() {
+  local name="$1" arm="$2"
+  shift 2
+  CASE_OUT="$TMPROOT/$name.out"
+  CASE_RC=0
+  CASE_FROM="$(wc -l <"$AUTH_COUNTS" | tr -d ' ')"
+  CASE_JFROM="$(wc -l <"$JOURNAL" | tr -d ' ')"
+  rm -rf "${TMPROOT:?}/${name:?}.clone" "${TMPROOT:?}/${name:?}.home"
+  mkdir -p "$TMPROOT/$name.home"
+  env -i PATH="$PATH" HOME="$TMPROOT/$name.home" GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CEILING_DIRECTORIES="$TMPROOT" \
+    GH_TOKEN="$TOKEN" GIT_AUTH_URL_BASE="$BASE" TOKEN_OWNERS=metacraft-labs \
+    ARM="$arm" LEGACY_EXPORT="$LEGACY_EXPORT" "$@" \
+    bash -c '
+      set -euo pipefail
+      . "$1"; shift
+      if [[ $ARM == control ]]; then
+        . "$LEGACY_EXPORT"
+      fi
+      scoped_git_auth_build
+      scoped_git_auth_export
+      exec bash "$@"
+    ' _ "$LIB" "$CLONE" --repo metacraft-labs/host --dest "$TMPROOT/$name.clone" \
+    --rev "$HOST_SHA" --shallow >"$CASE_OUT" 2>&1 || CASE_RC=$?
+}
+INHERITED_ENV=(
+  GIT_CONFIG_COUNT=1
+  "GIT_CONFIG_KEY_0=http.${BASE}metacraft-labs/.extraHeader"
+  "GIT_CONFIG_VALUE_0=AUTHORIZATION: basic ${EARLIER_B64}"
+)
+
+# --- 10a. the job's header from setup-nix, a fresher token in this step ----
+inherited_clone inherit-control control "${INHERITED_ENV[@]}"
+check "CONTROL: appending beside an inherited header fails the clone" "$((CASE_RC != 0))" "1"
+case "$(case_counts)" in
+*2*) ok "CONTROL: appending beside an inherited header sends 2 Authorization headers" ;;
+*) bad "CONTROL: appending beside an inherited header sends 2 Authorization headers" "counts: $(case_counts)" ;;
+esac
+case "$(case_verdicts)" in
+*duplicate*) ok "CONTROL: the server refuses it as a duplicate header" ;;
+*) bad "CONTROL: the server refuses it as a duplicate header" "verdicts: $(case_verdicts)" ;;
+esac
+
+inherited_clone inherit-fixed fixed "${INHERITED_ENV[@]}"
+check "an inherited header for the same URL no longer breaks the clone" "$CASE_RC" "0"
+check "every request carried exactly one Authorization header" \
+  "$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "1"
+case "$(case_verdicts)" in
+*duplicate* | *mismatch* | *none*) bad "this step's credential is the one that arrived" "verdicts: $(case_verdicts)" ;;
+*ok*) ok "this step's credential is the one that arrived" ;;
+*) bad "this step's credential is the one that arrived" "verdicts: $(case_verdicts)" ;;
+esac
+check "...and neither credential is printed" \
+  "$(grep -cF -e "$TOKEN" -e "$EARLIER_TOKEN" -e "$EARLIER_B64" "$CASE_OUT" || true)" "0"
+
+# The same, with the inherited key spelled in lower case (git compares section
+# and variable names case-insensitively, so this is the same key to git).
+inherited_clone inherit-lower fixed GIT_CONFIG_COUNT=1 \
+  "GIT_CONFIG_KEY_0=http.${BASE}metacraft-labs/.extraheader" \
+  "GIT_CONFIG_VALUE_0=AUTHORIZATION: basic ${EARLIER_B64}"
+check "an inherited header spelled 'extraheader' is replaced too" \
+  "$CASE_RC|$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "0|1"
+
+# --- 10b. what the export leaves in the environment ------------------------
+# Unrelated entries survive with their values and order; only the covered
+# header changes, and a second inherited copy of it is dropped.
+OUT="$(env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" EB="$EARLIER_B64" \
+  GIT_CONFIG_COUNT=5 \
+  GIT_CONFIG_KEY_0="user.name" GIT_CONFIG_VALUE_0="pre-existing" \
+  GIT_CONFIG_KEY_1="http.https://github.com/metacraft-labs/.extraHeader" \
+  GIT_CONFIG_VALUE_1="AUTHORIZATION: basic ${EARLIER_B64}" \
+  GIT_CONFIG_KEY_2="http.https://example.invalid/.extraheader" GIT_CONFIG_VALUE_2="X-Unrelated: keep-me" \
+  GIT_CONFIG_KEY_3="HTTP.https://github.com/metacraft-labs/.EXTRAHEADER" \
+  GIT_CONFIG_VALUE_3="AUTHORIZATION: basic ${EARLIER_B64}" \
+  GIT_CONFIG_KEY_4="core.longpaths" GIT_CONFIG_VALUE_4="true" \
+  bash -c "
+    set -euo pipefail
+    . '$LIB'
+    scoped_git_auth_build
+    scoped_git_auth_export
+    printf '%s\n' \"\$GIT_CONFIG_COUNT\"
+    for ((i = 0; i < GIT_CONFIG_COUNT; i++)); do
+      k=GIT_CONFIG_KEY_\$i v=GIT_CONFIG_VALUE_\$i
+      case \"\${!v}\" in *\"\$EB\"*) val=EARLIER ;; 'AUTHORIZATION: basic '*) val=FRESH ;; *) val=\"\${!v}\" ;; esac
+      printf '%s=%s\n' \"\${!k}\" \"\$val\"
+    done
+    printf 'stale-index:%s\n' \"\${GIT_CONFIG_KEY_4-unset}\"
+  " 2>&1)"
+check "export replaces the covered header and keeps every unrelated entry in order" \
+  "$OUT" "4
+user.name=pre-existing
+http.https://github.com/metacraft-labs/.extraHeader=FRESH
+http.https://example.invalid/.extraheader=X-Unrelated: keep-me
+core.longpaths=true
+stale-index:unset"
+
+# --- 10c. the emit path (setup-nix, refresh-build-auth) --------------------
+# Emitting over an inherited job configuration writes the whole merged set:
+# one header for the covered URL, carrying this call's token, and the
+# unrelated entries the job already had. The emitted file is then applied the
+# way the runner applies `$GITHUB_ENV`, and the clone is counted on the wire.
+EMIT_ENV="$TMPROOT/emit.github_env"
+: >"$EMIT_ENV"
+env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" GIT_AUTH_URL_BASE="$BASE" \
+  GIT_CONFIG_COUNT=2 \
+  GIT_CONFIG_KEY_0="http.${BASE}metacraft-labs/.extraHeader" \
+  GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${EARLIER_B64}" \
+  GIT_CONFIG_KEY_1="http.https://example.invalid/.extraheader" GIT_CONFIG_VALUE_1="X-Unrelated: keep-me" \
+  bash -c "
+    set -euo pipefail
+    . '$LIB'
+    scoped_git_auth_build
+    scoped_git_auth_emit '$EMIT_ENV'
+  " >"$TMPROOT/emit.out" 2>&1
+check "emit numbers the merged set from 0 with a matching count" \
+  "$(grep -c '^GIT_CONFIG_KEY_' "$EMIT_ENV")|$(sed -n 's/^GIT_CONFIG_COUNT=//p' "$EMIT_ENV")" "2|2"
+check "emit writes one header for the covered URL" \
+  "$(grep -ciF "=http.${BASE}metacraft-labs/.extraheader" "$EMIT_ENV")" "1"
+check "emit replaces the inherited credential" \
+  "$(grep -cF "$EARLIER_B64" "$EMIT_ENV" || true)" "0"
+check "emit carries an unrelated inherited entry forward" \
+  "$(grep -cxF 'GIT_CONFIG_KEY_1=http.https://example.invalid/.extraheader' "$EMIT_ENV")" "1"
+check "emit prints no credential to its output" \
+  "$(grep -cF -e "$TOKEN" -e "$EARLIER_B64" "$TMPROOT/emit.out" || true)" "0"
+EMITTED=()
+while IFS= read -r line; do EMITTED+=("$line"); done <"$EMIT_ENV"
+CASE_FROM="$(wc -l <"$AUTH_COUNTS" | tr -d ' ')"
+CASE_JFROM="$(wc -l <"$JOURNAL" | tr -d ' ')"
+CASE_RC=0
+rm -rf "$TMPROOT/emit.clone"
+env -i PATH="$PATH" HOME="$TMPROOT" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRECTORIES="$TMPROOT" \
+  "${EMITTED[@]}" \
+  git clone --quiet "${BASE}metacraft-labs/host.git" "$TMPROOT/emit.clone" \
+  >"$TMPROOT/emit.clone.out" 2>&1 || CASE_RC=$?
+check "a clone in a later step, under the emitted configuration, succeeds" "$CASE_RC" "0"
+check "...sending exactly one Authorization header per request" \
+  "$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "1"
+
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then

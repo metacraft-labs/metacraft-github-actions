@@ -43,11 +43,13 @@
 #                           scoped_git_auth_evict_stale_home_headers): that is
 #                           its only effect outside this shell.
 #   scoped_git_auth_export  Export SCOPED_GIT_AUTH_PAIRS into THIS process as
-#                           GIT_CONFIG_COUNT/KEY_n/VALUE_n, appending to whatever
-#                           was already there. Nothing touches disk; child
+#                           GIT_CONFIG_COUNT/KEY_n/VALUE_n, on top of whatever
+#                           was already there: unrelated entries are kept, an
+#                           inherited header for a covered URL is REPLACED (two
+#                           would be a 400). Nothing touches disk; child
 #                           processes (including `git submodule update
 #                           --recursive`) inherit it, and nothing else does.
-#   scoped_git_auth_emit    Print the same pairs as `KEY=VALUE` lines, for
+#   scoped_git_auth_emit    Print the same merged set as `KEY=VALUE` lines, for
 #                           `$GITHUB_ENV` (job-scoped) -- what `setup-nix` needs,
 #                           because the credential must outlive its own step.
 #   scoped_git_auth_with_global  Run a command through a private temporary
@@ -345,44 +347,161 @@ scoped_git_auth_build() {
   return 0
 }
 
-# `scoped_git_auth_export` -- install SCOPED_GIT_AUTH_PAIRS into this process's
-# environment as git's numbered configuration, APPENDING to anything already
-# there.
-#
-# Appending is not politeness. A caller may run after `setup-nix` has already
-# put its own `GIT_CONFIG_COUNT` into the job environment; renumbering from zero
-# would silently drop that configuration for every later step of the job.
-# Exact duplicates are skipped for the mirror-image reason: `http.extraHeader` is
-# multi-valued, so re-adding an identical pair makes git send the same
-# `Authorization` header twice, which is a malformed request rather than a
-# doubly-authenticated one.
-scoped_git_auth_export() {
-  local n="${GIT_CONFIG_COUNT:-0}"
-  local i key value j have kn vn
+# `_scoped_git_auth_is_credential_key <key>` -- true when <key> names an
+# `http.<url>.extraHeader`, compared the way git compares it: the section and
+# variable names case-insensitively. (The URL is compared case-insensitively
+# too; its scheme and host are, to git, and a path spelled in two cases is not
+# a distinction anything in this org relies on.) Pure bash 3.2: `nocasematch`,
+# restored afterwards, rather than `${var,,}`.
+_scoped_git_auth_is_credential_key() {
+  local rc=1 nocase_was_set=0
+  shopt -q nocasematch && nocase_was_set=1
+  shopt -s nocasematch
+  [[ $1 == http.*.extraheader ]] && rc=0
+  [[ $nocase_was_set == 1 ]] || shopt -u nocasematch
+  return "$rc"
+}
 
-  # Indirect expansion (`${!name-}`) rather than a nameref: GitHub's macOS
-  # runner images ship bash 3.2, `declare -n` needs 4.3, and `setup-nix`
-  # deliberately supports those runners.
+# `_scoped_git_auth_same_key <a> <b>` -- the two keys are the same git key,
+# compared case-insensitively (see above).
+_scoped_git_auth_same_key() {
+  local rc=1 nocase_was_set=0
+  shopt -q nocasematch && nocase_was_set=1
+  shopt -s nocasematch
+  [[ $1 == "$2" ]] && rc=0
+  [[ $nocase_was_set == 1 ]] || shopt -u nocasematch
+  return "$rc"
+}
+
+# `_scoped_git_auth_merge` -- the numbered configuration this process should
+# carry once SCOPED_GIT_AUTH_PAIRS is installed over what it already carries.
+# Sets _SGA_KEYS/_SGA_VALUES (dense, index = position) and _SGA_N. Reads the
+# environment; changes nothing in it.
+#
+# THE RULE FOR A CREDENTIAL HEADER IS REPLACE, NOT APPEND. `extraHeader` is
+# multi-valued: two entries for the same URL make git send two `Authorization`
+# headers, and GitHub refuses the request (`remote: Duplicate header:
+# "Authorization"`, HTTP 400). An earlier step routinely leaves such an entry
+# in the job environment -- `setup-nix` emits the job's credential through
+# `$GITHUB_ENV` -- and a later step routinely holds a DIFFERENT token for the
+# same scope (`setup-dev-env` hands its clones the credential broker's fresher
+# token). Skipping only exact duplicates, as this used to, is therefore not
+# enough: the values differ, both were kept, and every clone in the step was
+# refused. So an inherited header at a URL this call covers is overwritten in
+# place with the caller's value -- the caller's credential is the one it chose
+# for this work -- and any further copies of that key are dropped.
+#
+# EVERYTHING ELSE IS KEPT, in order. Unrelated entries (an extraHeader for a
+# URL this call does not cover, `core.longpaths`, `url.*.insteadOf`) keep their
+# values and their relative order; indices shift down only when a duplicate
+# header is dropped. Non-credential pairs keep the previous rule: an exact
+# duplicate is skipped, anything else is appended (a later single-valued entry
+# wins in git, and `insteadOf` is legitimately multi-valued).
+#
+# A numbered entry whose key is unset or empty is dropped: git refuses the
+# whole environment over one (`missing config key GIT_CONFIG_KEY_n`), so
+# carrying it forward would break every later git invocation.
+#
+# Values are only ever copied between variables; nothing here prints one.
+_scoped_git_auth_merge() {
+  local n="${GIT_CONFIG_COUNT:-0}" i j k key value kn vn found have
+  local -a keys=() values=()
+  _SGA_KEYS=()
+  _SGA_VALUES=()
+  _SGA_N=0
+  [[ $n =~ ^[0-9]+$ ]] || n=0
+  for ((j = 0; j < n; j++)); do
+    kn="GIT_CONFIG_KEY_${j}"
+    vn="GIT_CONFIG_VALUE_${j}"
+    [[ -n ${!kn-} ]] || continue
+    _SGA_KEYS[_SGA_N]="${!kn}"
+    _SGA_VALUES[_SGA_N]="${!vn-}"
+    _SGA_N=$((_SGA_N + 1))
+  done
+
   for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
     key="${SCOPED_GIT_AUTH_PAIRS[i]}"
     value="${SCOPED_GIT_AUTH_PAIRS[i + 1]}"
+    if _scoped_git_auth_is_credential_key "$key"; then
+      # Rebuild: the first entry for this key takes the new value where it
+      # stands, later ones are dropped, the rest is copied through.
+      keys=()
+      values=()
+      k=0
+      found=0
+      for ((j = 0; j < _SGA_N; j++)); do
+        if _scoped_git_auth_same_key "${_SGA_KEYS[j]}" "$key"; then
+          [[ $found == 1 ]] && continue
+          found=1
+          keys[k]="${_SGA_KEYS[j]}"
+          values[k]="$value"
+        else
+          keys[k]="${_SGA_KEYS[j]}"
+          values[k]="${_SGA_VALUES[j]}"
+        fi
+        k=$((k + 1))
+      done
+      if [[ $found == 0 ]]; then
+        keys[k]="$key"
+        values[k]="$value"
+        k=$((k + 1))
+      fi
+      _SGA_KEYS=()
+      _SGA_VALUES=()
+      for ((j = 0; j < k; j++)); do
+        _SGA_KEYS[j]="${keys[j]}"
+        _SGA_VALUES[j]="${values[j]}"
+      done
+      _SGA_N=$k
+      continue
+    fi
     have=0
-    for ((j = 0; j < n; j++)); do
-      kn="GIT_CONFIG_KEY_${j}"
-      vn="GIT_CONFIG_VALUE_${j}"
-      if [[ ${!kn-} == "$key" && ${!vn-} == "$value" ]]; then
+    for ((j = 0; j < _SGA_N; j++)); do
+      if [[ ${_SGA_KEYS[j]} == "$key" && ${_SGA_VALUES[j]} == "$value" ]]; then
         have=1
         break
       fi
     done
     [[ $have == 1 ]] && continue
-    printf -v "GIT_CONFIG_KEY_${n}" '%s' "$key"
-    printf -v "GIT_CONFIG_VALUE_${n}" '%s' "$value"
-    export "GIT_CONFIG_KEY_${n}" "GIT_CONFIG_VALUE_${n}"
-    n=$((n + 1))
+    _SGA_KEYS[_SGA_N]="$key"
+    _SGA_VALUES[_SGA_N]="$value"
+    _SGA_N=$((_SGA_N + 1))
   done
+}
 
-  export GIT_CONFIG_COUNT="$n"
+# `scoped_git_auth_export` -- install SCOPED_GIT_AUTH_PAIRS into this process's
+# environment as git's numbered configuration, on top of whatever is already
+# there (see _scoped_git_auth_merge for exactly how).
+#
+# Not renumbering from zero is not politeness. A caller may run after
+# `setup-nix` has already put its own `GIT_CONFIG_COUNT` into the job
+# environment; discarding it would silently drop that configuration for every
+# later step of the job. But a credential header for a URL this call covers is
+# REPLACED, never added beside the inherited one: two values for one
+# `http.<url>.extraHeader` make git send two `Authorization` headers, which
+# GitHub refuses with HTTP 400.
+scoped_git_auth_export() {
+  local old="${GIT_CONFIG_COUNT:-0}" j
+
+  _scoped_git_auth_merge
+  # Indirect assignment (`printf -v`) rather than a nameref: GitHub's macOS
+  # runner images ship bash 3.2, `declare -n` needs 4.3, and `setup-nix`
+  # deliberately supports those runners.
+  for ((j = 0; j < _SGA_N; j++)); do
+    printf -v "GIT_CONFIG_KEY_${j}" '%s' "${_SGA_KEYS[j]}"
+    printf -v "GIT_CONFIG_VALUE_${j}" '%s' "${_SGA_VALUES[j]}"
+    export "GIT_CONFIG_KEY_${j}" "GIT_CONFIG_VALUE_${j}"
+  done
+  # Entries past the new count are ignored by git; unset them anyway so a
+  # dropped duplicate's value does not linger in every child's environment.
+  [[ $old =~ ^[0-9]+$ ]] || old=0
+  for ((j = _SGA_N; j < old; j++)); do
+    unset "GIT_CONFIG_KEY_${j}" "GIT_CONFIG_VALUE_${j}"
+  done
+  _SGA_KEYS=()
+  _SGA_VALUES=()
+
+  export GIT_CONFIG_COUNT="$_SGA_N"
   # Without a URL-embedded credential a misconfigured scope would block on an
   # interactive prompt instead of failing; make it fail.
   export GIT_TERMINAL_PROMPT=0
@@ -460,21 +579,52 @@ scoped_git_auth_with_global() (
   "$@"
 )
 
-# `scoped_git_auth_emit <sink>` -- print SCOPED_GIT_AUTH_PAIRS as `KEY=VALUE`
-# lines to <sink> (a file, e.g. `$GITHUB_ENV`) or to stdout when <sink> is empty.
-# Numbering starts at 0: this is for `setup-nix`, whose whole job is to define
-# the job-wide git configuration, and which must not inherit a partial one.
+# `_scoped_git_auth_env_line <name> <value>` -- append one `$GITHUB_ENV`
+# entry for <name> to the caller's `out` array (bash's dynamic scoping).
+_scoped_git_auth_env_line() {
+  local delim
+  case "$2" in
+  *$'\n'* | *$'\r'*)
+    delim="SCOPED_GIT_AUTH_EOF"
+    while [[ $2 == *"$delim"* ]]; do delim="${delim}_"; done
+    out+=("${1}<<${delim}" "$2" "$delim")
+    ;;
+  *) out+=("${1}=${2}") ;;
+  esac
+}
+
+# `scoped_git_auth_emit <sink>` -- write the job's numbered git configuration,
+# with SCOPED_GIT_AUTH_PAIRS installed over the configuration this process
+# inherited, as `$GITHUB_ENV` lines to <sink> (a file) or to stdout when <sink>
+# is empty.
+#
+# The WHOLE set is written, numbered from 0, with its own `GIT_CONFIG_COUNT`.
+# A step's environment is the job environment earlier steps wrote, so writing
+# the complete merged set is what replaces the job-wide configuration rather
+# than layering on it: `setup-nix` defines the job's credential this way, and
+# `refresh-build-auth` replaces an expiring one. The merge is the same as
+# scoped_git_auth_export's -- an inherited header for a URL these pairs cover
+# is replaced, so the job never carries two credentials for one URL (two
+# `Authorization` headers: GitHub answers 400); unrelated inherited entries
+# are carried forward, where writing a smaller `GIT_CONFIG_COUNT` over them
+# used to hide them from every later step.
+#
+# A value containing a newline is written in the runner's multi-line form
+# (`NAME<<DELIMITER`), so an inherited value can never inject a line of its
+# own into `$GITHUB_ENV`.
 scoped_git_auth_emit() {
   local sink="${1:-}"
-  local i n=0 out=()
+  local j out=()
 
-  for ((i = 0; i < ${#SCOPED_GIT_AUTH_PAIRS[@]}; i += 2)); do
-    out+=("GIT_CONFIG_KEY_${n}=${SCOPED_GIT_AUTH_PAIRS[i]}")
-    out+=("GIT_CONFIG_VALUE_${n}=${SCOPED_GIT_AUTH_PAIRS[i + 1]}")
-    n=$((n + 1))
+  _scoped_git_auth_merge
+  for ((j = 0; j < _SGA_N; j++)); do
+    _scoped_git_auth_env_line "GIT_CONFIG_KEY_${j}" "${_SGA_KEYS[j]}"
+    _scoped_git_auth_env_line "GIT_CONFIG_VALUE_${j}" "${_SGA_VALUES[j]}"
   done
-  out+=("GIT_CONFIG_COUNT=${n}")
+  out+=("GIT_CONFIG_COUNT=${_SGA_N}")
   out+=("GIT_TERMINAL_PROMPT=0")
+  _SGA_KEYS=()
+  _SGA_VALUES=()
 
   if [[ -n $sink ]]; then
     printf '%s\n' "${out[@]}" >>"$sink"
