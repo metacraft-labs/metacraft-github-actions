@@ -536,7 +536,7 @@ runs:
       # other caller reaches this step exactly as it did before this input
       # existed.
       if: ${{ steps.sibling-strategy.outputs.strategy != 'repro-lock' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@10b0546dffa655c83d90ab1b4084e2ab4e7284fb
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@fa2c18031bb8953c7039d5bbaaf069dec406ad91
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -924,7 +924,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@b879c6a844740ef92a0a8931a9f93d38b82d4ecb
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@40106390f33492a51a54c7419cd5b307ba6a296d
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -1004,7 +1004,7 @@ runs:
       # A forced `repro-lock` whose evidence fails never reaches here: it fails
       # the step above instead.
       if: ${{ steps.sibling-strategy.outputs.strategy == 'repro-lock' && steps.repro-siblings.outputs.late-clone == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/clone-siblings@10b0546dffa655c83d90ab1b4084e2ab4e7284fb
+      uses: metacraft-labs/metacraft-github-actions/clone-siblings@fa2c18031bb8953c7039d5bbaaf069dec406ad91
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
