@@ -311,7 +311,7 @@ runs:
     # existing provisioner and its defaults; this only changes when it runs.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@10b0546dffa655c83d90ab1b4084e2ab4e7284fb
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@fa2c18031bb8953c7039d5bbaaf069dec406ad91
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
