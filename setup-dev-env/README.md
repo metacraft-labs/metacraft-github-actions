@@ -367,14 +367,14 @@ runner that starts a daemon of its own gives itself a whole budget, and two jobs
 sharing a runner then overrun it. As its last step on every flavor, this action
 looks for the host's daemon and tells the rest of the job where it is:
 
-| what it finds                                            | what it does                                          |
-| -------------------------------------------------------- | ----------------------------------------------------- |
-| a daemon answering on the host's rendezvous socket       | exports `RUNQUOTA_SOCKET` to `$GITHUB_ENV`            |
-| `runquota-socket` input set                              | exports that endpoint as given (warns if it is silent) |
-| no socket                                                | exports nothing; **does not fail**                    |
-| a socket nothing answers on, or no `runquota` on `PATH`  | exports nothing; **does not fail**                    |
-| `RUNQUOTA_SOCKET` already set                            | leaves the caller's value alone                       |
-| Windows (a fixed named pipe every client uses)           | exports nothing                                       |
+| what it finds                                           | what it does                                           |
+| ------------------------------------------------------- | ------------------------------------------------------ |
+| a daemon answering on the host's rendezvous socket      | exports `RUNQUOTA_SOCKET` to `$GITHUB_ENV`             |
+| `runquota-socket` input set                             | exports that endpoint as given (warns if it is silent) |
+| no socket                                               | exports nothing; **does not fail**                     |
+| a socket nothing answers on, or no `runquota` on `PATH` | exports nothing; **does not fail**                     |
+| `RUNQUOTA_SOCKET` already set                           | leaves the caller's value alone                        |
+| Windows (a fixed named pipe every client uses)          | exports nothing                                        |
 
 The host's rendezvous socket is `/run/runquota/runquotad.sock` on Linux and
 `/var/run/runquota/runquotad.sock` on macOS. "Answers" means `runquota status`
