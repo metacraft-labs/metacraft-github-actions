@@ -370,6 +370,22 @@ inputs:
       an accidental one cannot be added later without CI saying so.
     required: false
     default: "warn"
+  workspace-manifest-repo:
+    description: >
+      Passed straight through to `clone-siblings`. Optional owner/name of the
+      workspace manifest repo whose `repos/*.toml` fragments declare each
+      repository's workspace PATH; when set, every sibling is cloned at that
+      path instead of at `../<name>` (the two differ for a repo such as `nim`,
+      which the metacraft workspace keeps at `codetracer-nim`). Empty keeps
+      `../<name>`. `gh-token` must grant read access when it is private.
+    required: false
+    default: ""
+  workspace-manifest-ref:
+    description: >
+      Passed straight through to `clone-siblings`: the branch or tag of
+      `workspace-manifest-repo` to read. Empty reads its default branch.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -555,6 +571,8 @@ runs:
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
         on-lock-override: ${{ inputs.on-lock-override }}
+        workspace-manifest-repo: ${{ inputs.workspace-manifest-repo }}
+        workspace-manifest-ref: ${{ inputs.workspace-manifest-ref }}
 
     # ------------------------------------------------------------------
     # env-flavor: nix
@@ -1017,6 +1035,8 @@ runs:
         private-manifests-repo: ${{ inputs.private-manifests-repo }}
         private-manifests-ref: ${{ inputs.private-manifests-ref }}
         on-lock-override: ${{ inputs.on-lock-override }}
+        workspace-manifest-repo: ${{ inputs.workspace-manifest-repo }}
+        workspace-manifest-ref: ${{ inputs.workspace-manifest-ref }}
 
     - name: Configure reprobuild binary-cache publishing (reprobuild)
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.repro-publish-key != '' && inputs.repro-publish-cert != '' }}

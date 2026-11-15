@@ -150,7 +150,8 @@ done <"$ACTION"
 for _v in GH_TOKEN SIBLINGS_INPUT SIBLING_OWNER JOB_TOKEN_OWNERS \
   MANIFESTS_REPO INPUT_MANIFESTS_REF PRIVATE_MANIFESTS_REPO \
   INPUT_PRIVATE_MANIFESTS_REF ON_LOCK_OVERRIDE GIT_AUTH_DIR \
-  PR_BASE_SHA EVENT_BEFORE LOCK_STORE; do
+  PR_BASE_SHA EVENT_BEFORE LOCK_STORE WORKSPACE_MANIFEST_REPO \
+  INPUT_WORKSPACE_MANIFEST_REF; do
   case "$ACTION_TEXT" in
   *"        ${_v}: "*) ;;
   *)
@@ -330,6 +331,8 @@ run_step() { # <siblings-input> [<on-lock-override>]
       INPUT_PRIVATE_MANIFESTS_REF="" \
       ON_LOCK_OVERRIDE="${2:-warn}" \
       LOCK_STORE="${LOCK_STORE_UNDER_TEST-record-store}" \
+      WORKSPACE_MANIFEST_REPO="${WSM_UNDER_TEST-}" \
+      INPUT_WORKSPACE_MANIFEST_REF="${WSM_REF_UNDER_TEST-}" \
       GIT_AUTH_DIR="$ROOT/git-auth" \
       GITHUB_ACTION_PATH="$HERE" \
       GITHUB_WORKSPACE="$WS_PARENT/codetracer" \
@@ -1158,6 +1161,153 @@ check "13f: the sibling is cloned with ambient credentials present" "$RC" "0"
 contains "13f: ...and the probe ran" "$(<"$TMPROOT/probe-ambient")" "ran"
 lacks "13f: ...with no ~/.netrc in reach" "$(<"$TMPROOT/probe-ambient")" "netrc"
 lacks "13f: ...and no askpass helper" "$(<"$TMPROOT/probe-ambient")" "askpass"
+
+# ---------------------------------------------------------------------------
+# 14. Placement at the WORKSPACE PATH the workspace manifest declares.
+#
+#     Before `workspace-manifest-repo` every sibling landed at `../<name>`. The
+#     workspace declares `nim` at `codetracer-nim`, so a consumer whose tests
+#     build `../codetracer-nim` found `../nim` and failed with the sibling
+#     cloned (codetracer-native-backend's nim_sourcemap_test). Observed against
+#     the unfixed step: section 14a's entry cloned to `$WS_PARENT/nim`, and
+#     `$WS_PARENT/codetracer-nim` did not exist.
+#
+#     The fixture manifest is shaped like the real one: v2 fragments with a
+#     `[repo]` table, a fragment whose FILE name is not its repo name
+#     (`codemirror-state.toml` declaring `state`), a nested path, and other
+#     tables after `[repo]` whose keys must not be read as the repo's.
+# ---------------------------------------------------------------------------
+NIM_SHA="$(mk_repo nim)"
+STATE_SHA="$(mk_repo state)"
+WSM_WORK="$TMPROOT/build/repro-workspace"
+mk_workspace_manifest() { # <fragment-file>=<content>...
+  local spec
+  rm -rf "$SRV/metacraft-labs/repro-workspace.git" "$WSM_WORK"
+  git_q init --bare -b latest "$SRV/metacraft-labs/repro-workspace.git"
+  mkdir -p "$WSM_WORK/repos"
+  git_q -C "$WSM_WORK" init -b latest .
+  printf 'workspace root\n' >"$WSM_WORK/README.md"
+  for spec in "$@"; do
+    printf '%s' "${spec#*=}" >"$WSM_WORK/repos/${spec%%=*}"
+  done
+  git_q -C "$WSM_WORK" add -A
+  git_q -C "$WSM_WORK" -c user.name=CI -c user.email=ci@local commit --no-gpg-sign -m manifest
+  git_q -C "$WSM_WORK" push "$SRV/metacraft-labs/repro-workspace.git" latest
+}
+frag() { # <name> <path> -> a v2 fragment, CRLF-free, with a trailing table
+  printf 'schema = "reprobuild.workspace.repo.v2"\n\n[repo]\nname = "%s"\npath = "%s"  # the workspace path\nurl_prefix = "metacraft-labs"\n\nremotes = [\n  { name = "upstream", url_prefix = "x", url_suffix = "y" },\n]\n\n[other]\nname = "not-the-repo"\npath = "not-the-path"\n' "$1" "$2"
+}
+mk_workspace_manifest \
+  "nim.toml=$(frag nim codetracer-nim)" \
+  "codemirror-state.toml=$(frag state codetracer/refs/codemirror-state)" \
+  "nim-acp.toml=$(frag nim-acp nim-acp)"
+
+# 14a. The manifest's path wins over the name, for a bare and an explicit entry
+#      alike, and the table says where each sibling went.
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA
+state=$STATE_SHA
+nim-acp=$ACP_PIN"
+check "14a: siblings placed from the workspace manifest clone" "$RC" "0"
+check "14a: nim is at its workspace path codetracer-nim" \
+  "$("$REAL_GIT" -C "$WS_PARENT/codetracer-nim" rev-parse HEAD 2>/dev/null)" "$NIM_SHA"
+check "14a: ...and not at ../nim" "$([[ -e $WS_PARENT/nim ]] && echo present || echo absent)" "absent"
+check "14a: a fragment whose file name is not the repo name is matched on [repo] name" \
+  "$("$REAL_GIT" -C "$WS_PARENT/codetracer/refs/codemirror-state" rev-parse HEAD 2>/dev/null)" "$STATE_SHA"
+check "14a: ...a key of a later table is not read as the repo's" \
+  "$([[ -e $WS_PARENT/not-the-path ]] && echo present || echo absent)" "absent"
+check "14a: a repo whose path is its name stays at ../<name>" \
+  "$("$REAL_GIT" -C "$WS_PARENT/nim-acp" rev-parse HEAD 2>/dev/null)" "$ACP_PIN"
+contains "14a: the table names the workspace path" "$OUT" "at ../codetracer-nim (workspace path)"
+contains "14a: CT_SIBLING_PATHS maps the name to the workspace path" \
+  "$(<"$TMPROOT/github-env")" "nim=$WS_PARENT/codetracer-nim"
+primary_intact "14a"
+
+# 14b. Not opted in: `../<name>`, exactly as before, and the manifest is not
+#      contacted.
+WSM_UNDER_TEST="" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" run_step "nim=$NIM_SHA"
+check "14b: without the opt-in the step still succeeds" "$RC" "0"
+check "14b: ...and places nim at ../nim" \
+  "$("$REAL_GIT" -C "$WS_PARENT/nim" rev-parse HEAD 2>/dev/null)" "$NIM_SHA"
+lacks "14b: ...without reading a workspace manifest" "$OUT" "workspace manifest"
+
+# 14c. A sibling the manifest does not declare has no workspace path: refused,
+#      every such sibling named at once, before anything is cloned.
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA
+nim-agents=$AGENTS_PIN
+isonim=$(sha_of isonim)"
+check "14c: an undeclared sibling is refused" "$RC" "1"
+contains "14c: ...naming every undeclared sibling" "$OUT" "declares no repository named: nim-agents isonim"
+check "14c: nothing was cloned" "$([[ -d $WS_PARENT/codetracer-nim ]] && echo cloned || echo none)" "none"
+
+# 14d. An unreadable manifest is a refusal, never a silent `../<name>`.
+WSM_UNDER_TEST="metacraft-labs/no-such-workspace" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA"
+check "14d: an unreadable workspace manifest is refused" "$RC" "1"
+contains "14d: ...saying which manifest" "$OUT" "could not read the workspace manifest metacraft-labs/no-such-workspace"
+check "14d: ...and nothing was cloned at ../nim instead" "$([[ -d $WS_PARENT/nim ]] && echo cloned || echo none)" "none"
+
+# 14e. A path that escapes the workspace, and a name declared twice, are
+#      manifest defects; neither is cloned anywhere.
+mk_workspace_manifest \
+  "nim.toml=$(frag nim ../outside)" \
+  "state-a.toml=$(frag state state)" \
+  "state-b.toml=$(frag state other-state)"
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA
+state=$STATE_SHA"
+check "14e: an escaping path and a duplicate name are refused" "$RC" "1"
+contains "14e: ...naming the escaping path" "$OUT" "nim=../outside(repos/nim.toml)"
+contains "14e: ...and the duplicate's two fragments" "$OUT" "state(repos/state-a.toml,repos/state-b.toml)"
+check "14e: nothing escaped the workspace" "$([[ -e $TMPROOT/outside ]] && echo escaped || echo contained)" "contained"
+
+# 14f. A manifest that places some other name ON the primary checkout must not
+#      be allowed to `rm -rf` the commit under test.
+mk_workspace_manifest "nim.toml=$(frag nim codetracer)"
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA"
+check "14f: a placement on the primary checkout is refused" "$RC" "1"
+contains "14f: ...saying why" "$OUT" "which is the primary checkout"
+primary_intact "14f"
+
+# 14g. A malformed opt-in value costs no network.
+WSM_UNDER_TEST="--upload-pack=touch $TMPROOT/pwned" COMMITTED_LOCK="" LOCK_STORE_UNDER_TEST="" \
+  run_step "nim=$NIM_SHA"
+check "14g: a malformed workspace-manifest-repo is refused" "$RC" "1"
+check "14g: ...and nothing ran" "$([[ -e $TMPROOT/pwned ]] && echo ran || echo none)" "none"
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" WSM_REF_UNDER_TEST="-x" COMMITTED_LOCK="" \
+  LOCK_STORE_UNDER_TEST="" run_step "nim=$NIM_SHA"
+check "14g: a malformed workspace-manifest-ref is refused" "$RC" "1"
+
+# 14h. Two names the manifest places at ONE path: the second clone would
+#      replace the first, so it is refused before either is cloned.
+mk_workspace_manifest \
+  "nim.toml=$(frag nim shared-dir)" \
+  "codemirror-state.toml=$(frag state shared-dir)"
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" WSM_REF_UNDER_TEST="" COMMITTED_LOCK="" \
+  LOCK_STORE_UNDER_TEST="" run_step "nim=$NIM_SHA
+state=$STATE_SHA"
+check "14h: two siblings at one path are refused" "$RC" "1"
+contains "14h: ...naming the path and both siblings" "$OUT" "shared-dir(nim,state)"
+check "14h: ...and nothing was cloned" "$([[ -e $WS_PARENT/shared-dir ]] && echo cloned || echo none)" "none"
+
+# 14i. A sibling nested inside another sibling's path survives when it is
+#      listed FIRST: the outer repository is cloned before it, not over it.
+#      Observed against the order-preserving clone loop: the outer clone
+#      replaced its directory and `outer/refs/codemirror-state` was gone.
+OUTER_SHA="$(mk_repo outer)"
+mk_workspace_manifest \
+  "outer.toml=$(frag outer outer)" \
+  "codemirror-state.toml=$(frag state outer/refs/codemirror-state)"
+WSM_UNDER_TEST="metacraft-labs/repro-workspace" WSM_REF_UNDER_TEST="" COMMITTED_LOCK="" \
+  LOCK_STORE_UNDER_TEST="" run_step "state=$STATE_SHA
+outer=$OUTER_SHA"
+check "14i: nested placements clone" "$RC" "0"
+check "14i: the outer sibling is at its path" \
+  "$("$REAL_GIT" -C "$WS_PARENT/outer" rev-parse HEAD 2>/dev/null)" "$OUTER_SHA"
+check "14i: ...and the inner one listed before it survived" \
+  "$("$REAL_GIT" -C "$WS_PARENT/outer/refs/codemirror-state" rev-parse HEAD 2>/dev/null)" "$STATE_SHA"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

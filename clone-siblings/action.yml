@@ -98,7 +98,9 @@ description: >
   lock. The set of
   siblings comes from the `siblings` input or, when empty, the calling repo's
   `.github/sibling-repos` file (one repo name per line). Each sibling is cloned
-  adjacent to the host checkout (../<name>). A commit with no lock fails loudly;
+  adjacent to the host checkout (../<name>, or at the workspace path the
+  workspace manifest declares when `workspace-manifest-repo` is set). A commit
+  with no lock fails loudly;
   there is no silent fallback to a branch tip. A sibling the lock does not NAME
   fails just as loudly, but as what it is — a workspace-membership gap, i.e. a
   repo the project manifest does not declare — reported for every such sibling
@@ -171,7 +173,8 @@ inputs:
       An entry may also be spelled `owner/name` (with or without `=ref`) to
       clone from a GitHub owner other than `sibling-owner`. The repo NAME is
       what the workspace lock is keyed by and what the clone is placed at
-      (`../<name>`); the owner only selects the remote. Declaring the owner
+      (`../<name>`, or the workspace path `workspace-manifest-repo` declares
+      for that name); the owner only selects the remote. Declaring the owner
       here is what makes it possible to compose a workspace out of repos from
       more than one org — reprobuild's manifest model already allows a
       `projectRemote` of `blocksense-network` — without the CI token having to
@@ -276,6 +279,36 @@ inputs:
       The branch of the private manifest repo. Defaults to `manifests-ref`.
     required: false
     default: ""
+  workspace-manifest-repo:
+    description: >
+      Optional owner/name of the WORKSPACE MANIFEST repo whose `repos/*.toml`
+      fragments declare where each repository lives in the workspace (the
+      fragment's `[repo] path`). When set, every sibling is cloned at
+      `<workspace root>/<path>` — the layout a developer's `repro` workspace
+      has — instead of at `../<name>`. The two differ whenever a repo's NAME is
+      not its workspace PATH: the `nim` repository lives at `codetracer-nim`,
+      and a test that builds `../codetracer-nim` finds nothing at `../nim`.
+
+      Neither lock carries the placement: a committed `repro.lock` (v3) records
+      no paths at all, and an explicit `name=ref` entry consults no lock. The
+      workspace manifest is the one place that declares it, so it is read
+      from there, and only from there.
+
+      Opting in makes the manifest AUTHORITATIVE for placement: a sibling no
+      fragment declares, a name two fragments declare, an unusable `path`, or a
+      manifest repo that cannot be cloned fails the step before anything is
+      cloned, naming every such sibling at once. Empty (the default) keeps the
+      `../<name>` placement every consumer has today. `gh-token` must grant
+      read access to this repo when it is private.
+    required: false
+    default: ""
+  workspace-manifest-ref:
+    description: >
+      The branch or tag of `workspace-manifest-repo` to read. Empty (the
+      default) reads its default branch. Placement is a layout fact, not a
+      revision pin, so a moving branch is the expected value here.
+    required: false
+    default: ""
   on-lock-override:
     description: >
       What to do when a `name=ref` entry replaces a revision the workspace lock
@@ -322,6 +355,8 @@ runs:
         INPUT_PRIVATE_MANIFESTS_REF: ${{ inputs.private-manifests-ref }}
         ON_LOCK_OVERRIDE: ${{ inputs.on-lock-override }}
         LOCK_STORE: ${{ inputs.lock-store }}
+        WORKSPACE_MANIFEST_REPO: ${{ inputs.workspace-manifest-repo }}
+        INPUT_WORKSPACE_MANIFEST_REF: ${{ inputs.workspace-manifest-ref }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         # The two context values the runner exposes no environment variable
         # for. Everything else the body needs — $GITHUB_ACTION_PATH,
