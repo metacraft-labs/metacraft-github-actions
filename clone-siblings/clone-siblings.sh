@@ -340,6 +340,64 @@ if [ -n "${BAD_REFS}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# WHERE EACH SIBLING IS PLACED: the workspace manifest, when the caller names
+# one (`workspace-manifest-repo`).
+#
+# A sibling used to land at `../<name>` unconditionally. That is the workspace
+# layout only while a repo's NAME equals its workspace PATH, and the manifest
+# does not promise that: the `nim` repository is declared
+# `name = "nim"`, `path = "codetracer-nim"`, so a consumer whose tests build
+# `../codetracer-nim` found `../nim` instead and failed on a sibling CI had in
+# fact cloned. The resolver has always known the two differ
+# (resolve-sibling-rev.sh's header; its `nim -> codetracer-nim` contract), but
+# a revision was all this step ever asked it for.
+#
+# Neither lock can answer the placement question. A committed `repro.lock`
+# (solved-graph-lock v3) records no paths by design (a v2 `path` was a
+# machine-local hint, never an identity; see `load_committed_lock`), and an
+# explicit `name=ref` entry consults no lock at all. The `repos/*.toml`
+# fragments of the workspace manifest are the declaration, so placement is read
+# from them and from nothing else: no guessing from the remote URL, no
+# per-consumer table of exceptions.
+#
+# Opt-in, because every consumer pins this action fleet-wide and a new clone of
+# a private repository is a new way for every one of their jobs to fail. A
+# caller that opts in has made the manifest authoritative, so everything that
+# would make a placement a guess is a refusal (see `resolve_placements`).
+#
+# Validated here, with the override refs, so a malformed value costs no network
+# and leaves nothing half-cloned.
+WSM_REPO="${WORKSPACE_MANIFEST_REPO:-}"
+WSM_REPO="${WSM_REPO//[[:space:]]/}"
+WSM_REF="${INPUT_WORKSPACE_MANIFEST_REF:-}"
+WSM_REF="${WSM_REF//[[:space:]]/}"
+WSM_OWNER=""
+if [ -n "${WSM_REPO}" ]; then
+  case "${WSM_REPO}" in
+  */*/* | /* | */ | -* | .*)
+    echo "::error::clone-siblings: 'workspace-manifest-repo' must be owner/name (got '${WSM_REPO}')."
+    exit 1
+    ;;
+  */*) ;;
+  *)
+    echo "::error::clone-siblings: 'workspace-manifest-repo' must be owner/name (got '${WSM_REPO}')."
+    exit 1
+    ;;
+  esac
+  # The same whitelist as an override ref, and for the same reason: the value
+  # is substituted into a git command line.
+  if ! ref_shape_ok "${WSM_REPO}"; then
+    echo "::error::clone-siblings: 'workspace-manifest-repo' '${WSM_REPO}' is not a usable owner/name: [0-9A-Za-z._-] only on each side of the '/'."
+    exit 1
+  fi
+  WSM_OWNER="${WSM_REPO%%/*}"
+  if [ -n "${WSM_REF}" ] && ! ref_shape_ok "${WSM_REF}"; then
+    echo "::error::clone-siblings: 'workspace-manifest-ref' '${WSM_REF}' is not a usable branch or tag: [0-9A-Za-z._/-] only, not starting with '-', '.' or '/'."
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # The git credential for everything this step clones.
 #
 # This used to be a token embedded in every clone URL plus, in each sibling's own
@@ -435,6 +493,9 @@ if [ "${LOCK_STORE}" = "record-store" ]; then
     add_owner "$(scoped_git_auth_owner_of "${PRIVATE_MANIFESTS_REPO}")"
   fi
 fi
+# The workspace manifest is cloned in this step too, so it is in the scope for
+# the same reason the record store is.
+[ -n "${WSM_OWNER}" ] && add_owner "${WSM_OWNER}"
 
 if [ "${#CLONE_OWNERS[@]}" -eq 0 ]; then
   echo "::error::no GitHub owner to clone from: 'sibling-owner' is empty and no sibling entry is spelled owner/name."
@@ -871,6 +932,178 @@ if [ -n "${MISSING}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# PASS 1b — resolve every PLACEMENT. Still nothing is cloned.
+#
+# PLACES[i] is the workspace-root-relative path sibling i is cloned at. Without
+# `workspace-manifest-repo` it is the NAME, i.e. `../<name>`, as it always was.
+# With it, it is the `path` of the `repos/*.toml` fragment whose `[repo] name`
+# is the sibling's name (see the input's description and the comment where it
+# is validated).
+#
+# Fragment FILE names are not repo names (`repos/codemirror-state.toml` declares
+# `name = "state"`), so every fragment is read and matched on its `name` key.
+# The reader is bash builtins only, like the rest of this step, and reads only
+# what it needs: the `name` and `path` keys of the `[repo]` table.
+declare -a PLACES=()
+for i in "${!NAMES[@]}"; do PLACES+=("${NAMES[$i]}"); done
+
+# path_shape_ok <path>: a workspace-root-relative path that can only name a
+# directory below the workspace root. The rules reprobuild applies to a
+# fragment's `path` (no absolute or drive path, no `..` or `.` segment, no
+# empty segment), plus the character whitelist the override refs use, because
+# the value becomes a `git` destination argument.
+path_shape_ok() { # <path>
+  local p="$1" seg rest
+  ref_shape_ok "${p}" || return 1
+  rest="${p}/"
+  while [ -n "${rest}" ]; do
+    seg="${rest%%/*}"
+    rest="${rest#*/}"
+    case "${seg}" in
+    '' | . | ..) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# toml_value <rhs>: the value of a `key = <rhs>` line, quotes removed and any
+# trailing comment dropped. Basic and literal strings only, which is all a
+# fragment's `name` and `path` ever are.
+toml_value() { # <rhs>
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  case "${v}" in
+  \"*) v="${v#\"}" && v="${v%%\"*}" ;;
+  \'*) v="${v#\'}" && v="${v%%\'*}" ;;
+  *)
+    v="${v%%#*}"
+    v="${v%"${v##*[![:space:]]}"}"
+    ;;
+  esac
+  printf '%s' "${v}"
+}
+
+resolve_placements() {
+  local wsm="${RUNNER_TEMP}/workspace-manifest" f line key val in_repo nm pth i j
+  local -a FR_NAMES=() FR_PATHS=() FR_FILES=()
+  local undeclared="" dup="" badpath=""
+  rm -rf "${wsm}"
+  # Shallow and blob-less, then only `repos/` is checked out: the fragments are
+  # a few hundred small files in a repository that also carries the
+  # workspace's history, docs and journals. A server that cannot filter sends
+  # the blobs anyway, which costs bandwidth and changes nothing else.
+  local -a clone_args=(clone --quiet --depth 1 --filter=blob:none --sparse --no-tags)
+  [ -n "${WSM_REF}" ] && clone_args+=(--branch "${WSM_REF}")
+  echo "Reading sibling placements from the workspace manifest ${WSM_REPO}${WSM_REF:+@${WSM_REF}}..."
+  if ! git "${clone_args[@]}" "https://github.com/${WSM_REPO}.git" "${wsm}" ||
+    ! git -C "${wsm}" sparse-checkout set repos; then
+    echo "::error::clone-siblings: could not read the workspace manifest ${WSM_REPO}${WSM_REF:+ at '${WSM_REF}'} (see git's message above). 'workspace-manifest-repo' makes that manifest the authority on where each sibling is placed, so cloning at a guessed '../<name>' instead would put a sibling whose name differs from its workspace path where nothing looks for it. Nothing was cloned. Check that the repository exists and that the CI token can read it, or remove 'workspace-manifest-repo' to keep the '../<name>' placement."
+    exit 1
+  fi
+  for f in "${wsm}"/repos/*.toml; do
+    [ -f "${f}" ] || continue
+    in_repo=0
+    nm=""
+    pth=""
+    while IFS= read -r line || [ -n "${line}" ]; do
+      line="${line%$'\r'}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      case "${line}" in
+      '' | '#'*) continue ;;
+      '['*)
+        in_repo=0
+        [ "${line%%]*}" = "[repo" ] && in_repo=1
+        continue
+        ;;
+      esac
+      [ "${in_repo}" -eq 1 ] || continue
+      key="${line%%=*}"
+      [ "${key}" = "${line}" ] && continue
+      key="${key%"${key##*[![:space:]]}"}"
+      val="$(toml_value "${line#*=}")"
+      case "${key}" in
+      name) nm="${val}" ;;
+      path) pth="${val}" ;;
+      esac
+    done <"${f}"
+    [ -n "${nm}" ] || continue
+    FR_NAMES+=("${nm}")
+    FR_PATHS+=("${pth}")
+    FR_FILES+=("${f#"${wsm}"/}")
+  done
+  if [ "${#FR_NAMES[@]}" -eq 0 ]; then
+    echo "::error::clone-siblings: the workspace manifest ${WSM_REPO}${WSM_REF:+@${WSM_REF}} has no repos/*.toml fragment declaring a [repo] name, so it cannot be the manifest 'workspace-manifest-repo' should name. Nothing was cloned."
+    exit 1
+  fi
+
+  for i in "${!NAMES[@]}"; do
+    local hit=-1
+    for j in "${!FR_NAMES[@]}"; do
+      [ "${FR_NAMES[$j]}" = "${NAMES[$i]}" ] || continue
+      if [ "${hit}" -ge 0 ]; then
+        dup="${dup} ${NAMES[$i]}(${FR_FILES[$hit]},${FR_FILES[$j]})"
+        continue
+      fi
+      hit="${j}"
+    done
+    if [ "${hit}" -lt 0 ]; then
+      undeclared="${undeclared} ${NAMES[$i]}"
+      continue
+    fi
+    # A fragment without `path` keeps the repo at its name, which is what
+    # reprobuild does with it.
+    pth="${FR_PATHS[$hit]:-${NAMES[$i]}}"
+    if ! path_shape_ok "${pth}"; then
+      badpath="${badpath} ${NAMES[$i]}=${pth}(${FR_FILES[$hit]})"
+      continue
+    fi
+    PLACES[i]="${pth}"
+  done
+
+  if [ -n "${undeclared}${dup}${badpath}" ]; then
+    [ -n "${undeclared}" ] && echo "::error::clone-siblings: the workspace manifest ${WSM_REPO} declares no repository named:${undeclared}. Its fragments are matched on their [repo] name, which can differ from the fragment's file name and from the workspace path; check the spelling. A repository the workspace does not declare has no workspace path, so there is nowhere correct to put it. Declare it ('repro ws repos add'), or drop it from 'siblings'."
+    [ -n "${dup}" ] && echo "::error::clone-siblings: the workspace manifest ${WSM_REPO} declares these names in more than one fragment:${dup}. One repository has one workspace path; fix the manifest."
+    [ -n "${badpath}" ] && echo "::error::clone-siblings: the workspace manifest ${WSM_REPO} declares a path this step will not clone into:${badpath}. A path must be workspace-root-relative, use [0-9A-Za-z._/-] only, and contain no empty, '.' or '..' segment."
+    echo "::error::clone-siblings: nothing was cloned."
+    exit 1
+  fi
+
+  # A sibling placed ON the primary checkout would be `rm -rf`'d into it by the
+  # clone below. The entry naming the triggering repository was already
+  # dropped by name; this catches a manifest that gives some other name the
+  # checkout's own path.
+  local consumer_base="${MCL_CONSUMER_ROOT//\\//}"
+  consumer_base="${consumer_base%/}"
+  consumer_base="${consumer_base##*/}"
+  for i in "${!NAMES[@]}"; do
+    if [ "${PLACES[$i]}" = "${consumer_base}" ]; then
+      echo "::error::clone-siblings: the workspace manifest ${WSM_REPO} places sibling '${NAMES[$i]}' at '${PLACES[$i]}', which is the primary checkout of ${GITHUB_REPOSITORY}. Cloning there would delete the commit under test. Nothing was cloned."
+      exit 1
+    fi
+  done
+
+  # Two siblings placed at ONE path: the second clone would `rm -rf` the first
+  # and the job would build against whichever came last, with both reported as
+  # cloned. Duplicate NAMES were refused above; this is two names, two
+  # fragments, one `path`.
+  local clash=""
+  for i in "${!NAMES[@]}"; do
+    for j in "${!NAMES[@]}"; do
+      [ "${j}" -gt "${i}" ] || continue
+      [ "${PLACES[$i]}" = "${PLACES[$j]}" ] || continue
+      clash="${clash} ${PLACES[$i]}(${NAMES[$i]},${NAMES[$j]})"
+    done
+  done
+  if [ -n "${clash}" ]; then
+    echo "::error::clone-siblings: the workspace manifest ${WSM_REPO} places more than one sibling at the same path:${clash}. Each clone replaces the directory it lands in, so only the last would survive. Fix the manifest. Nothing was cloned."
+    exit 1
+  fi
+}
+if [ -n "${WSM_REPO}" ]; then
+  resolve_placements
+fi
+
+# ---------------------------------------------------------------------------
 # The resolution table. One line per sibling, on every run, whether or not
 # anything is wrong — an accidental override has to be visible in a log that
 # SUCCEEDED, which is the only kind of log this case ever produced.
@@ -895,7 +1128,10 @@ for i in "${!NAMES[@]}"; do
     ;;
   *) note="" ;;
   esac
-  echo "  ${OWNERS[$i]}/${NAMES[$i]} -> ${REVS[$i]} (${SRCS[$i]})${note}"
+  # The placement, when the workspace manifest moved it off `../<name>`.
+  place=""
+  [ "${PLACES[$i]}" != "${NAMES[$i]}" ] && place=" at ../${PLACES[$i]} (workspace path)"
+  echo "  ${OWNERS[$i]}/${NAMES[$i]} -> ${REVS[$i]} (${SRCS[$i]})${place}${note}"
 done
 
 # ---------------------------------------------------------------------------
@@ -982,13 +1218,33 @@ fi
 
 # ---------------------------------------------------------------------------
 # PASS 2 — clone, now that every revision is known and legal.
+#
+# Shallowest placement first. A workspace path may nest inside another
+# sibling's (`codetracer/refs/codemirror-state` inside `codetracer`), and every
+# clone starts by replacing its destination directory, so cloning the outer
+# repository second would delete the inner one it contains. An ancestor path
+# always has fewer segments than its descendants, so ordering by segment count
+# is enough; within one depth the input order is kept. Without the workspace
+# manifest every placement is one segment and the order is the input order.
+CLONE_ORDER=()
+_depth=1
+while [ "${#CLONE_ORDER[@]}" -lt "${#NAMES[@]}" ]; do
+  for i in "${!NAMES[@]}"; do
+    _segs="${PLACES[$i]//[!\/]/}"
+    [ "$((${#_segs} + 1))" -eq "${_depth}" ] && CLONE_ORDER+=("${i}")
+  done
+  _depth=$((_depth + 1))
+done
 SIBLING_PATHS=""
-for i in "${!NAMES[@]}"; do
+for i in "${CLONE_ORDER[@]}"; do
   name="${NAMES[$i]}"
   owner="${OWNERS[$i]}"
   rev="${REVS[$i]}"
   WORKSPACE_NORM="${MCL_CONSUMER_ROOT//\\//}"
-  dest="${WORKSPACE_NORM}/../${name}"
+  # `../<name>`, or the workspace path PASS 1b read from the manifest. A path
+  # may nest (`codetracer/refs/codemirror-state`); `git init` creates the
+  # missing parents.
+  dest="${WORKSPACE_NORM}/../${PLACES[$i]}"
   # Credential-free URL; the scoped extraHeader in this step's environment
   # authenticates it, and `git submodule update --recursive` inherits that
   # environment at every depth — which is what keeps the PRIVATE submodule path
