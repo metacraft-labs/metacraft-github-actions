@@ -74,7 +74,9 @@ class ReleaseSelection(unittest.TestCase):
                         REPRO_VERSION='1.2.3', GITHUB_OUTPUT=str(self.root / 'output'),
                         GITHUB_PATH=str(self.root / 'path'), RUNNER_TEMP=str(self.root))
 
-    def archive(self, reported='1.2.3', corrupt_checksum=False):
+    def archive(self, reported='1.2.3', corrupt_checksum=False, links=()):
+        """Publish a release archive; `links` is (path, target) symlinks to add
+        under the package root, after any parent directories they need."""
         name = f'reprobuild-1.2.3-{self.os_name}-{self.arch}'
         data = io.BytesIO()
         with tarfile.open(fileobj=data, mode='w:gz') as archive:
@@ -82,6 +84,16 @@ class ReleaseSelection(unittest.TestCase):
             entry = tarfile.TarInfo(name + '/bin/repro')
             entry.size, entry.mode = len(body), 0o755
             archive.addfile(entry, io.BytesIO(body))
+            for path, target in links:
+                parent = name
+                for part in Path(path).parent.parts:
+                    parent += '/' + part
+                    folder = tarfile.TarInfo(parent)
+                    folder.type, folder.mode = tarfile.DIRTYPE, 0o755
+                    archive.addfile(folder)
+                link = tarfile.TarInfo(f'{name}/{path}')
+                link.type, link.linkname = tarfile.SYMTYPE, target
+                archive.addfile(link)
         payload = data.getvalue()
         asset = name + '.tar.gz'
         prefix = '/metacraft-labs/reprobuild/releases/download/v1.2.3/'
@@ -195,6 +207,52 @@ class ReleaseSelection(unittest.TestCase):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('REPRO_BIN_DIR=', result.stdout)
+
+    def test_relative_symlink_inside_the_package_installs(self):
+        # The shape of the darwin non-SIP tools bundle: usr/bin/<tool> links
+        # climb with `..` but resolve to bin/<tool> inside the same bundle.
+        self.archive(links=[('libexec/tools/bin/tee', '../../../bin/repro'),
+                            ('libexec/tools/usr/bin/tee', '../../bin/tee')])
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('REPRO_BIN_DIR=', result.stdout)
+
+    def test_relative_symlink_escaping_the_package_is_refused(self):
+        self.archive(links=[('libexec/out', '../../../etc/passwd')])
+        result = self.install()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('pointing outside the package', result.stderr)
+        self.assertFalse(Path(self.env['REPRO_INSTALL_DIR']).exists())
+
+    def test_absolute_symlink_is_refused(self):
+        self.archive(links=[('bin/host-sh', '/bin/sh')])
+        result = self.install()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('pointing outside the package', result.stderr)
+
+    def test_symlink_to_the_parent_of_the_package_is_refused(self):
+        self.archive(links=[('up', '..')])
+        result = self.install()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('pointing outside the package', result.stderr)
+
+    def test_trailing_slash_symlink_escaping_the_package_is_refused(self):
+        # `dirname "../"` is `.`: without stripping the slash first, only the
+        # link's own directory would be judged.
+        for target in ('../', '..//', 'bin/../../'):
+            with self.subTest(target=target):
+                self.archive(links=[('up', target)])
+                result = self.install()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('pointing outside the package', result.stderr)
+        self.archive(links=[('libexec/out', '../../')])
+        result = self.install()
+        self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_trailing_slash_symlink_inside_the_package_installs(self):
+        self.archive(links=[('libexec/tools/bindir', '../../bin/')])
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_checksum_mismatch_is_not_source_fallback(self):
         self.archive(corrupt_checksum=True)
