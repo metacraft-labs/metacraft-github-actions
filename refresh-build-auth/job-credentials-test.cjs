@@ -809,6 +809,144 @@ test("setup-nix uses the job netrc when the job brings the cache credential", (t
   );
 });
 
+// The bashes the step body is run under: `bash` on PATH, plus any listed in
+// SETUP_NIX_TEST_BASHES (colon-separated absolute paths). Runner images differ:
+// ubuntu-latest (26.04) has bash 5.3, where the failure below does not occur;
+// it reproduces with bash 5.2 (5.2p37 measured), the shell of the self-hosted
+// linux-arm64 runners that failed. Set it to a 5.2 binary to exercise that
+// shell locally.
+function stepBashes() {
+  const extra = (process.env.SETUP_NIX_TEST_BASHES || "")
+    .split(":")
+    .filter(Boolean);
+  return ["bash", ...extra];
+}
+
+// setup-nix twice in one job, with no credential broker: the workflow's own
+// setup-nix, then the one setup-reprobuild runs when it falls back to building
+// repro from source (no prebuilt asset for linux-aarch64). The second reuses
+// MCL_JOB_CREDENTIALS_DIR, which by then holds the token file but no
+// broker.pid. On bash 5.2 the ownership test's `$(<broker.pid)` exited the
+// whole step with status 1 and no output (codetracer-circom-recorder job
+// 133375431446, codetracer-fuel-recorder job 132999819955).
+test("a second setup-nix in a job with no broker reuses the directory and succeeds", (t) => {
+  for (const bash of stepBashes()) {
+    const home = tempDir(t);
+    const runnerTemp = path.join(home, "runner-temp");
+    fs.mkdirSync(runnerTemp);
+    const jobEnv = path.join(home, "github-env");
+    fs.writeFileSync(jobEnv, "");
+    const env = isolatedNixEnv(home, {
+      GH_TOKEN: "gh-token-sentinel-A",
+      GITHUB_ENV: jobEnv,
+      RUNNER_TEMP: runnerTemp,
+      GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+      EXTRA_SUBSTITUTERS: "https://cache.example.com/private",
+      EXTRA_TRUSTED_PUBLIC_KEYS: "private:AAAA",
+      ATTIC_TOKEN: "job-attic-sentinel",
+      ATTIC_ENDPOINT: "https://cache.example.com/",
+    });
+    delete env.NIX_USER_CONF_FILES;
+    // The runner's own shell line for `shell: bash`.
+    const setupNix = () =>
+      spawnSync(
+        bash,
+        [
+          "--noprofile",
+          "--norc",
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          setupNixStepBody(),
+        ],
+        { env, encoding: "utf8" },
+      );
+    const first = setupNix();
+    assert.equal(first.status, 0, `${bash}: ` + first.stdout + first.stderr);
+    const dir = /^MCL_JOB_CREDENTIALS_DIR=(.*)$/m.exec(
+      fs.readFileSync(jobEnv, "utf8"),
+    )[1];
+    // What the runner exports to every later step of the job.
+    env.MCL_JOB_CREDENTIALS_DIR = dir;
+    env.NIX_CONFIG = `!include ${path.join(dir, jc.NIX_TOKENS)}`;
+    assert.ok(fs.existsSync(path.join(dir, jc.NIX_TOKENS)));
+    assert.ok(!fs.existsSync(path.join(dir, "broker.pid")));
+
+    env.GH_TOKEN = "gh-token-sentinel-B";
+    const second = setupNix();
+    assert.equal(second.status, 0, `${bash}: ` + second.stdout + second.stderr);
+    assert.doesNotMatch(second.stdout, /credential broker owns/);
+    assert.deepEqual(
+      fs.readFileSync(jobEnv, "utf8").trim().split("\n"),
+      [`MCL_JOB_CREDENTIALS_DIR=${dir}`, `MCL_JOB_CREDENTIALS_DIR=${dir}`],
+      `${bash}: the second setup-nix must reuse the job's directory`,
+    );
+    // With no broker, the second caller's token is the job's token.
+    assert.equal(
+      fs.readFileSync(path.join(dir, jc.NIX_TOKENS), "utf8"),
+      `access-tokens = github.com=gh-token-sentinel-B\nnetrc-file = ${path.join(dir, jc.NETRC)}\n`,
+    );
+    assert.ok(
+      fs
+        .readFileSync(path.join(dir, jc.NETRC), "utf8")
+        .includes("password gh-token-sentinel-B"),
+    );
+  }
+});
+
+// The failure above is version-dependent, so the run alone does not guard it
+// on a runner whose bash is 5.3. A failed `$(<file)` exits a `set -e` bash 5.2
+// script even inside a condition; the step must not use the form at all.
+test("setup-nix's credential step never reads a file with $(<...)", () => {
+  assert.doesNotMatch(setupNixStepBody(), /\$\(\s*</);
+});
+
+// Every failure of the step names itself. Here the job's GITHUB_ENV cannot be
+// written, the step's last command.
+test("a failing setup-nix credential step says which command failed", (t) => {
+  for (const bash of stepBashes()) {
+    const home = tempDir(t);
+    const runnerTemp = path.join(home, "runner-temp");
+    fs.mkdirSync(runnerTemp);
+    const env = isolatedNixEnv(home, {
+      GH_TOKEN: "gh-token-sentinel-A",
+      GITHUB_ENV: path.join(home, "no-such-dir", "github-env"),
+      RUNNER_TEMP: runnerTemp,
+      GITHUB_ACTION_PATH: path.join(repo, "setup-nix"),
+      EXTRA_SUBSTITUTERS: "",
+      EXTRA_TRUSTED_PUBLIC_KEYS: "",
+      ATTIC_TOKEN: "",
+      ATTIC_ENDPOINT: "",
+    });
+    delete env.NIX_USER_CONF_FILES;
+    const run = spawnSync(
+      bash,
+      [
+        "--noprofile",
+        "--norc",
+        "-e",
+        "-o",
+        "pipefail",
+        "-c",
+        setupNixStepBody(),
+      ],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(run.status, 0, `${bash}: the step must fail`);
+    assert.match(
+      run.stdout,
+      /^::error::setup-nix: Configure Nix authentication exited with status 1; the last command was: echo "MCL_JOB_CREDENTIALS_DIR=\$cred_dir" >> "\$GITHUB_ENV"$/m,
+      `${bash}: ` + run.stdout + run.stderr,
+    );
+    assert.ok(
+      !run.stdout
+        .replaceAll("::add-mask::gh-token-sentinel-A", "")
+        .includes("gh-token-sentinel-A"),
+    );
+  }
+});
+
 // The 2026-11-12 incident, replayed (codetracer-trace-format PR #70, job
 // 131107655430): a job's first setup-nix installed gh-token A, setup-dev-env's
 // broker then minted B into the same directory, and a later setup-nix (the one
