@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "tool": "agent-harbor",
+  "owner": "agent-harbor",
+  "repo": "agent-harbor",
+  "rev": "fce6f83b741ccf771a463f5f424a74a711f6b0be",
+  "narHash": "sha256-NVYJn8EOcfx6TfoMGmF1vfZrp//ZLieimiav7iJfEJc=",
+  "flake": true,
+  "attrs": {
+    "ah": "ah-release",
+    "snapshotDaemon": "ah-fs-snapshot-daemon"
+  }
+}

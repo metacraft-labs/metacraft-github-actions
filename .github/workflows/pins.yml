@@ -1,0 +1,68 @@
+name: pins
+
+# Validates the tooling pins under pins/ (see pins/README.md). A pin move is a
+# deploy for every consumer that follows it, so a bad file must fail here and
+# not in infra's live run.
+#
+# Local checks (schema, file name) run on every trigger with no secrets. The
+# remote checks (the revision exists, the fetched tree matches narHash, every
+# named package exists) need a token that can read the private tool
+# repositories, so they run only on pushes to the mainline, same-repository
+# pull requests, the weekly schedule and manual dispatch. A fork's pull
+# request gets neither the token nor the remote job.
+
+on:
+  push:
+    branches: [dev]
+    paths: ["pins/**", "tools/check-pins.py", "tools/update-pin.sh", ".github/workflows/pins.yml"]
+  pull_request:
+    branches-ignore: [agents]
+    paths: ["pins/**", "tools/check-pins.py", "tools/update-pin.sh", ".github/workflows/pins.yml"]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    # Stock runner, Python standard library only: no Nix, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Tests of the checker
+        run: python3 -I tools/test-check-pins.py
+      - name: Every pin satisfies the schema
+        run: python3 -I tools/check-pins.py
+
+  remote:
+    needs: local
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Mint a read token for the pinned repositories
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: agent-harbor
+
+      - name: Setup Nix (this checkout's action)
+        uses: ./setup-nix
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+
+      - name: The revisions exist, hash as pinned and name real packages
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: python3 -I tools/check-pins.py --remote
