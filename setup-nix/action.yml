@@ -120,6 +120,18 @@ runs:
         ATTIC_ENDPOINT: ${{ inputs.attic-endpoint }}
       run: |
         set -euo pipefail
+        # No silent failure. Every deliberate exit below prints its reason
+        # first; this names the command for any exit that does not. Bash
+        # 5.2 let one such exit go with no output at all:
+        # codetracer-circom-recorder job 133375431446, exit 1 in 16 ms on
+        # the second setup-nix of the job. BASH_COMMAND is the unexpanded
+        # command text, so it cannot carry a secret.
+        report_exit() { # <status> <command>
+          if [ "$1" -ne 0 ]; then
+            echo "::error::setup-nix: Configure Nix authentication exited with status $1; the last command was: $2"
+          fi
+        }
+        trap 'report_exit "$?" "$BASH_COMMAND"' EXIT
         echo "::add-mask::$GH_TOKEN"
         # `if`, not `[ … ] && echo`: under `set -e` the latter exits the step
         # with status 1 on the empty-token path, which is every caller today.
@@ -169,9 +181,19 @@ runs:
         # gh-token is unchanged.
         tokens_file="$cred_dir/nix-access-tokens.conf"
         broker_owns_token() {
-          local pid argv=()
+          local pid pid_text="" argv=()
           [ -n "$GH_TOKEN" ] && [ ! -e "$cred_dir/broker.stop" ] && [ -f "$tokens_file" ] || return 1
-          [[ $(<"$cred_dir/broker.pid") =~ ^[[:space:]]*([1-9][0-9]*)[[:space:]]*$ ]] 2>/dev/null || return 1
+          # `read`, never the command-substitution file-read shortcut (the
+          # regression test forbids the form): when broker.pid is missing --
+          # every job with no broker that runs setup-nix twice, e.g. the
+          # workflow's and setup-reprobuild's source-build fallback -- bash
+          # 5.2 under `set -e` exits the whole step on the failed redirection,
+          # even in a condition, and the `2>/dev/null` that line carried hid
+          # the message too. A `read` whose input cannot be opened just
+          # fails. It reads the whole file (`-d ''` stops at EOF only).
+          [ -f "$cred_dir/broker.pid" ] || return 1
+          IFS= read -r -d '' pid_text 2>/dev/null <"$cred_dir/broker.pid" || :
+          [[ $pid_text =~ ^[[:space:]]*([1-9][0-9]*)[[:space:]]*$ ]] || return 1
           pid="${BASH_REMATCH[1]}"
           kill -0 "$pid" 2>/dev/null || return 1
           [ -e /proc/self ] || return 0

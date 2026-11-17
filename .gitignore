@@ -2,3 +2,5 @@
 .direnv/
 __pycache__/
 *.pyc
+# Reprobuild per-checkout state.
+.repro/
