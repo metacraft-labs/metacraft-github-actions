@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "tool": "agent-harbor-llm-proxy",
+  "owner": "agent-harbor",
+  "repo": "agent-harbor",
+  "rev": "23960db5e22b46357ffb93c71db141e3414bbd63",
+  "narHash": "sha256-QlW+3tEJSFL5urNs8K0+31sHt8X6t6OHbquAKxCTlms=",
+  "flake": true,
+  "systems": ["x86_64-linux"],
+  "attrs": {
+    "llmProxy": "llm-api-proxy-portable"
+  }
+}
