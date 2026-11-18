@@ -245,19 +245,19 @@ inputs:
     required: false
     default: "dev"
   repro-runquota-pin:
-    description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon.
+    description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
-    default: "dev"
+    default: ""
   repro-posix-io-mon-pin:
     description: Optional full io-mon source SHA for the Linux/macOS Reprobuild bootstrap; empty retains its flake lock.
     required: false
     default: ""
   repro-io-mon-pin:
-    description: io-mon source ref for the source-built Windows Reprobuild monitor.
+    description: io-mon source ref for the source-built Windows Reprobuild monitor; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
-    default: "dev"
+    default: ""
   repro-stackable-hooks-pin:
-    description: Optional full lowercase hook-library source SHA for the Windows Reprobuild bootstrap; empty retains dev.
+    description: Optional full lowercase hook-library source SHA for the Windows Reprobuild bootstrap; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
     default: ""
   repro-publish-key:
@@ -964,7 +964,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@40106390f33492a51a54c7419cd5b307ba6a296d
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@52904e641eef7258700f590264ced223822cbf31
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
