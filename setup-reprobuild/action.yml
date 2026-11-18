@@ -214,7 +214,18 @@ runs:
         # platform without a prebuilt (linux-aarch64) runs the same reprobuild
         # as every other leg rather than a branch tip that may not read the
         # consumer's lock schema.
-        resolved_tag="$(printf '%s\n' "${output}" | sed -n 's/^REPRO_RESOLVED_TAG=//p' | tail -n 1)"
+        #
+        # Parsed with bash builtins only, keeping the last match. This step's
+        # PATH is the job's, and on self-hosted runners that is a Nix profile
+        # without coreutils or sed: install-release.sh appends the system
+        # directories to its own PATH, but that does not reach this script, so
+        # `sed` or `tail` here fails with exit 127 after a good install.
+        resolved_tag=""
+        while IFS= read -r line; do
+          if [[ ${line} == REPRO_RESOLVED_TAG=* ]]; then
+            resolved_tag="${line#REPRO_RESOLVED_TAG=}"
+          fi
+        done <<< "${output}"
         # It comes from the GitHub API and becomes a git ref: accept only a
         # release-tag shape.
         case "${resolved_tag}" in
