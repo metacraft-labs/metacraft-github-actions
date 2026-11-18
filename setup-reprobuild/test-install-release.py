@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -375,6 +377,104 @@ class ReleaseSelection(unittest.TestCase):
         self.assertIn('need-source=true', output)
         self.assertIn('install-source=source', output)
         self.assertIn('FALLING BACK to a source build', result.stdout)
+
+    def run_release_step_with_only_bash(self, stdout, status):
+        """Run the release step the way a self-hosted runner does when its PATH
+        is a Nix profile without coreutils: only `bash` resolves.
+
+        The installer itself puts the system directories back on its own PATH,
+        so its real behaviour is captured first (by the caller) under the
+        ambient PATH and replayed here by a stand-in that uses only `printf`.
+        The stand-in is the only substitution: the step body is the real one."""
+        bash = shutil.which('bash')
+        self.assertIsNotNone(bash)
+        only_bash = self.root / 'only-bash'
+        only_bash.mkdir()
+        (only_bash / 'bash').symlink_to(bash)
+        replay = self.root / 'replay-action'
+        replay.mkdir()
+        lines = ' '.join(shlex.quote(line) for line in stdout.splitlines())
+        (replay / 'install-release.sh').write_text(
+            f"printf '%s\\n' {lines}\nexit {status}\n")
+        body = step_body('Install prebuilt repro CLI from GitHub Release')
+        body = body.replace('${{ github.action_path }}', '${GITHUB_ACTION_PATH}')
+        env = dict(self.env, PATH=str(only_bash), GITHUB_ACTION_PATH=str(replay))
+        # The runner's own invocation of a `shell: bash` step.
+        argv = [bash, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', body]
+        return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=20)
+
+    def test_release_step_parses_the_tag_with_bash_builtins_only(self):
+        # mcl-bench-001 (macOS): the step exited 127 on `sed: command not found`
+        # right after a verified install, because its PATH had no sed.
+        self.archive()
+        installed = self.install()
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        result = self.run_release_step_with_only_bash(installed.stdout, 0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('command not found', result.stderr)
+        output = Path(self.env['GITHUB_OUTPUT']).read_text().splitlines()
+        self.assertIn('resolved-tag=v1.2.3', output)
+        self.assertIn('installed=true', output)
+        bin_dir = str(Path(self.env['REPRO_INSTALL_DIR']) / 'bin')
+        self.assertIn('bin-dir=' + bin_dir, output)
+        self.assertEqual(Path(self.env['GITHUB_PATH']).read_text().splitlines(), [bin_dir])
+
+    def test_release_step_reports_the_tag_without_coreutils_on_fallback(self):
+        skipped = self.install()
+        self.assertEqual(skipped.returncode, 3, skipped.stderr)
+        result = self.run_release_step_with_only_bash(skipped.stdout, 3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = Path(self.env['GITHUB_OUTPUT']).read_text().splitlines()
+        self.assertEqual(output, ['resolved-tag=v1.2.3', 'installed=false'])
+
+    def test_release_step_keeps_the_last_tag_and_rejects_non_tags(self):
+        cases = (
+            ('REPRO_RESOLVED_TAG=v1.0.0\nnoise\nREPRO_RESOLVED_TAG=v1.2.3\n', 'v1.2.3'),
+            ('xREPRO_RESOLVED_TAG=v9.9.9\n', ''),
+            ('REPRO_RESOLVED_TAG=dev\n', ''),
+            ('REPRO_RESOLVED_TAG=v1.2.3$(id)\n', ''),
+            ('', ''),
+        )
+        for index, (stdout, expected) in enumerate(cases):
+            with self.subTest(stdout=stdout):
+                self.root = Path(self.temporary.name) / f'case-{index}'
+                self.root.mkdir()
+                self.env['GITHUB_OUTPUT'] = str(self.root / 'output')
+                result = self.run_release_step_with_only_bash(stdout, 3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = Path(self.env['GITHUB_OUTPUT']).read_text().splitlines()
+                self.assertEqual(output, ['resolved-tag=' + expected, 'installed=false'])
+
+    def test_explicit_roots_resolve_with_only_bash_and_git_on_path(self):
+        # ci-roots/route.sh runs before any tool provisioning. With explicit
+        # roots it locates resolve.sh beside itself, which used `dirname`.
+        bash, git = shutil.which('bash'), shutil.which('git')
+        self.assertIsNotNone(bash)
+        self.assertIsNotNone(git)
+        tools = self.root / 'bash-and-git'
+        tools.mkdir()
+        (tools / 'bash').symlink_to(bash)
+        (tools / 'git').symlink_to(git)
+        workspace = self.root / 'workspace'
+        consumer = workspace / 'consumer'
+        consumer.mkdir(parents=True)
+        quiet = dict(capture_output=True, text=True, check=True, timeout=10)
+        subprocess.run([git, 'init', '-q', str(consumer)], **quiet)
+        subprocess.run([git, '-C', str(consumer), '-c', 'user.name=t', '-c', 'user.email=t@t',
+                        'commit', '-q', '--allow-empty', '-m', 'init'], **quiet)
+        rev_parse = [git, '-C', str(consumer), 'rev-parse', 'HEAD']
+        head = subprocess.run(rev_parse, **quiet).stdout.strip()
+        workspace = workspace.resolve()
+        env = dict(self.env, PATH=str(tools), GITHUB_ACTION_PATH=str(HERE))
+        env.update(GITHUB_WORKSPACE=str(workspace), GITHUB_SHA=head)
+        env.update(MCL_CONSUMER_DIRECTORY='consumer', MCL_WORKSPACE_DIRECTORY='.')
+        body = step_body('Resolve explicit checkout and SDK roots')
+        argv = [bash, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', body]
+        result = subprocess.run(argv, env=env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = Path(self.env['GITHUB_OUTPUT']).read_text().splitlines()
+        self.assertEqual(output, ['workspace-directory=' + str(workspace),
+                                  'legacy-layout=false'])
 
     def test_release_integrity_error_stops_before_source_selection(self):
         self.archive(corrupt_checksum=True)
