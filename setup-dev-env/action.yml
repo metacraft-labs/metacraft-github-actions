@@ -984,6 +984,41 @@ runs:
         stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
 
     # ------------------------------------------------------------------
+    # Nix for the consumer's dev env (reprobuild flavor)
+    #
+    # A consumer's repro.nim can activate a flake dev shell, and Nix tool
+    # provisioning needs a Nix client as well. setup-reprobuild installs Nix
+    # only to build repro from source, so a prebuilt release on a host without
+    # Nix left the first `repro exec` failing with "useFlakeDevShell needs nix
+    # on PATH". Install it with setup-nix when, and only when, no `nix` is on
+    # PATH on Linux or macOS, and never on a NixOS host, whose system Nix is
+    # left alone. It runs after the CLI install so a source build's Nix counts
+    # as present, and before the Git and Nix authentication steps below, which
+    # then apply the job's current token to it. The decision and its rationale
+    # live in decide-nix-install.sh's header.
+    # ------------------------------------------------------------------
+
+    - name: Decide whether the dev env needs Nix installed (reprobuild)
+      id: nix-install
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      shell: bash
+      env:
+        MCL_NIXOS_HOST: ${{ steps.tool-provisioning.outputs.nixos-host }}
+      run: bash "${GITHUB_ACTION_PATH}/decide-nix-install.sh"
+
+    - name: Install Nix for the dev env (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' && steps.nix-install.outputs.install-nix == 'true' }}
+      uses: metacraft-labs/metacraft-github-actions/setup-nix@dev
+      with:
+        gh-token: ${{ steps.install-token.outputs.token || inputs.gh-token }}
+        token-owner: ${{ inputs.token-owner }}
+        substituters: ${{ inputs.substituters }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        attic-token: ${{ inputs.attic-token }}
+        attic-cache: ${{ inputs.attic-cache }}
+        attic-endpoint: ${{ inputs.attic-endpoint }}
+
+    # ------------------------------------------------------------------
     # sibling-strategy: repro-lock — the consumer half
     #
     # Runs only when the decision step chose the repro path, and only after the

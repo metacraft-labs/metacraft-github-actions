@@ -396,6 +396,28 @@ Nix provisioning needs a `nix` client, its daemon and substituters. NixOS hosts
 provide all three, so this action installs nothing for it; it warns when `nix`
 is not on `PATH`.
 
+## Nix for the reprobuild flavor
+
+A consumer's `repro.nim` can activate a flake dev shell (`useFlakeDevShell()`),
+and Nix tool provisioning needs a Nix client too. `setup-reprobuild` installs
+Nix only to build `repro` from source, so a prebuilt release on a host without
+Nix would leave the first `repro exec` failing with
+`useFlakeDevShell needs nix on PATH`. After installing the CLI, this action
+therefore decides, and prints, whether to install Nix:
+
+| situation                                      | what it does                                                            |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| Windows                                        | nothing; the flavor does not use Nix there                              |
+| `nix` already on `PATH` (host or source build) | nothing                                                                 |
+| NixOS without `nix` on `PATH`                  | nothing, and a warning; the system Nix is not reinstalled               |
+| Linux or macOS without `nix` on `PATH`         | runs `setup-nix` with this action's substituters, keys and Attic inputs |
+
+The install is not limited to consumers that are known to need Nix: knowing
+that means evaluating the consumer's `repro.nim`, and a wrong guess fails the
+job, while an unneeded install costs one installer run. The job's Git and Nix
+credentials are applied after it by the same steps that apply them to a host's
+own Nix.
+
 ## Which RunQuota daemon a job's builds use
 
 RunQuota admits builds against one budget per machine, which only works when

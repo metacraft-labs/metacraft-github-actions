@@ -82,8 +82,9 @@
 # first two so it never reads the real host files):
 #   MCL_NIXOS_MARKER   default /etc/NIXOS
 #   MCL_OS_RELEASE     default /etc/os-release
-# Outputs: `tool-provisioning` (the exported mode, or empty) and
-# `tool-provisioning-source` (the DECISION) to $GITHUB_OUTPUT,
+# Outputs: `tool-provisioning` (the exported mode, or empty),
+# `tool-provisioning-source` (the DECISION) and `nixos-host` (`true` or
+# `false`, whatever the DECISION) to $GITHUB_OUTPUT,
 # REPRO_TOOL_PROVISIONING to $GITHUB_ENV when exported, and one line to the
 # log and $GITHUB_STEP_SUMMARY on every path.
 set -euo pipefail
@@ -120,10 +121,18 @@ DECISION=""
 REASON=""
 MODE=""
 
+# Whether this host is NixOS, independently of the decision below: a caller's
+# own REPRO_TOOL_PROVISIONING settles the mode but not what the host is, and
+# decide-nix-install.sh reads this output to leave a NixOS system Nix alone.
+NIXOS_HOST=false
+if { [ -n "$MARKER" ] && [ -e "$MARKER" ]; } || os_release_is_nixos; then
+  NIXOS_HOST=true
+fi
+
 if [ -n "${REPRO_TOOL_PROVISIONING:-}" ]; then
   DECISION="caller"
   REASON="REPRO_TOOL_PROVISIONING was already set to ${REPRO_TOOL_PROVISIONING} before this action ran; leaving it alone"
-elif { [ -n "$MARKER" ] && [ -e "$MARKER" ]; } || os_release_is_nixos; then
+elif [ "$NIXOS_HOST" = true ]; then
   DECISION="nixos"
   MODE="nix"
   REASON="NixOS runner: exporting REPRO_TOOL_PROVISIONING=nix, because NixOS cannot run the generic-Linux tool tarballs the other modes fall back to (an explicit --tool-provisioning flag still wins)"
@@ -152,6 +161,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "tool-provisioning=${MODE}"
     echo "tool-provisioning-source=${DECISION}"
+    echo "nixos-host=${NIXOS_HOST}"
   } >>"$GITHUB_OUTPUT"
 fi
 exit 0
