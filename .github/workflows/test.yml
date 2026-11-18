@@ -224,7 +224,7 @@ jobs:
       - name: RunQuota bootstrap revision with real Git repositories
         run: python3 reprobuild-provision/test-runquota-ref.py
 
-      - name: Source build provisions the siblings its reprobuild locks
+      - name: Source build provisions the siblings its reprobuild locks (no python3 or /usr/bin on PATH)
         run: python3 reprobuild-provision/test-reprobuild-lock-revisions.py
 
       - name: Multi-owner sibling-owner clones from its first owner
@@ -542,7 +542,7 @@ jobs:
         run: bash git-auth/longpaths-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh
+        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh reprobuild-provision/flake-lock-revisions.sh
 
   action-template-limits:
     # Every suite above EXTRACTS a composite action's `run:` body and executes

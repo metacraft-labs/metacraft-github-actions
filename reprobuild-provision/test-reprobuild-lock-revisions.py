@@ -15,16 +15,30 @@ Real local Git repositories stand in for the remotes through URL rewrites,
 and the real provisioning script runs against them. The CodeTracer fixture
 lacks its submodules, so a Windows run ends at the (unrelated) selective
 submodule update, after every clone asserted on here.
+
+The step runs before any toolchain is installed. On the self-hosted macOS
+runner mcl-bench-001 its PATH reaches bash, git and macOS's `/bin` (`rm`,
+`ln`, `mkdir`, ...) but not `/usr/bin`: no python3, sed, awk, tr, sort,
+grep or dirname. Cases 8-10 run the script and the lock reader with that
+PATH, against reprobuild `b9cf09b07`'s real `flake.lock` (a
+verbatim copy in `testdata/`) and against hand-written edge cases, and check
+the reader against an independent Python reading of the same file.
 """
 
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "provision-reprobuild-siblings.sh"
+READER = HERE / "flake-lock-revisions.sh"
+# reprobuild v0.2.26's flake.lock, byte for byte (`git show b9cf09b07:flake.lock`).
+B9_LOCK = HERE / "testdata" / "reprobuild-b9cf09b07.flake.lock"
+B9_RUNQUOTA = "98ea3e58df67f736a8527788d1563e31291a4881"
 REPOS = (
     "runquota", "nim-stackable-hooks", "io-mon", "codetracer", "nim-shm-lease",
     "nim-shm-queue", "nim-shm-gset", "reprobuild-test-adapters",
@@ -52,6 +66,30 @@ def flake_lock(pins):
 
 def github(repo, rev, owner="fixture"):
     return {"type": "github", "owner": owner, "repo": repo, "rev": rev}
+
+
+def oracle(text):
+    """An independent reading of a lock: the set of `<repo> <owner> <rev>`
+    lines the reader must print, by the rules it documents."""
+    lock = json.loads(text)
+    nodes = lock["nodes"]
+    found = set()
+    for node_name in nodes[lock["root"]].get("inputs", {}).values():
+        if not isinstance(node_name, str):
+            continue
+        locked = nodes.get(node_name, {}).get("locked", {})
+        rev = locked.get("rev", "")
+        if locked.get("type") in ("github", "gitlab", "sourcehut"):
+            owner, repo = locked.get("owner", ""), locked.get("repo", "")
+        elif locked.get("type") == "git":
+            parts = locked.get("url", "").rstrip("/").split("/")
+            owner = parts[-2] if len(parts) > 1 else ""
+            repo = re.sub(r"\.git$", "", parts[-1])
+        else:
+            continue
+        if owner and repo and re.fullmatch(r"[0-9a-f]{40}", rev):
+            found.add(f"{repo.lower()} {owner.lower()} {rev}")
+    return found
 
 
 with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
@@ -205,3 +243,135 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     for name in ("nim-shm-lease", "nim-shm-gset", "reprobuild-test-adapters"):
         assert version(workspace, name) == "dev tip\n", name + "\n" + out
     print("PASS Windows clones every sibling its reprobuild locks at that revision")
+
+    # The PATH of the provisioning step on mcl-bench-001: bash, git and the
+    # tools macOS keeps in /bin. Nothing from /usr/bin.
+    bash, git = shutil.which("bash"), shutil.which("git")
+    assert bash and git, "the suite needs bash and git"
+    bare_path = root / "macos-bin"
+    bare_path.mkdir()
+    for tool in ("bash", "git", "rm", "ln", "mkdir", "cat"):
+        found = shutil.which(tool)
+        assert found, f"the suite needs {tool}"
+        (bare_path / tool).symlink_to(found)
+    bare_env = dict(env, PATH=str(bare_path))
+
+    def provision_bare(case, checkout):
+        workspace = root / case / "workspace"
+        workspace.mkdir(parents=True)
+        # GITHUB_ACTION_PATH and GIT_AUTH_DIR as the action's step sets them.
+        case_env = dict(bare_env, RUNNER_OS="macOS", GITHUB_WORKSPACE=str(workspace),
+                        REPROBUILD_SOURCE_DIRECTORY=str(checkout),
+                        GITHUB_ACTION_PATH=str(HERE), GIT_AUTH_DIR=str(HERE.parent / "git-auth"))
+        result = subprocess.run([bash, "--noprofile", "--norc", str(SCRIPT)], cwd=root,
+                                text=True, capture_output=True, env=case_env, timeout=120)
+        return workspace, result, result.stdout + result.stderr
+
+    # 8. The defect: reprobuild b9cf09b07's own lock, read with that PATH. The reader must find RunQuota's locked revision; the
+    #    fixture remotes do not hold that commit, so the run then stops at the
+    #    clone, after the resolution this case is about.
+    checkout = root / "b9-lock" / "reprobuild-src"
+    checkout.mkdir(parents=True)
+    shutil.copyfile(B9_LOCK, checkout / "flake.lock")
+    workspace, result, out = provision_bare("b9-lock", checkout)
+    assert "needs a working python3" not in out, out
+    assert "command not found" not in out, out
+    assert f"runquota @ {B9_RUNQUOTA} (locked by the reprobuild being built)" in out, (
+        "the RunQuota revision reprobuild b9cf09b07 locks was not read:\n" + out)
+    for name, rev in (("io-mon", "30d85793e891c1a80859d52a9eb197b42d56752c"),
+                      ("nim-stackable-hooks", "d715806424e8373708494913e59a48237978cc2a"),
+                      ("test-certificates-tools", "a726655886808d1062390d05c50f4fce03150eb4")):
+        assert f"{name} @ {rev} (locked by the reprobuild being built)" in out, name + "\n" + out
+    assert "codetracer-native-recorder @ stable (built-in default; the reprobuild lock does not pin it)" in out, out
+    print(f"PASS without python3 or /usr/bin on PATH, b9cf09b07's lock yields runquota @ {B9_RUNQUOTA[:12]}")
+
+    # 9. The whole Linux/macOS path with that PATH: every clone lands
+    #    at the locked revision.
+    checkout = reprobuild_checkout("bare-locked", linux_pins)
+    workspace, result, out = provision_bare("bare-locked", checkout)
+    assert result.returncode == 0, out
+    assert "command not found" not in out, out
+    assert version(workspace, "runquota") == "locked revision\n", out
+    assert version(workspace, "codetracer-native-recorder") == "dev tip\n", out
+    print("PASS without python3 or /usr/bin on PATH, the source build provisions the locked RunQuota")
+
+    # 9b. The refusals hold with that PATH: a missing lock, and one
+    #     cloned sibling pinned at two revisions.
+    checkout = reprobuild_checkout("bare-no-lock", None)
+    workspace, result, out = provision_bare("bare-no-lock", checkout)
+    assert result.returncode != 0 and "has no flake.lock" in out, out
+    assert not list(workspace.iterdir())
+    checkout = reprobuild_checkout("bare-conflict", {
+        "runquota-a": github("runquota", locked, owner="one"),
+        "runquota-b": github("runquota", other, owner="two")})
+    workspace, result, out = provision_bare("bare-conflict", checkout)
+    assert result.returncode != 0, out
+    assert f"pins runquota at more than one revision ({locked} {other})" in out \
+        or f"pins runquota at more than one revision ({other} {locked})" in out, out
+    assert not list(workspace.iterdir())
+    print("PASS without python3 or /usr/bin on PATH, a missing or conflicting lock is refused")
+
+    # 10. The reader itself, against the independent reading above, on the
+    #     real lock and on layouts Nix does not write but JSON allows.
+    def read_lock(text, name):
+        lock_file = root / "reader" / name
+        lock_file.parent.mkdir(exist_ok=True)
+        lock_file.write_bytes(text.encode("utf-8"))
+        command = f'. "{READER}" && flake_lock_revisions "{lock_file}"'
+        result = subprocess.run([bash, "--noprofile", "--norc", "-c", command],
+                                text=True, capture_output=True, env=bare_env, timeout=60)
+        return result
+
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    tricky = {
+        "nodes": {
+            "root": {"inputs": {
+                "a": "node \"quoted\" \\", "b": ["a"], "c": "git-node",
+                "d": "upper", "e": "path-node", "f": "short-rev", "g": "dup"}},
+            "node \"quoted\" \\": {"locked": {
+                "type": "github", "owner": "o", "repo": "r", "rev": sha,
+                "narHash": "sha256-\"}{[],:\\", "lastModified": 1.5e3, "flag": True,
+                "none": None, "list": [1, "x", {"k": [False]}]}},
+            "git-node": {"locked": {"type": "git", "rev": sha,
+                                    "url": "https://example.invalid/Some/Thing.git/"}},
+            "upper": {"locked": {"type": "gitlab", "owner": "MetaCraft", "repo": "IO-Mon", "rev": sha}},
+            "path-node": {"locked": {"type": "path", "path": "/x", "rev": sha}},
+            "short-rev": {"locked": {"type": "github", "owner": "o", "repo": "s", "rev": "abc"}},
+            "dup": {"locked": {"type": "github", "owner": "o", "repo": "r", "rev": sha}},
+            "unreferenced": {"locked": {"type": "github", "owner": "o", "repo": "u", "rev": sha}},
+        },
+        "root": "root",
+        "version": 7,
+    }
+    cases = {
+        "b9cf09b07.lock": B9_LOCK.read_text(),
+        "pretty.lock": json.dumps(tricky, indent=2),
+        "minified.lock": json.dumps(tricky, separators=(",", ":")),
+        "crlf.lock": json.dumps(tricky, indent=1).replace("\n", "\r\n"),
+        "root-first.lock": json.dumps({"root": "root", "nodes": tricky["nodes"]}),
+    }
+    for name, text in cases.items():
+        result = read_lock(text, name)
+        assert result.returncode == 0, f"{name}: {result.stderr}"
+        got = result.stdout.splitlines()
+        assert len(got) == len(set(got)), f"{name}: duplicate lines {got}"
+        assert set(got) == oracle(text), f"{name}: {sorted(got)} != {sorted(oracle(text))}"
+    assert f"runquota metacraft-labs {B9_RUNQUOTA}" in read_lock(cases["b9cf09b07.lock"], "again").stdout
+    assert set(read_lock(cases["pretty.lock"], "p2").stdout.splitlines()) == {
+        f"r o {sha}", f"thing some {sha}", f"io-mon metacraft {sha}"}
+    print("PASS the lock reader agrees with an independent JSON reading on every layout")
+
+    malformed = {
+        "truncated.lock": B9_LOCK.read_text()[:5000],
+        "unterminated-string.lock": '{"root": "ro',
+        "no-root.lock": '{"nodes": {}}',
+        "stray.lock": '{"root": "root", "nodes": {} } x',
+        "missing-colon.lock": '{"root" "root"}',
+        "empty.lock": "",
+    }
+    for name, text in malformed.items():
+        result = read_lock(text, name)
+        assert result.returncode != 0, f"{name}: accepted: {result.stdout}"
+        assert result.stdout == "", f"{name}: printed {result.stdout!r}"
+        assert "unreadable flake.lock" in result.stderr, f"{name}: {result.stderr}"
+    print("PASS a malformed lock is refused, not read as pinning nothing")
