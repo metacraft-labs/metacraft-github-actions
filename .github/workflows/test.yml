@@ -311,6 +311,15 @@ jobs:
       - name: tool-provisioning step contract suite
         run: bash setup-dev-env/tool-provisioning-step-test.sh
 
+      # Under the reprobuild flavor a prebuilt repro on a host without Nix left
+      # the consumer's flake dev shell unable to start. setup-dev-env installs
+      # Nix with setup-nix when none is on PATH on Linux or macOS, and never
+      # over a host's own Nix, on NixOS, or on Windows. The PATH, NixOS and
+      # Windows guards are each paired with a mutant that must install where
+      # the script does not; the wiring cases check the step order and inputs.
+      - name: nix-install step contract suite
+        run: bash setup-dev-env/nix-install-step-test.sh
+
       # `repro` unpacks provisioned tools with the host tar, which needs gzip /
       # xz / bzip2 on PATH as child processes; setup-dev-env now provides them
       # or fails naming them. Each guard is paired with a mutant that must make
@@ -329,7 +338,7 @@ jobs:
         run: bash mirror-artifacts-s3/mirror-step-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/export-runquota-endpoint.sh setup-dev-env/export-runquota-endpoint-step-test.sh setup-dev-env/decide-tool-provisioning.sh setup-dev-env/tool-provisioning-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/export-runquota-endpoint.sh setup-dev-env/export-runquota-endpoint-step-test.sh setup-dev-env/decide-tool-provisioning.sh setup-dev-env/tool-provisioning-step-test.sh setup-dev-env/decide-nix-install.sh setup-dev-env/nix-install-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit
