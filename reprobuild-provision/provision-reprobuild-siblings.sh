@@ -86,10 +86,19 @@
 # sibling-resolution contract exists to prevent.
 set -uo pipefail
 
-# shellcheck source=../ci-roots/route.sh
-. "${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../ci-roots/route.sh" || exit 1
+# This script's directory, by parameter expansion rather than `dirname`: the
+# step runs before any toolchain is installed, and on the self-hosted macOS
+# runners its PATH carries bash and git but no coreutils.
+HERE="${BASH_SOURCE[0]%/*}"
+[ "${HERE}" != "${BASH_SOURCE[0]}" ] || HERE="."
 
-GIT_AUTH_DIR="${GIT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../git-auth" && pwd)}"
+# shellcheck source=../ci-roots/route.sh
+. "${GITHUB_ACTION_PATH:-${HERE}}/../ci-roots/route.sh" || exit 1
+
+# shellcheck source=flake-lock-revisions.sh
+. "${GITHUB_ACTION_PATH:-${HERE}}/flake-lock-revisions.sh" || exit 1
+
+GIT_AUTH_DIR="${GIT_AUTH_DIR:-${HERE}/../git-auth}"
 # shellcheck source=../git-auth/scoped-git-auth.sh
 . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
 
@@ -151,60 +160,20 @@ if [ -n "${REPROBUILD_SOURCE_DIRECTORY}" ]; then
     echo "::error::reprobuild-provision: reprobuild-source-directory '${REPROBUILD_SOURCE_DIRECTORY}' has no flake.lock, so the sibling revisions that reprobuild locks cannot be read. Refusing to guess a branch tip." >&2
     exit 1
   fi
-  # The first interpreter that actually runs: on a Windows runner `python3`
-  # can be the WindowsApps store stub, which is on PATH and exits 9009.
-  lock_python=""
-  for candidate in python3 python; do
-    candidate="$(command -v "${candidate}" 2>/dev/null)" || continue
-    if "${candidate}" -c 'import json' >/dev/null 2>&1; then
-      lock_python="${candidate}"
-      break
-    fi
-  done
-  if [ -z "${lock_python}" ]; then
-    echo "::error::reprobuild-provision: reading ${reprobuild_lock} needs a working python3 (or python) on PATH." >&2
-    exit 1
-  fi
   # One `<repository> <owner> <40-hex rev>` line per repository a root input
   # locks to a git forge source, lower-cased. Inputs of other kinds, and
   # `follows` entries, are skipped. Inputs are matched by repository
-  # coordinates, never by input alias.
-  LOCKED_REVS="$("${lock_python}" - "${reprobuild_lock}" <<'PYTHON' | tr -d '\r'
-import json, re, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        lock = json.load(handle)
-    nodes = lock["nodes"]
-    inputs = nodes[lock["root"]].get("inputs", {})
-except (OSError, ValueError, KeyError, TypeError) as error:
-    sys.exit("unreadable flake.lock: %s" % error)
-revs = {}
-for node_name in inputs.values():
-    if not isinstance(node_name, str):
-        continue
-    locked = nodes.get(node_name, {}).get("locked", {})
-    rev = locked.get("rev", "")
-    if locked.get("type") in ("github", "gitlab", "sourcehut"):
-        owner, repo = locked.get("owner", ""), locked.get("repo", "")
-    elif locked.get("type") == "git":
-        parts = locked.get("url", "").rstrip("/").split("/")
-        owner = parts[-2] if len(parts) > 1 else ""
-        repo = re.sub(r"\.git$", "", parts[-1])
-    else:
-        continue
-    if not owner or not repo or not re.fullmatch(r"[0-9a-f]{40}", rev):
-        continue
-    revs.setdefault((repo.lower(), owner.lower()), set()).add(rev)
-for (repo, owner), found in sorted(revs.items()):
-    for rev in sorted(found):
-        print(repo, owner, rev)
-PYTHON
-)" || {
+  # coordinates, never by input alias. Read with bash builtins only: this step
+  # runs before any toolchain is installed, on runners whose PATH has neither
+  # python3 nor coreutils (see flake-lock-revisions.sh).
+  LOCKED_REVS="$(flake_lock_revisions "${reprobuild_lock}")" || {
     echo "::error::reprobuild-provision: could not read sibling revisions from ${reprobuild_lock} (see the message above)." >&2
     exit 1
   }
   echo "reprobuild-provision: sibling revisions locked by ${reprobuild_lock}:"
-  printf '%s\n' "${LOCKED_REVS}" | sed -e 's/^/    /'
+  while IFS= read -r _line; do
+    [ -n "${_line}" ] && echo "    ${_line}"
+  done <<<"${LOCKED_REVS}"
 fi
 
 # `sibling_rev <name> <explicit> <built-in default>` -- print the revision to
@@ -212,22 +181,33 @@ fi
 # `<clone owner>/<name>` is preferred; otherwise every locked `*/<name>` must
 # agree on one revision. Disagreement is a refusal (status 1): there is no
 # single revision to clone.
-CLONE_OWNER_LC="$(printf '%s' "${CLONE_OWNER}" | tr '[:upper:]' '[:lower:]')"
+CLONE_OWNER_LC="$(flake_lock_lowercase "${CLONE_OWNER}")"
+# `locked_revs_of <name> [<owner>]` -- the distinct revisions LOCKED_REVS
+# records for repository <name> (of <owner>, when given), one per line.
+locked_revs_of() {
+  local want_name="$1" want_owner="${2:-}" repo owner rev nl=$'\n' found=""
+  while read -r repo owner rev; do
+    [ "${repo}" = "${want_name}" ] || continue
+    [ -z "${want_owner}" ] || [ "${owner}" = "${want_owner}" ] || continue
+    case "${nl}${found}" in *"${nl}${rev}${nl}"*) continue ;; esac
+    found+="${rev}${nl}"
+  done <<<"${LOCKED_REVS}"
+  printf '%s' "${found%"${nl}"}"
+}
 sibling_rev() {
-  local name="$1" explicit="$2" fallback="$3" locked="" why=""
+  local name="$1" explicit="$2" fallback="$3" locked="" why="" nl=$'\n'
   if [ -n "${explicit}" ]; then
     echo "reprobuild-provision: ${name} @ ${explicit} (the caller's explicit input)" >&2
     printf '%s' "${explicit}"
     return 0
   fi
-  locked="$(printf '%s\n' "${LOCKED_REVS}" | awk -v n="${name}" -v o="${CLONE_OWNER_LC}" \
-    '$1 == n && $2 == o { print $3 }' | sort -u)"
+  locked="$(locked_revs_of "${name}" "${CLONE_OWNER_LC}")"
   if [ -z "${locked}" ]; then
-    locked="$(printf '%s\n' "${LOCKED_REVS}" | awk -v n="${name}" '$1 == n { print $3 }' | sort -u)"
+    locked="$(locked_revs_of "${name}")"
   fi
   case "${locked}" in
     *[![:xdigit:]]*)
-      echo "::error::reprobuild-provision: the reprobuild lock pins ${name} at more than one revision ($(printf '%s' "${locked}" | tr '\n' ' ')); there is no single revision to clone. Name one explicitly." >&2
+      echo "::error::reprobuild-provision: the reprobuild lock pins ${name} at more than one revision (${locked//${nl}/ }); there is no single revision to clone. Name one explicitly." >&2
       return 1
       ;;
   esac
@@ -410,8 +390,13 @@ clone() {
     --repo "${repo}" --dest "${WS}/${name}" --rev "${rev}" \
     --shallow "$@" || exit 1
 
-  local parent_ws
-  parent_ws="$(dirname "${WS}")"
+  # The parent directory, by parameter expansion: no `dirname` on PATH here.
+  local parent_ws="${WS}"
+  while [ "${parent_ws}" != "/" ] && [ "${parent_ws%/}" != "${parent_ws}" ]; do
+    parent_ws="${parent_ws%/}"
+  done
+  parent_ws="${parent_ws%/*}"
+  [ -n "${parent_ws}" ] || parent_ws="/"
   if [ "${parent_ws}" != "${WS}" ] && [ -d "${parent_ws}" ] && [ ! -e "${parent_ws}/${name}" ]; then
     if command -v powershell.exe >/dev/null 2>&1; then
       powershell.exe -NoProfile -Command "New-Item -ItemType Junction -Path '$(cygpath -w "${parent_ws}/${name}")' -Target '$(cygpath -w "${WS}/${name}")' -Force" >/dev/null 2>&1 || true
@@ -487,8 +472,11 @@ preflight() { # <owner/name> <rev>
   fi
 
   echo "::error::reprobuild-provision: ${repo} has no branch '${rev}'. This is a wrong pin in reprobuild-provision/provision-reprobuild-siblings.sh, not a transient failure. Branches that do exist:"
+  local line
   git -C "${NEUTRAL_DIR}" ls-remote --heads "${url}" 2>&1 |
-    sed -e 's#^.*refs/heads/#    #' >&2
+    while IFS= read -r line; do
+      printf '    %s\n' "${line##*refs/heads/}"
+    done >&2
   return 1
 }
 
