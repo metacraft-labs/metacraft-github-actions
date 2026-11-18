@@ -31,8 +31,8 @@
 # mutating cannot pass.
 #
 # Wiring (case 8): the action runs the decision for the reprobuild flavor after
-# the CLI install and before its Nix authentication step and its first
-# `repro exec`; installs only on the `install-nix` output; uses setup-nix and
+# the CLI install and before its archive-tool step (which can use nix), its Nix
+# authentication step and its first `repro exec`; installs only on the `install-nix` output; uses setup-nix and
 # hands it the caller's substituters and keys; and takes the NixOS signal from
 # decide-tool-provisioning.sh, which runs earlier and prints `nixos-host`.
 #
@@ -189,20 +189,22 @@ provisioning_line="$(line_of 'run: bash "${GITHUB_ACTION_PATH}/decide-tool-provi
 cli_line="$(line_of '- name: Install the repro CLI (reprobuild)')"
 decide_name_line="$(line_of '- name: Decide whether the dev env needs Nix installed (reprobuild)')"
 install_name_line="$(line_of '- name: Install Nix for the dev env (reprobuild)')"
+tools_line="$(line_of '- name: Ensure the archive tools repro shells out to (reprobuild)')"
 auth_line="$(line_of '- name: Configure Nix authentication (reprobuild)')"
 witness_line="$(line_of 'if repro exec -- bash -c')"
 order_ok=0
 if [ -n "$provisioning_line" ] && [ -n "$cli_line" ] && [ -n "$decide_name_line" ] &&
   [ -n "$install_name_line" ] && [ -n "$auth_line" ] && [ -n "$witness_line" ] &&
   [ "$provisioning_line" -lt "$cli_line" ] && [ "$cli_line" -lt "$decide_name_line" ] &&
-  [ "$decide_name_line" -lt "$install_name_line" ] && [ "$install_name_line" -lt "$auth_line" ] &&
+  [ -n "$tools_line" ] && [ "$decide_name_line" -lt "$install_name_line" ] &&
+  [ "$install_name_line" -lt "$tools_line" ] && [ "$tools_line" -lt "$auth_line" ] &&
   [ "$auth_line" -lt "$witness_line" ]; then
   order_ok=1
 fi
 if [ "$order_ok" = 1 ]; then
-  pass "action.yml: tool-provisioning < CLI install < decision < install < Nix auth < repro exec"
+  pass "action.yml: tool-provisioning < CLI install < decision < install < archive tools < Nix auth < repro exec"
 else
-  fail "action.yml order: provisioning=$provisioning_line cli=$cli_line decide=$decide_name_line install=$install_name_line auth=$auth_line witness=$witness_line"
+  fail "action.yml order: provisioning=$provisioning_line cli=$cli_line decide=$decide_name_line install=$install_name_line tools=$tools_line auth=$auth_line witness=$witness_line"
 fi
 
 decide_block="$(step_block "$decide_name_line")"
