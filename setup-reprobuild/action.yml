@@ -100,15 +100,15 @@ inputs:
     required: false
     default: "metacraft-labs"
   runquota-ref:
-    description: RunQuota source ref forwarded unchanged to source dependency provisioning.
+    description: RunQuota source ref for a source build; empty takes the revision the reprobuild at repro-build-pin locks in its flake.lock.
     required: false
-    default: "dev"
+    default: ""
   io-mon-ref:
-    description: Windows io-mon source ref; the separate io-mon-pin selects the POSIX Nix override.
+    description: Windows io-mon source ref; empty takes the revision the reprobuild at repro-build-pin locks. The separate io-mon-pin selects the POSIX Nix override.
     required: false
-    default: "dev"
+    default: ""
   stackable-hooks-pin:
-    description: Optional full lowercase Windows hook-library SHA; empty retains the provisioner's existing default.
+    description: Optional full lowercase Windows hook-library SHA; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
     default: ""
   from-source:
@@ -307,16 +307,18 @@ runs:
           --repo metacraft-labs/reprobuild --dest "${DEST}" --rev "${REF}" --shallow
 
     # SDK source dependencies belong to the selected source constructor, not
-    # to every caller that might receive a verified release instead. Keep the
-    # existing provisioner and its defaults; this only changes when it runs.
+    # to every caller that might receive a verified release instead. The
+    # provisioner reads the cloned reprobuild's flake.lock, so each sibling it
+    # clones defaults to the revision repro-build-pin locks, not a mainline.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@fa2c18031bb8953c7039d5bbaaf069dec406ad91
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@f283d45fe29c83e9f49b67ed259f64114880cd44
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
         gh-token: ${{ inputs.gh-token }}
         sibling-owner: ${{ inputs.sibling-owner }}
+        reprobuild-source-directory: ${{ steps.roots.outputs.workspace-directory }}/.reprobuild-src
         runquota-ref: ${{ inputs.runquota-ref }}
         io-mon-ref: ${{ inputs.io-mon-ref }}
         stackable-hooks-pin: ${{ inputs.stackable-hooks-pin }}

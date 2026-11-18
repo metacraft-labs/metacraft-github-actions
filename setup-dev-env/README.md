@@ -75,11 +75,16 @@ environment path, including the existing lock-schema checks for `repro-lock`.
 
 ### Source-built Reprobuild inputs
 
-`repro-build-pin` chooses the Reprobuild source revision.
-`repro-runquota-pin` chooses its RunQuota source dependency, including the
-Windows bootstrap lease daemon. Both default to `dev`; use published commit
-SHAs to validate a particular source combination. The RunQuota input is also
-available as `runquota-ref` on the standalone `reprobuild-provision` action.
+`repro-build-pin` chooses the Reprobuild source revision (default `dev`).
+Its source dependencies follow it: RunQuota (including the Windows bootstrap
+lease daemon) and, on Windows, io-mon, nim-stackable-hooks and the other
+env.ps1 siblings are cloned at the revisions that Reprobuild revision's
+`flake.lock` records, the dependency set its release package was built from.
+`repro-runquota-pin`, `repro-io-mon-pin` and `repro-stackable-hooks-pin`
+default to empty, which means exactly that; set one only to build against a
+different revision on purpose. The RunQuota input is also available as
+`runquota-ref` on the standalone `reprobuild-provision` action, which follows
+a Reprobuild lock only when given `reprobuild-source-directory`.
 The consumer project's lock and sibling selection are independent of these
 bootstrap inputs.
 

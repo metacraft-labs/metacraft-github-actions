@@ -77,11 +77,13 @@
 # anonymous-clone defect above killed the step first. Fixing the credential
 # without fixing the refs would have moved the error, not removed it.
 #
-# The refs are pinned by NAME here rather than resolved at runtime. Reprobuild
-# is not yet in the solved-graph lock contract (see this action's manifest), so
-# a named mainline is the available pin; "whatever the default branch is today"
-# would be no pin at all, which is the thing this org's sibling-resolution
-# contract exists to prevent.
+# Those named mainlines are now only the FALLBACK. A source build names the
+# reprobuild checkout it builds, and each sibling is then cloned at the
+# revision that checkout's `flake.lock` records (see "WHICH REVISION OF EACH
+# SIBLING" below). A named mainline remains for a sibling that lock does not
+# pin and for a caller that names no reprobuild checkout; "whatever the default
+# branch is today" would be no pin at all, which is the thing this org's
+# sibling-resolution contract exists to prevent.
 set -uo pipefail
 
 # shellcheck source=../ci-roots/route.sh
@@ -115,26 +117,163 @@ if [ -z "${CLONE_OWNER}" ]; then
   CLONE_OWNER="metacraft-labs"
   SIBLING_OWNER="metacraft-labs"
 fi
-RUNQUOTA_REF="${RUNQUOTA_REF:-dev}"
-IO_MON_REF="${IO_MON_REF:-dev}"
-# `test-certificates-tools` is cloned at a REVISION, not at `dev`, unlike the
-# neighbouring siblings, because its `dev` is the wrong source. Reprobuild's
-# flake.nix pins the `test-certificates-tools-src` input (and its repro.lock the
-# sibling) at this commit, which lives on that repo's `agents` branch only:
-# `dev` is an ancestor of it and 11 commits behind, missing what the engine's
-# `test_certificates` imports were written against. The engine's
-# `config.nims` puts `../test-certificates-tools/src` on the Nim path and
-# `repro_cli_support` links it, so a `dev` checkout would compile (or not)
-# against a library the pinned engine never saw. Move this together with that
-# flake input; `test-certificates-tools-ref` overrides it for a reprobuild
-# release that pins a different revision.
-TEST_CERTIFICATES_TOOLS_REF="${TEST_CERTIFICATES_TOOLS_REF:-4b395de551d86c745d6eb8ebf7c7228df25298f5}"
+# ---------------------------------------------------------------------------
+# WHICH REVISION OF EACH SIBLING: the one the reprobuild being built locks.
+# ---------------------------------------------------------------------------
+#
+# A source build at `repro-build-pin` must build that revision as its own
+# `flake.lock` describes it -- the dependency set its release package (the Nix
+# build of the same flake) was built from. This file used to clone every
+# sibling at a named mainline (`runquota@dev`, `io-mon@dev`, ...) whatever
+# reprobuild revision was being built, so a release cut from a reprobuild that
+# needed RunQuota work not yet promoted to `dev` could not be rebuilt from
+# source at all: reprobuild v0.2.26 (`b9cf09b07`) locks `runquota-src` at an
+# `agents` commit, `runquota@dev` lacked `runquota_client/pressure_text`, and
+# the build stopped at `cannot open file`. Every consumer then had to carry a
+# RunQuota pin that moved in lock-step with its `repro-build-pin`.
+#
+# So when the caller names the reprobuild checkout being built
+# (`REPROBUILD_SOURCE_DIRECTORY`, which `setup-reprobuild` always passes), each
+# sibling defaults to the revision that checkout's `flake.lock` records for the
+# root input of the same repository name. An explicit caller input
+# (`runquota-ref`, `io-mon-ref`, `stackable-hooks-pin`,
+# `test-certificates-tools-ref`) still wins: selecting a different revision is
+# the caller's explicit choice, never the default. A sibling the lock does not
+# pin, or a caller that names no reprobuild checkout (a standalone use of this
+# action), keeps the built-in default below. A named checkout without a
+# readable lock is a refusal, not a fallback.
+REPROBUILD_SOURCE_DIRECTORY="${REPROBUILD_SOURCE_DIRECTORY:-}"
+REPROBUILD_SOURCE_DIRECTORY="${REPROBUILD_SOURCE_DIRECTORY//\\//}"
+LOCKED_REVS=""
+if [ -n "${REPROBUILD_SOURCE_DIRECTORY}" ]; then
+  reprobuild_lock="${REPROBUILD_SOURCE_DIRECTORY}/flake.lock"
+  if [ ! -f "${reprobuild_lock}" ]; then
+    echo "::error::reprobuild-provision: reprobuild-source-directory '${REPROBUILD_SOURCE_DIRECTORY}' has no flake.lock, so the sibling revisions that reprobuild locks cannot be read. Refusing to guess a branch tip." >&2
+    exit 1
+  fi
+  # The first interpreter that actually runs: on a Windows runner `python3`
+  # can be the WindowsApps store stub, which is on PATH and exits 9009.
+  lock_python=""
+  for candidate in python3 python; do
+    candidate="$(command -v "${candidate}" 2>/dev/null)" || continue
+    if "${candidate}" -c 'import json' >/dev/null 2>&1; then
+      lock_python="${candidate}"
+      break
+    fi
+  done
+  if [ -z "${lock_python}" ]; then
+    echo "::error::reprobuild-provision: reading ${reprobuild_lock} needs a working python3 (or python) on PATH." >&2
+    exit 1
+  fi
+  # One `<repository> <owner> <40-hex rev>` line per repository a root input
+  # locks to a git forge source, lower-cased. Inputs of other kinds, and
+  # `follows` entries, are skipped. Inputs are matched by repository
+  # coordinates, never by input alias.
+  LOCKED_REVS="$("${lock_python}" - "${reprobuild_lock}" <<'PYTHON' | tr -d '\r'
+import json, re, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        lock = json.load(handle)
+    nodes = lock["nodes"]
+    inputs = nodes[lock["root"]].get("inputs", {})
+except (OSError, ValueError, KeyError, TypeError) as error:
+    sys.exit("unreadable flake.lock: %s" % error)
+revs = {}
+for node_name in inputs.values():
+    if not isinstance(node_name, str):
+        continue
+    locked = nodes.get(node_name, {}).get("locked", {})
+    rev = locked.get("rev", "")
+    if locked.get("type") in ("github", "gitlab", "sourcehut"):
+        owner, repo = locked.get("owner", ""), locked.get("repo", "")
+    elif locked.get("type") == "git":
+        parts = locked.get("url", "").rstrip("/").split("/")
+        owner = parts[-2] if len(parts) > 1 else ""
+        repo = re.sub(r"\.git$", "", parts[-1])
+    else:
+        continue
+    if not owner or not repo or not re.fullmatch(r"[0-9a-f]{40}", rev):
+        continue
+    revs.setdefault((repo.lower(), owner.lower()), set()).add(rev)
+for (repo, owner), found in sorted(revs.items()):
+    for rev in sorted(found):
+        print(repo, owner, rev)
+PYTHON
+)" || {
+    echo "::error::reprobuild-provision: could not read sibling revisions from ${reprobuild_lock} (see the message above)." >&2
+    exit 1
+  }
+  echo "reprobuild-provision: sibling revisions locked by ${reprobuild_lock}:"
+  printf '%s\n' "${LOCKED_REVS}" | sed -e 's/^/    /'
+fi
+
+# `sibling_rev <name> <explicit> <built-in default>` -- print the revision to
+# clone, and say on stderr where it came from. The lock entry for
+# `<clone owner>/<name>` is preferred; otherwise every locked `*/<name>` must
+# agree on one revision. Disagreement is a refusal (status 1): there is no
+# single revision to clone.
+CLONE_OWNER_LC="$(printf '%s' "${CLONE_OWNER}" | tr '[:upper:]' '[:lower:]')"
+sibling_rev() {
+  local name="$1" explicit="$2" fallback="$3" locked="" why=""
+  if [ -n "${explicit}" ]; then
+    echo "reprobuild-provision: ${name} @ ${explicit} (the caller's explicit input)" >&2
+    printf '%s' "${explicit}"
+    return 0
+  fi
+  locked="$(printf '%s\n' "${LOCKED_REVS}" | awk -v n="${name}" -v o="${CLONE_OWNER_LC}" \
+    '$1 == n && $2 == o { print $3 }' | sort -u)"
+  if [ -z "${locked}" ]; then
+    locked="$(printf '%s\n' "${LOCKED_REVS}" | awk -v n="${name}" '$1 == n { print $3 }' | sort -u)"
+  fi
+  case "${locked}" in
+    *[![:xdigit:]]*)
+      echo "::error::reprobuild-provision: the reprobuild lock pins ${name} at more than one revision ($(printf '%s' "${locked}" | tr '\n' ' ')); there is no single revision to clone. Name one explicitly." >&2
+      return 1
+      ;;
+  esac
+  if [ -n "${locked}" ]; then
+    echo "reprobuild-provision: ${name} @ ${locked} (locked by the reprobuild being built)" >&2
+    printf '%s' "${locked}"
+    return 0
+  fi
+  if [ -n "${REPROBUILD_SOURCE_DIRECTORY}" ]; then
+    why="the reprobuild lock does not pin it"
+  else
+    why="no reprobuild-source-directory was given"
+  fi
+  echo "reprobuild-provision: ${name} @ ${fallback} (built-in default; ${why})" >&2
+  printf '%s' "${fallback}"
+}
+
+RUNQUOTA_REF="$(sibling_rev runquota "${RUNQUOTA_REF:-}" dev)" || exit 1
+IO_MON_REF="$(sibling_rev io-mon "${IO_MON_REF:-}" dev)" || exit 1
+# The built-in `test-certificates-tools` default is a REVISION, not `dev`,
+# because its `dev` is the wrong source: reprobuild links the
+# `test_certificates` package against work on that repository's `agents`
+# branch. The engine's `config.nims` puts `../test-certificates-tools/src` on
+# the Nim path, so a `dev` checkout would compile (or not) against a library
+# the engine never saw. This constant only serves a caller that names no
+# reprobuild checkout; a source build reads the revision from the lock above.
+TEST_CERTIFICATES_TOOLS_DEFAULT="a726655886808d1062390d05c50f4fce03150eb4"
+TEST_CERTIFICATES_TOOLS_REF="$(sibling_rev test-certificates-tools "${TEST_CERTIFICATES_TOOLS_REF:-}" "${TEST_CERTIFICATES_TOOLS_DEFAULT}")" || exit 1
 STACKABLE_HOOKS_PIN="${STACKABLE_HOOKS_PIN:-}"
 if [[ -n "$STACKABLE_HOOKS_PIN" && ! "$STACKABLE_HOOKS_PIN" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::stackable-hooks-pin must be a full lowercase source SHA" >&2
   exit 2
 fi
-STACKABLE_HOOKS_REF="${STACKABLE_HOOKS_PIN:-dev}"
+STACKABLE_HOOKS_REF="$(sibling_rev nim-stackable-hooks "${STACKABLE_HOOKS_PIN}" dev)" || exit 1
+CODETRACER_NATIVE_RECORDER_REF="$(sibling_rev codetracer-native-recorder "" stable)" || exit 1
+if [ "${RUNNER_OS:-Linux}" = "Windows" ]; then
+  # The Windows env.ps1 build reads these as source-only siblings. They follow
+  # the reprobuild lock exactly as the flake inputs above do.
+  CODETRACER_REF="$(sibling_rev codetracer "" dev)" || exit 1
+  NIM_SHM_LEASE_REF="$(sibling_rev nim-shm-lease "" dev)" || exit 1
+  NIM_SHM_QUEUE_REF="$(sibling_rev nim-shm-queue "" dev)" || exit 1
+  NIM_SHM_GSET_REF="$(sibling_rev nim-shm-gset "" dev)" || exit 1
+  REPROBUILD_TEST_ADAPTERS_REF="$(sibling_rev reprobuild-test-adapters "" dev)" || exit 1
+  REPROBUILD_CT_TEST_RUNNER_REF="$(sibling_rev reprobuild-ct-test-runner "" dev)" || exit 1
+  REPROBUILD_LLM_AGENT_PACKAGES_REF="$(sibling_rev reprobuild-llm-agent-packages "" dev)" || exit 1
+fi
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
 # commands below to run from. See the long note in `preflight`: inside the
@@ -373,10 +512,10 @@ if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
   # overridden to the local paths.
   # -----------------------------------------------------------------------
   check_pins \
-    "${CLONE_OWNER}/codetracer-native-recorder:stable" \
+    "${CLONE_OWNER}/codetracer-native-recorder:${CODETRACER_NATIVE_RECORDER_REF}" \
     "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}"
 
-  clone "${CLONE_OWNER}/codetracer-native-recorder" stable
+  clone "${CLONE_OWNER}/codetracer-native-recorder" "$CODETRACER_NATIVE_RECORDER_REF"
   clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF"
 else
   # -----------------------------------------------------------------------
@@ -389,13 +528,13 @@ else
     "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}" \
     "${CLONE_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
     "${CLONE_OWNER}/io-mon:${IO_MON_REF}" \
-    "${CLONE_OWNER}/codetracer:dev" \
-    "${CLONE_OWNER}/nim-shm-lease:dev" \
-    "${CLONE_OWNER}/nim-shm-queue:dev" \
-    "${CLONE_OWNER}/nim-shm-gset:dev" \
-    "${CLONE_OWNER}/reprobuild-test-adapters:dev" \
-    "${CLONE_OWNER}/reprobuild-ct-test-runner:dev" \
-    "${CLONE_OWNER}/reprobuild-llm-agent-packages:dev" \
+    "${CLONE_OWNER}/codetracer:${CODETRACER_REF}" \
+    "${CLONE_OWNER}/nim-shm-lease:${NIM_SHM_LEASE_REF}" \
+    "${CLONE_OWNER}/nim-shm-queue:${NIM_SHM_QUEUE_REF}" \
+    "${CLONE_OWNER}/nim-shm-gset:${NIM_SHM_GSET_REF}" \
+    "${CLONE_OWNER}/reprobuild-test-adapters:${REPROBUILD_TEST_ADAPTERS_REF}" \
+    "${CLONE_OWNER}/reprobuild-ct-test-runner:${REPROBUILD_CT_TEST_RUNNER_REF}" \
+    "${CLONE_OWNER}/reprobuild-llm-agent-packages:${REPROBUILD_LLM_AGENT_PACKAGES_REF}" \
     "${CLONE_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
 
   clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
@@ -407,12 +546,12 @@ else
   fi
   echo "reprobuild-provision: Windows hook source ${hooks_sha}"
   clone "${CLONE_OWNER}/io-mon" "$IO_MON_REF" --submodules
-  clone "${CLONE_OWNER}/nim-shm-lease" dev
-  clone "${CLONE_OWNER}/nim-shm-queue" dev
-  clone "${CLONE_OWNER}/nim-shm-gset" dev
-  clone "${CLONE_OWNER}/reprobuild-test-adapters" dev
-  clone "${CLONE_OWNER}/reprobuild-ct-test-runner" dev
-  clone "${CLONE_OWNER}/reprobuild-llm-agent-packages" dev
+  clone "${CLONE_OWNER}/nim-shm-lease" "${NIM_SHM_LEASE_REF}"
+  clone "${CLONE_OWNER}/nim-shm-queue" "${NIM_SHM_QUEUE_REF}"
+  clone "${CLONE_OWNER}/nim-shm-gset" "${NIM_SHM_GSET_REF}"
+  clone "${CLONE_OWNER}/reprobuild-test-adapters" "${REPROBUILD_TEST_ADAPTERS_REF}"
+  clone "${CLONE_OWNER}/reprobuild-ct-test-runner" "${REPROBUILD_CT_TEST_RUNNER_REF}"
+  clone "${CLONE_OWNER}/reprobuild-llm-agent-packages" "${REPROBUILD_LLM_AGENT_PACKAGES_REF}"
   # The engine links the `test_certificates` package (store, note framing,
   # two-note merge) from this sibling: without `../test-certificates-tools/src`
   # the engine compile stops at `certificate_store.nim: cannot open file:
@@ -431,7 +570,7 @@ else
   # process's environment -- which is inherited at every submodule depth, and
   # is why the private submodule resolves without anything being written into
   # any `.git/config`.
-  clone "${CLONE_OWNER}/codetracer" dev
+  clone "${CLONE_OWNER}/codetracer" "${CODETRACER_REF}"
   submodule_log="$(mktemp "${NEUTRAL_DIR}/codetracer-submodules.XXXXXX")" || exit 1
   submodule_rc=0
   git -C "${WS}/codetracer" submodule update --init --depth 1 --recursive -- \

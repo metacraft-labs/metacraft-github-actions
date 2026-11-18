@@ -305,6 +305,22 @@ class ReleaseSelection(unittest.TestCase):
             self.assertEqual(re.search(default, child_input.group(1), re.MULTILINE).group(1),
                             re.search(default, canonical_input.group(1), re.MULTILINE).group(1), name)
 
+    def test_source_dependencies_follow_the_cloned_reprobuild_lock(self):
+        # The provisioner reads flake.lock from the checkout the source build
+        # clones, so its siblings default to what repro-build-pin locks, not
+        # to a mainline that may lack modules that lock's RunQuota has.
+        source = (HERE / 'action.yml').read_text()
+        step = '\n'.join(step_lines('Provision selected Reprobuild source dependencies'))
+        self.assertIn('        reprobuild-source-directory: '
+                      '${{ steps.roots.outputs.workspace-directory }}/.reprobuild-src', step)
+        clone = '\n'.join(step_lines('Clone reprobuild source'))
+        self.assertIn('DEST="${MCL_WORKSPACE_ROOT}/.reprobuild-src"', clone)
+        self.assertIn('MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}', clone)
+        for name in ['runquota-ref', 'io-mon-ref', 'stackable-hooks-pin']:
+            child_input = re.search(r'^  ' + re.escape(name) + r':\n(.*?)(?=^  [a-z])',
+                                    source, re.MULTILINE | re.DOTALL)
+            self.assertIn('    default: ""\n', child_input.group(1), name)
+
     def test_release_decision_disables_source_dependencies(self):
         self.env.update(RELEASE_INSTALLED='true', RELEASE_BIN_DIR='/selected/package/bin',
                         FROM_SOURCE='false', REPRO_BUILD_PIN='dev')

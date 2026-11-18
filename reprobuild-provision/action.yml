@@ -17,17 +17,21 @@ description: >
   $GITHUB_WORKSPACE. See the block above the two `uses:` in
   `setup-dev-env/action.yml`.
 
-  Scope (post-L2, CI-PROVISION-FROM-LOCK): the pins that remain here are
+  Scope: the siblings provisioned here are
   REPROBUILD's OWN build-input siblings — the flake inputs its `repro` CLI build
   depends on (codetracer-native-recorder, runquota) and the Windows env.ps1
-  source-only deps. Reprobuild itself is not yet integrated into the
-  solved-graph lock contract, so these can't be lock-resolved and stay pinned
-  to their mainline branch. A CONSUMER project's from-source dependency siblings
-  (e.g. codetracer's isonim + nim-* libs) are NO LONGER hard-coded here: the
-  workflow provisions those from the project's committed `repro.lock` via
-  `repro develop --all` (run in the project root), which clones/adopts each
-  locked dep in develop mode. When reprobuild joins the lock contract, these
-  remaining pins move to reprobuild's own lock too.
+  source-only deps. When `reprobuild-source-directory` names the reprobuild
+  checkout being built (setup-reprobuild always does), each of them is cloned at
+  the revision that checkout's `flake.lock` records for the repository of the
+  same name, so a source build at `repro-build-pin` gets the dependency set that
+  revision locks. An explicit `runquota-ref`, `io-mon-ref`,
+  `stackable-hooks-pin` or `test-certificates-tools-ref` still wins. Only a
+  sibling the lock does not pin, or a standalone call that names no reprobuild
+  checkout, falls back to a named mainline. A CONSUMER project's from-source
+  dependency siblings (e.g. codetracer's isonim + nim-* libs) are NO LONGER
+  hard-coded here: the workflow provisions those from the project's committed
+  `repro.lock` via `repro develop --all` (run in the project root), which
+  clones/adopts each locked dep in develop mode.
 
   HOW THE CREDENTIAL REACHES THESE CLONES, AND WHY IT USED NOT TO. Every clone
   below goes through `../git-auth/authenticated-clone.sh`: a credential-free URL
@@ -63,23 +67,32 @@ inputs:
     description: GitHub token (CI App token) for cloning private metacraft-labs repos.
     required: false
     default: ""
+  reprobuild-source-directory:
+    description: >
+      Absolute path of the reprobuild checkout being built. When given, every
+      sibling below defaults to the revision that checkout's `flake.lock`
+      records for it, and a missing or unreadable lock is a refusal. Empty
+      keeps the named-mainline defaults (a standalone call).
+    required: false
+    default: ""
   runquota-ref:
-    description: Git ref of the RunQuota source used to build Reprobuild and its bootstrap daemon.
+    description: RunQuota source ref used to build Reprobuild and its bootstrap daemon; empty takes the revision the reprobuild checkout locks (else dev).
     required: false
-    default: "dev"
+    default: ""
   io-mon-ref:
-    description: io-mon source ref for the Windows Reprobuild monitor bootstrap.
+    description: io-mon source ref for the Windows Reprobuild monitor bootstrap; empty takes the revision the reprobuild checkout locks (else dev).
     required: false
-    default: "dev"
+    default: ""
   stackable-hooks-pin:
-    description: Optional full lowercase hook-library source SHA for the Windows bootstrap; empty retains dev.
+    description: Optional full lowercase hook-library source SHA for the Windows bootstrap; empty takes the revision the reprobuild checkout locks (else dev).
     required: false
     default: ""
   test-certificates-tools-ref:
     description: >
       test-certificates-tools source ref (branch or full SHA) for the Windows
       Reprobuild engine build, which links its `test_certificates` package.
-      Empty selects the revision Reprobuild's flake pins (see the script).
+      Empty selects the revision the reprobuild checkout's flake.lock pins
+      (else the built-in revision in the script).
     required: false
     default: ""
   sibling-owner:
@@ -112,6 +125,7 @@ runs:
         MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
         GH_TOKEN: ${{ inputs.gh-token }}
         SIBLING_OWNER: ${{ inputs.sibling-owner }}
+        REPROBUILD_SOURCE_DIRECTORY: ${{ inputs.reprobuild-source-directory }}
         RUNQUOTA_REF: ${{ inputs.runquota-ref }}
         IO_MON_REF: ${{ inputs.io-mon-ref }}
         STACKABLE_HOOKS_PIN: ${{ inputs.stackable-hooks-pin }}

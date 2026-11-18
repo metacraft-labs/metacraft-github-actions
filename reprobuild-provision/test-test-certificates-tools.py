@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix="test-certificates-tools-") as directory
     print("PASS Linux/macOS path does not clone test-certificates-tools")
 
 # The built-in default must be a full SHA: a branch name would silently track
-# the wrong source (see the comment above TEST_CERTIFICATES_TOOLS_REF).
-default = re.search(r'TEST_CERTIFICATES_TOOLS_REF:-([^}]*)\}', SCRIPT.read_text())
+# the wrong source (see the comment above TEST_CERTIFICATES_TOOLS_DEFAULT).
+default = re.search(r'TEST_CERTIFICATES_TOOLS_DEFAULT="([^"]*)"', SCRIPT.read_text())
 assert default and re.fullmatch(r"[0-9a-f]{40}", default.group(1)), default
 print("PASS the default revision is a full SHA")
