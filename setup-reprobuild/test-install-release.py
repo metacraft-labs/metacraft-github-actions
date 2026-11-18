@@ -266,6 +266,38 @@ class ReleaseSelection(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertFalse(Path(self.env['REPRO_INSTALL_DIR']).exists())
 
+    def test_missing_asset_still_reports_the_resolved_release(self):
+        # No asset for this platform (the linux-aarch64 case): the script skips
+        # with exit 3 but names the release it resolved, so the source fallback
+        # can build that tag instead of a moving branch.
+        result = self.install()
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('REPRO_RESOLVED_TAG=v1.2.3', result.stdout.splitlines())
+
+    def test_installed_release_reports_tag_and_keeps_bin_dir_last(self):
+        self.archive()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertIn('REPRO_RESOLVED_TAG=v1.2.3', lines)
+        self.assertTrue(lines[-1].startswith('REPRO_BIN_DIR='), lines)
+
+    def test_source_fallback_builds_the_resolved_release_unless_pinned(self):
+        # An explicit pin wins, then the release this run resolved, then dev.
+        base = dict(ALREADY_PRESENT='', RELEASE_INSTALLED='false', RELEASE_BIN_DIR='',
+                    FROM_SOURCE='false', REPRO_VERSION='latest')
+        for pin, tag, expected in (('', 'v0.2.26', "'v0.2.26'"),
+                                   ('a' * 40, 'v0.2.26', "'" + 'a' * 40 + "'"),
+                                   ('', '', "'dev'")):
+            with self.subTest(pin=pin, tag=tag):
+                self.env.update(base, REPRO_BUILD_PIN=pin, RESOLVED_TAG=tag)
+                result = subprocess.run(['bash', '-c', step_body('Decide install path')],
+                                        env=self.env, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('source build of ' + expected, result.stdout)
+        clone = step_body('Clone reprobuild source')
+        self.assertIn('REF="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"', clone)
+
     def test_explicit_source_route_stays_source(self):
         self.env.update(ALREADY_PRESENT='true', RELEASE_INSTALLED='',
                         RELEASE_BIN_DIR='', FROM_SOURCE='true', REPRO_BUILD_PIN='a' * 40)
