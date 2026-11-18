@@ -286,9 +286,12 @@ class ReleaseSelection(unittest.TestCase):
         # An explicit pin wins, then the release this run resolved, then dev.
         base = dict(ALREADY_PRESENT='', RELEASE_INSTALLED='false', RELEASE_BIN_DIR='',
                     FROM_SOURCE='false', REPRO_VERSION='latest')
-        for pin, tag, expected in (('', 'v0.2.26', "'v0.2.26'"),
-                                   ('a' * 40, 'v0.2.26', "'" + 'a' * 40 + "'"),
-                                   ('', '', "'dev'")):
+        cases = (
+            ('', 'v0.2.26', "'v0.2.26'"),
+            ('a' * 40, 'v0.2.26', "'" + 'a' * 40 + "'"),
+            ('', '', "'dev'"),
+        )
+        for pin, tag, expected in cases:
             with self.subTest(pin=pin, tag=tag):
                 self.env.update(base, REPRO_BUILD_PIN=pin, RESOLVED_TAG=tag)
                 result = subprocess.run(['bash', '-c', step_body('Decide install path')],
