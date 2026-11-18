@@ -359,6 +359,38 @@ for months precisely because nothing ever printed a store root.
 
 `shared-store-path: ""` switches the probe off entirely.
 
+## How declared tools are provisioned
+
+Under `env-flavor: reprobuild`, `repro` realises the tools a project declares
+in one of several provisioning modes. Where a tool is not on `PATH`, the non-Nix
+modes fall back to the vendor's generic-Linux release tarball, which needs the
+FHS loader `/lib64/ld-linux-x86-64.so.2`. NixOS ships only a stub at that path,
+which refuses to start such binaries, so on a NixOS runner the tool is
+downloaded and then cannot run. Nix provisioning realises each tool with its
+own loader and libraries and works there.
+
+So on a NixOS runner this action exports `REPRO_TOOL_PROVISIONING=nix` to
+`$GITHUB_ENV`, before its own first `repro exec`, and prints a notice saying
+why. The variable is honoured by `repro exec` (dev-env activation, which has no
+`--tool-provisioning` flag) and by `repro build` / `repro test`, so one export
+covers every `dev-exec` call and any direct `repro` call in later steps.
+
+| situation                                            | what it does                                |
+| ---------------------------------------------------- | ------------------------------------------- |
+| `/etc/NIXOS` exists, or `/etc/os-release` `ID=nixos` | exports `REPRO_TOOL_PROVISIONING=nix`       |
+| any other runner (including Nix on another OS)       | exports nothing; the project's mode applies |
+| `REPRO_TOOL_PROVISIONING` already set (non-empty)    | leaves the caller's value alone             |
+
+Precedence, highest first: a `--tool-provisioning=<mode>` flag on
+`repro build` / `repro test` (passed through by `dev-exec`), then
+`REPRO_TOOL_PROVISIONING`, then the project's `defaultToolProvisioning`. To keep
+another mode on NixOS, set `REPRO_TOOL_PROVISIONING` in the job's `env:`; a
+value set only on the step that uses this action does not reach later steps.
+
+Nix provisioning needs a `nix` client, its daemon and substituters. NixOS hosts
+provide all three, so this action installs nothing for it; it warns when `nix`
+is not on `PATH`.
+
 ## Which RunQuota daemon a job's builds use
 
 RunQuota admits builds against one budget per machine, which only works when
@@ -435,11 +467,13 @@ a nested `working-directory`. The wrapper binds that project explicitly and
 runs the command in the caller's original directory, preserving argument
 boundaries and its exit status. It does not select a different environment
 from the later step's directory or move a relative command/input to the
-project root. As a compatibility
-shim for newer typed tool provisioning requirements, calls shaped as
+project root. Calls shaped as
 `dev-exec repro build ...` or `dev-exec repro test ...` automatically get
-`--tool-provisioning=path` appended unless the command already includes a
-`--tool-provisioning=...` flag.
+`--daemon=off` appended unless the command already selects a daemon mode. An
+explicit `--tool-provisioning=...` flag passes through unchanged; without one,
+Repro uses `REPRO_TOOL_PROVISIONING` (see
+[How declared tools are provisioned](#how-declared-tools-are-provisioned)),
+else the project's declared mode.
 
 Each reprobuild wrapper installation, its project binding and its child
 helpers live in a unique directory under the job's `RUNNER_TEMP`, published
