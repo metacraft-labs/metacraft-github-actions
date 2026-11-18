@@ -139,11 +139,14 @@ inputs:
   repro-build-pin:
     description: >
       Git ref (branch, tag, or SHA) of `metacraft-labs/reprobuild` to build the
-      `repro` CLI from when the SOURCE fallback is used. Defaults to `dev`, the
-      branch reprobuild's own CI gates on. This does not affect which release
-      the prebuilt path installs -- that is `repro-version`.
+      `repro` CLI from when the SOURCE fallback is used. Empty (the default)
+      builds the release tag the prebuilt path resolved from `repro-version`,
+      so a platform without a prebuilt asset runs the same reprobuild as the
+      others; when no release was resolved (`from-source: true`, or the lookup
+      failed) it builds `dev`. This does not affect which release the prebuilt
+      path installs -- that is `repro-version`.
     required: false
-    default: "dev"
+    default: ""
 
 outputs:
   install-source:
@@ -206,14 +209,30 @@ runs:
         rc=$?
         set -e
 
+        # The release this run resolved, whether or not an asset existed for
+        # this platform. The source fallback builds this tag by default, so a
+        # platform without a prebuilt (linux-aarch64) runs the same reprobuild
+        # as every other leg rather than a branch tip that may not read the
+        # consumer's lock schema.
+        resolved_tag="$(printf '%s\n' "${output}" | sed -n 's/^REPRO_RESOLVED_TAG=//p' | tail -n 1)"
+        # It comes from the GitHub API and becomes a git ref: accept only a
+        # release-tag shape.
+        case "${resolved_tag}" in
+          v[0-9]*) case "${resolved_tag}" in *[!A-Za-z0-9._-]*) resolved_tag="" ;; esac ;;
+          *) resolved_tag="" ;;
+        esac
+
         if [ "${rc}" -eq 0 ]; then
           bin_dir="${output##*REPRO_BIN_DIR=}"
+          echo "resolved-tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
           echo "installed=true" >> "$GITHUB_OUTPUT"
           echo "bin-dir=${bin_dir}" >> "$GITHUB_OUTPUT"
           echo "${bin_dir}" >> "$GITHUB_PATH"
         elif [ "${rc}" -eq 3 ]; then
           # Expected "no prebuilt available here" -- the reason was printed to
           # stderr by the script. The loud announcement happens in `decide`.
+          # An integrity failure (any other exit) writes no outputs at all.
+          echo "resolved-tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
           echo "installed=false" >> "$GITHUB_OUTPUT"
         else
           echo "::error::setup-reprobuild: installing the prebuilt repro CLI failed (exit ${rc}). Not falling back to a source build -- see the error above."
@@ -237,12 +256,14 @@ runs:
         FROM_SOURCE: ${{ inputs.from-source }}
         REPRO_VERSION: ${{ inputs.repro-version }}
         REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        RESOLVED_TAG: ${{ steps.release.outputs.resolved-tag }}
         RELEASE_INSTALLED: ${{ steps.release.outputs.installed }}
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
+        build_ref="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"
         if [ "${RELEASE_INSTALLED}" = "true" ]; then
           echo "install-source=release" >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
@@ -254,9 +275,9 @@ runs:
           # this action learned to use releases -- should be visible, not
           # inferred from a long job time.
           if [ "${FROM_SOURCE}" = "true" ]; then
-            echo "::notice::setup-reprobuild: building repro from source because from-source=true (pin: ${REPRO_BUILD_PIN})."
+            echo "::notice::setup-reprobuild: building repro from source because from-source=true (ref: ${build_ref})."
           else
-            echo "::warning::setup-reprobuild: no verified prebuilt repro release for this platform (requested: ${REPRO_VERSION}); FALLING BACK to a source build from '${REPRO_BUILD_PIN}'. See the preceding log lines for why. This is much slower and requires the sibling repos provisioned by reprobuild-provision."
+            echo "::warning::setup-reprobuild: no verified prebuilt repro release for this platform (requested: ${REPRO_VERSION}); FALLING BACK to a source build of '${build_ref}'. See the preceding log lines for why. This is much slower and requires the sibling repos provisioned by reprobuild-provision."
           fi
           echo "install-source=source"  >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir="         >> "$GITHUB_OUTPUT"
@@ -270,6 +291,7 @@ runs:
       shell: bash
       env:
         REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        RESOLVED_TAG: ${{ steps.release.outputs.resolved-tag }}
         GH_TOKEN: ${{ inputs.gh-token }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
@@ -295,7 +317,10 @@ runs:
         # with no explanation at all. `authenticated-clone.sh` prints git's own
         # output, scrubbed, naming the repository.
         set -uo pipefail
-        REF="${REPRO_BUILD_PIN:-dev}"
+        # An explicit pin wins; otherwise the release this run resolved, so the
+        # fallback builds what the other platforms install; `dev` only when no
+        # release was resolved.
+        REF="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"
         DEST="${MCL_WORKSPACE_ROOT}/.reprobuild-src"
         . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
         export TOKEN_OWNERS="metacraft-labs"

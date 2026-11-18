@@ -254,6 +254,10 @@ main() {
   base_url="${DOWNLOAD_ORIGIN}/${REPO}/releases/download/${TAG}"
 
   log "resolved release ${TAG}; want ${asset_name}"
+  # The resolved tag goes to stdout even when this platform has no asset (the
+  # exit-3 skip below), so the action's source fallback can build that same
+  # release instead of a moving branch. REPRO_BIN_DIR stays the last line.
+  printf 'REPRO_RESOLVED_TAG=%s\n' "${TAG}"
 
   local work
   work="$(mktemp -d)"

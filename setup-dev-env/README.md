@@ -75,7 +75,7 @@ environment path, including the existing lock-schema checks for `repro-lock`.
 
 ### Source-built Reprobuild inputs
 
-`repro-build-pin` chooses the Reprobuild source revision (default `dev`).
+`repro-build-pin` chooses the Reprobuild source revision. Empty (the default) builds the release that `repro-version` resolved, or `dev` when none was resolved.
 Its source dependencies follow it: RunQuota (including the Windows bootstrap
 lease daemon) and, on Windows, io-mon, nim-stackable-hooks and the other
 env.ps1 siblings are cloned at the revisions that Reprobuild revision's

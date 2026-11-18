@@ -239,11 +239,11 @@ inputs:
   repro-build-pin:
     description: >
       Git ref (branch, tag, or SHA) of `metacraft-labs/reprobuild`
-      to build the `repro` CLI from (reprobuild flavor only).
-      Defaults to `dev`, the branch reprobuild's own CI gates on.
-      Set to a SHA for fully reproducible runs.
+      to build the `repro` CLI from (reprobuild flavor only). Empty (the
+      default) builds the release `repro-version` resolved, or `dev` when no
+      release was resolved. Set to a SHA for fully reproducible runs.
     required: false
-    default: "dev"
+    default: ""
   repro-runquota-pin:
     description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
@@ -964,7 +964,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@52904e641eef7258700f590264ced223822cbf31
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@048f9aec46e73d9c69ec86282858050895135d46
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
