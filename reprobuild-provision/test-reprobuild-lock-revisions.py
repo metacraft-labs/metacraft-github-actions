@@ -58,12 +58,18 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     root = Path(directory)
     config = root / "gitconfig"
     config.touch()
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith("GIT_CONFIG") and k not in (
-               "GIT_AUTH_DIR", "RUNQUOTA_REF", "IO_MON_REF", "STACKABLE_HOOKS_PIN",
-               "TEST_CERTIFICATES_TOOLS_REF", "REPROBUILD_SOURCE_DIRECTORY")}
-    env.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
-               RUNNER_TEMP=str(root), SIBLING_OWNER="fixture", LC_ALL="C")
+    scrubbed = (
+        "GIT_AUTH_DIR", "RUNQUOTA_REF", "IO_MON_REF", "STACKABLE_HOOKS_PIN",
+        "TEST_CERTIFICATES_TOOLS_REF", "REPROBUILD_SOURCE_DIRECTORY",
+    )
+    env = {
+        k: v for k, v in os.environ.items()
+        if not k.startswith("GIT_CONFIG") and k not in scrubbed
+    }
+    env.update(
+        GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1", GH_TOKEN="",
+        RUNNER_TEMP=str(root), SIBLING_OWNER="fixture", LC_ALL="C",
+    )
     run("git", "config", "--file", str(config), "protocol.file.allow", "always", env=env)
     run("git", "config", "--file", str(config),
         f"url.file://{root}/remotes/.insteadOf", "https://github.com/fixture/", env=env)
@@ -191,8 +197,10 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     out = result.stdout + result.stderr
     assert result.returncode != 0, "the CodeTracer fixture lacks its submodules"
     assert "updating codetracer's source-only Nim submodules failed" in out, out
-    for name in ("runquota", "io-mon", "nim-stackable-hooks", "nim-shm-queue",
-                 "codetracer", "test-certificates-tools"):
+    for name in (
+        "runquota", "io-mon", "nim-stackable-hooks", "nim-shm-queue",
+        "codetracer", "test-certificates-tools",
+    ):
         assert version(workspace, name) == "locked revision\n", name + "\n" + out
     for name in ("nim-shm-lease", "nim-shm-gset", "reprobuild-test-adapters"):
         assert version(workspace, name) == "dev tip\n", name + "\n" + out
