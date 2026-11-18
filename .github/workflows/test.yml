@@ -224,6 +224,9 @@ jobs:
       - name: RunQuota bootstrap revision with real Git repositories
         run: python3 reprobuild-provision/test-runquota-ref.py
 
+      - name: Source build provisions the siblings its reprobuild locks
+        run: python3 reprobuild-provision/test-reprobuild-lock-revisions.py
+
       - name: Multi-owner sibling-owner clones from its first owner
         run: python3 reprobuild-provision/test-multi-owner.py
 
