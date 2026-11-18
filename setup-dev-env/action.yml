@@ -476,6 +476,28 @@ runs:
       run: bash "${GITHUB_ACTION_PATH}/decide-store-root.sh"
 
     # ------------------------------------------------------------------
+    # How `repro` provisions declared tools (reprobuild flavor)
+    #
+    # On a NixOS runner, export REPRO_TOOL_PROVISIONING=nix for the rest of the
+    # job. The non-Nix modes fall back to generic-Linux release tarballs, which
+    # NixOS's stub loader refuses to start, and `path` mode is becoming
+    # PATH-only. The variable is the one selector `repro exec` (the setup
+    # witness and every `dev-exec <cmd>`) and `repro build`/`repro test` all
+    # honour. It is written here, before the first `repro` invocation of this
+    # action, because $GITHUB_ENV reaches later steps only. A caller's own
+    # REPRO_TOOL_PROVISIONING, and an explicit `--tool-provisioning` flag, win.
+    # NixOS hosts carry the Nix daemon and substituters natively, so nothing is
+    # installed for it. Detection, precedence and rationale live in
+    # decide-tool-provisioning.sh's header.
+    # ------------------------------------------------------------------
+
+    - name: Decide how repro provisions declared tools (reprobuild)
+      id: tool-provisioning
+      if: ${{ inputs.env-flavor == 'reprobuild' }}
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/decide-tool-provisioning.sh"
+
+    # ------------------------------------------------------------------
     # Cross-repo siblings (all flavors): WHICH mechanism, decided and said
     #
     # Two mechanisms exist and they answer different questions —
@@ -1203,7 +1225,8 @@ runs:
               done
 
               # Keep explicit provisioning arguments unchanged; without one,
-              # Repro must use the project's declared provisioning mode.
+              # Repro uses REPRO_TOOL_PROVISIONING (set to nix on NixOS
+              # runners by an earlier step), else the project's declared mode.
               # `repro build`/`repro test` require an explicit --daemon
               # selector.  In CI we want the single-shot no-daemon path
               # so there is no background process to clean up between
