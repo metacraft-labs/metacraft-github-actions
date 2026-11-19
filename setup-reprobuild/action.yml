@@ -5,6 +5,8 @@ description: >
   for the running platform.
 
   Resolution order:
+    -. A caller-built Nix package (repro-package) -> admit it if it is the
+        pinned flake's own package output, add its bin/ to PATH, build nothing.
     0. Explicit from-source=true -> build the requested source revision.
     1. The requested prebuilt release archive for this OS/arch -> download, verify its
         SHA-256 against the release's SHA256SUMS, unpack, add bin/ to PATH.
@@ -118,6 +120,18 @@ inputs:
       archive is known-bad. Pair with `repro-build-pin` to choose the ref.
     required: false
     default: "false"
+  repro-package:
+    description: >
+      Nix store path of a `reprobuild` package the caller already built from
+      `github:metacraft-labs/reprobuild/<repro-build-pin>` (Linux and macOS).
+      When set, no release is installed and nothing is built: the path must
+      be valid in the local store and equal to the package output that pinned
+      flake evaluates to on this system, which requires repro-build-pin to be
+      a full commit SHA; its bin/ then goes on PATH. A workflow that builds
+      the package for its own identity receipts passes it here so the job
+      does not build the engine a second time. Overrides from-source.
+    required: false
+    default: ""
   require-checksum:
     description: >
       Refuse to install a release archive that cannot be checked against the
@@ -151,9 +165,10 @@ inputs:
 outputs:
   install-source:
     description: >
-      How `repro` ended up on PATH: `release` (verified prebuilt archive)
-      or `source` (built here). Useful for asserting in CI that a
-      given runner class is actually being served by a prebuilt binary.
+      How `repro` ended up on PATH: `release` (verified prebuilt archive),
+      `package` (the caller's repro-package) or `source` (built here).
+      Useful for asserting in CI that a given runner class is actually being
+      served by a prebuilt binary.
     value: ${{ steps.decide.outputs.install-source }}
   repro-bin-dir:
     description: Directory added to PATH containing the selected `repro` CLI.
@@ -184,9 +199,21 @@ runs:
     # whereas exit 1 (checksum mismatch, corrupt archive, unusable binary) is a
     # real failure that must NOT be papered over by silently building from
     # source. Only exit 3 is caught here.
+    # ── Caller-built package: admit it and build nothing ─────────────────────
+    - name: Use the caller's prebuilt repro package
+      id: package
+      if: ${{ inputs.repro-package != '' }}
+      shell: bash
+      env:
+        REPRO_PACKAGE: ${{ inputs.repro-package }}
+        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/bind-repro-package.sh"
+
     - name: Install prebuilt repro CLI from GitHub Release
       id: release
-      if: ${{ inputs.from-source != 'true' }}
+      if: ${{ inputs.from-source != 'true' && inputs.repro-package == '' }}
       shell: bash
       env:
         REPRO_VERSION: ${{ inputs.repro-version }}
@@ -270,12 +297,22 @@ runs:
         RESOLVED_TAG: ${{ steps.release.outputs.resolved-tag }}
         RELEASE_INSTALLED: ${{ steps.release.outputs.installed }}
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
+        REPRO_PACKAGE: ${{ inputs.repro-package }}
+        PACKAGE_BIN_DIR: ${{ steps.package.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
         build_ref="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"
-        if [ "${RELEASE_INSTALLED}" = "true" ]; then
+        if [ -n "${REPRO_PACKAGE:-}" ]; then
+          if [ -z "${PACKAGE_BIN_DIR:-}" ]; then
+            echo "::error::setup-reprobuild: repro-package was given but not admitted"
+            exit 1
+          fi
+          echo "install-source=package" >> "$GITHUB_OUTPUT"
+          echo "repro-bin-dir=${PACKAGE_BIN_DIR}" >> "$GITHUB_OUTPUT"
+          echo "need-source=false"      >> "$GITHUB_OUTPUT"
+        elif [ "${RELEASE_INSTALLED}" = "true" ]; then
           echo "install-source=release" >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"

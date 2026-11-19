@@ -274,6 +274,11 @@ jobs:
       - name: Requested release selection and installer contract
         run: python3 setup-reprobuild/test-install-release.py
 
+      # A caller-built package of the pin replaces the source build only when
+      # it is that pinned flake's own package output on this system.
+      - name: Caller-built Reprobuild package admission contract
+        run: python3 setup-reprobuild/test-prebuilt-package.py
+
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
 
