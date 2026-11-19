@@ -242,6 +242,67 @@ resolve_tag() {
   esac
 }
 
+# ── Symlink containment ──────────────────────────────────────────────────────
+#
+# links_leaving_package <pkg_dir> <pkg_phys>
+#
+# Print `<link> -> <target>` for every symlink under <pkg_dir> whose target
+# leaves the package, whose physical path is <pkg_phys>. GNU tar and unzip both
+# already block `..`/absolute-path MEMBERS (verified: the escape attempts land
+# inside the extract dir or are rejected outright), but neither stops a plain
+# symlink whose TARGET is absolute -- an archive shipping
+# `bin/repro -> /some/host/binary` would otherwise be installed and executed.
+#
+# A RELATIVE target is judged by where it resolves, not by its spelling: the
+# darwin archive ships `libexec/stackable-hooks-macos-tools/usr/bin/tee ->
+# ../../bin/tee`, which climbs with `..` yet never leaves the package. The
+# target's parent directory is resolved physically (`cd -P`, then `pwd -P`)
+# from the link's own directory and must lie inside the package's physical
+# path. `find` does not descend through symlinked directories, so each
+# link's own directory is a real path, and a final component that is itself
+# a link is listed and judged on its own. A target whose directory cannot be
+# resolved is refused rather than guessed at. `cd -P`/`pwd -P` are POSIX and
+# work under macOS's Bash 3.2 without GNU `realpath`.
+#
+# This loop is a function, not an inline `$(find ... | while ...)`, because
+# Bash 3.2 (the /bin/bash macOS ships) cannot parse this body inside `$(...)`:
+# it failed with "unexpected EOF while looking for matching `)'". A function
+# body is parsed by the ordinary parser.
+links_leaving_package() {
+  local pkg_dir="$1" pkg_phys="$2" l target target_dir resolved
+  find "${pkg_dir}" -type l -print 2>/dev/null | while IFS= read -r l; do
+    # A link `readlink` cannot read (for instance a name `read` split at a
+    # newline) is refused, not treated as an empty, harmless target.
+    if ! target="$(readlink "${l}")" || [ -z "${target}" ]; then
+      printf '%s -> (unreadable)\n' "${l}"; continue
+    fi
+    case "${target}" in
+      /*) printf '%s -> %s\n' "${l}" "${target}"; continue ;;
+    esac
+    # A target ending in `/`, `.` or `..` names a directory itself, so the
+    # whole target must resolve inside; otherwise only its parent has to
+    # (the last component may be a file). Trailing slashes are stripped first:
+    # `dirname "../"` is `.`, which would judge the link's own directory and
+    # let `up -> ../` through.
+    target_dir=""
+    while [ "${target%/}" != "${target}" ]; do
+      target="${target%/}"; target_dir="${target}"
+    done
+    if [ -z "${target_dir}" ]; then
+      case "${target##*/}" in
+        .|..) target_dir="${target}" ;;
+        *) target_dir="$(dirname "${target}")" ;;
+      esac
+    fi
+    # CDPATH would make a relative `cd` search elsewhere and print its pick.
+    resolved="$(CDPATH= && cd "$(dirname "${l}")" 2>/dev/null && cd -P "${target_dir}" 2>/dev/null && pwd -P)" || resolved=""
+    case "${resolved}/" in
+      "${pkg_phys}"/*) ;;
+      *) printf '%s -> %s\n' "${l}" "${target}" ;;
+    esac
+  done
+}
+
 main() {
   detect_platform
   resolve_tag
@@ -374,57 +435,11 @@ reprobuild-${version}-${PLATFORM}-${ARCH}/ (found: $(find "${extract_dir}" -mind
   fi
   [ -d "${pkg_dir}/bin" ] || die "archive ${asset_name} has no bin/ directory"
 
-  # Refuse a tree containing a symlink that points outside itself. GNU tar and
-  # unzip both already block `..`/absolute-path MEMBERS (verified: the escape
-  # attempts land inside the extract dir or are rejected outright), but neither
-  # stops a plain symlink whose TARGET is absolute -- an archive shipping
-  # `bin/repro -> /some/host/binary` would otherwise be installed and executed.
-  #
-  # A RELATIVE target is judged by where it resolves, not by its spelling: the
-  # darwin archive ships `libexec/stackable-hooks-macos-tools/usr/bin/tee ->
-  # ../../bin/tee`, which climbs with `..` yet never leaves the package. The
-  # target's parent directory is resolved physically (`cd -P`, then `pwd -P`)
-  # from the link's own directory and must lie inside the package's physical
-  # path. `find` does not descend through symlinked directories, so each
-  # link's own directory is a real path, and a final component that is itself
-  # a link is listed and judged on its own. A target whose directory cannot be
-  # resolved is refused rather than guessed at. `cd -P`/`pwd -P` are POSIX and
-  # work under macOS's Bash 3.2 without GNU `realpath`.
+  # Refuse a tree containing a symlink that points outside itself; see
+  # links_leaving_package above for how each link is judged.
   local pkg_phys bad_link
   pkg_phys="$(cd "${pkg_dir}" && pwd -P)" || die "cannot resolve ${pkg_dir}"
-  bad_link="$(find "${pkg_dir}" -type l -print 2>/dev/null | while IFS= read -r l; do
-      # A link `readlink` cannot read (for instance a name `read` split at a
-      # newline) is refused, not treated as an empty, harmless target.
-      if ! target="$(readlink "${l}")" || [ -z "${target}" ]; then
-        printf '%s -> (unreadable)\n' "${l}"; continue
-      fi
-      # Bash 3.2 needs the optional opening parenthesis here to parse a case
-      # pattern containing ')' inside this nested command substitution.
-      case "${target}" in
-        (/*) printf '%s -> %s\n' "${l}" "${target}"; continue ;;
-      esac
-      # A target ending in `/`, `.` or `..` names a directory itself, so the
-      # whole target must resolve inside; otherwise only its parent has to
-      # (the last component may be a file). Trailing slashes are stripped first:
-      # `dirname "../"` is `.`, which would judge the link's own directory and
-      # let `up -> ../` through.
-      target_dir=""
-      while [ "${target%/}" != "${target}" ]; do
-        target="${target%/}"; target_dir="${target}"
-      done
-      if [ -z "${target_dir}" ]; then
-        case "${target##*/}" in
-          (.|..) target_dir="${target}" ;;
-          (*) target_dir="$(dirname "${target}")" ;;
-        esac
-      fi
-      # CDPATH would make a relative `cd` search elsewhere and print its pick.
-      resolved="$(CDPATH= && cd "$(dirname "${l}")" 2>/dev/null && cd -P "${target_dir}" 2>/dev/null && pwd -P)" || resolved=""
-      case "${resolved}/" in
-        ("${pkg_phys}"/*) ;;
-        (*) printf '%s -> %s\n' "${l}" "${target}" ;;
-      esac
-    done | head -n 5 || true)"
+  bad_link="$(links_leaving_package "${pkg_dir}" "${pkg_phys}" | head -n 5 || true)"
   if [ -n "${bad_link}" ]; then
     die "archive ${asset_name} contains symlink(s) pointing outside the package; refusing to install:
 ${bad_link}"

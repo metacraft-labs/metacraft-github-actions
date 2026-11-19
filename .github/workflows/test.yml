@@ -207,6 +207,40 @@ jobs:
             require('child_process').execFileSync(process.execPath,
               ['--test', 'release-tools/configuration-packages.test.cjs'], {stdio: 'inherit'});
 
+  bash32-parse:
+    # macOS runners execute these scripts with /bin/bash 3.2, whose parser
+    # rejects bodies Bash 5 accepts. A suite that only ever ran Bash 5 let a
+    # parse break in setup-reprobuild/install-release.sh through to every macOS
+    # consumer, failing before the script ran a line. So build the same Bash
+    # 3.2 from GNU source here, on a stock runner, and parse every script with
+    # it. The tarball is checked against a pinned sha256 before it is built.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Build bash 3.2.57 from GNU source
+        # Modern gcc rejects this K&R-era source under its default standard.
+        # The flags go in CC, not CFLAGS: the builtins helper (mkbuiltins) is
+        # compiled without CFLAGS. The tarball's patched parse.y is newer than
+        # its shipped y.tab.c, so make regenerates the parser and needs bison.
+        run: |
+          command -v bison >/dev/null || { sudo apt-get update && sudo apt-get install -y bison; }
+          cd "${RUNNER_TEMP}"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output bash-3.2.57.tar.gz https://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz
+          echo "3fa9daf85ebf35068f090ce51283ddeeb3c75eb5bc70b1a4a7cb05868bfe06a4  bash-3.2.57.tar.gz" | sha256sum -c -
+          tar -xzf bash-3.2.57.tar.gz
+          cd bash-3.2.57
+          ./configure --without-bash-malloc CC="gcc -std=gnu89 -w" >/dev/null
+          make -j4 >/dev/null
+          ./bash -c 'echo "built ${BASH_VERSION}"'
+
+      - name: Every shell script parses under Bash 3.2
+        run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-install-release.py Bash32Parse
+
   resolve-sibling-rev:
     runs-on: ubuntu-latest
     steps:
