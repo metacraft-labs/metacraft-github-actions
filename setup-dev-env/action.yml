@@ -244,6 +244,17 @@ inputs:
       release was resolved. Set to a SHA for fully reproducible runs.
     required: false
     default: ""
+  repro-package:
+    description: >
+      Nix store path of the `reprobuild` package of repro-build-pin that the
+      caller already built (Linux and macOS, reprobuild flavor or repro-lock
+      strategy). Forwarded to setup-reprobuild, which admits it only when it
+      is exactly the package output of
+      `github:metacraft-labs/reprobuild/<repro-build-pin>` on this system and
+      then builds nothing; repro-build-pin must be a full commit SHA. Empty
+      (the default) keeps the release or source route.
+    required: false
+    default: ""
   repro-runquota-pin:
     description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
@@ -964,7 +975,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@7cfa9a7fb036ecb8f75fe6f5369347bca5b879ac
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@4c57251ab0342a7a9692e80c7b9fc58e0467e526
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -977,6 +988,7 @@ runs:
         repro-version: ${{ inputs.repro-version }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
         from-source: ${{ inputs.repro-from-source }}
+        repro-package: ${{ inputs.repro-package }}
         io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}
         sibling-owner: ${{ inputs.token-owner }}
         runquota-ref: ${{ inputs.repro-runquota-pin }}

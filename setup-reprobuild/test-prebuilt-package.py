@@ -217,6 +217,14 @@ class Wiring(unittest.TestCase):
                   'Decide install path', 'Clone reprobuild source']]
         self.assertEqual(order, sorted(order))
 
+    def test_setup_dev_env_forwards_the_package(self):
+        parent = REPO / 'setup-dev-env' / 'action.yml'
+        source = parent.read_text()
+        self.assertRegex(source, r'(?m)^  repro-package:\n    description:')
+        step = '\n'.join(step_lines(parent, 'Install the repro CLI (reprobuild)'))
+        self.assertIn('        repro-package: ${{ inputs.repro-package }}', step)
+        self.assertRegex(step, r'(?m)setup-reprobuild@[0-9a-f]{40}$')
+
 
 if __name__ == '__main__':
     unittest.main()

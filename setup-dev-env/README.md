@@ -75,6 +75,16 @@ the other. When the pin moves, each workflow's literal moves with it. The pin
 will later move out of devops-modules into a shared home; until then
 devops-modules is the source.
 
+A Linux or macOS leg that already builds the pinned engine as a Nix package
+(`nix build github:metacraft-labs/reprobuild/<pin>#reprobuild`, for example
+to record its derivation and image hashes) passes that store path as
+`repro-package`. setup-reprobuild then builds nothing: it checks that the
+path is valid in the local store and is exactly the package output that
+pinned flake evaluates to on this system, and puts its `bin/` on PATH. A path
+of another revision, system or package fails the job. Without
+`repro-package` the leg source-builds the pin a second time, which costs
+20-40 minutes and yields an engine the receipts do not describe.
+
 The release route below remains available, but fleet repositories' CI does
 not use it.
 
