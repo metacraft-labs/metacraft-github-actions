@@ -72,8 +72,8 @@ develop on run the Reprobuild that this pin installs. A job that installs a
 release or a branch tip tests a different engine, so its result says nothing
 about the one in use, and a defect fixed or introduced in one shows up only in
 the other. When the pin moves, each workflow's literal moves with it. The pin
-will later move out of devops-modules into a shared home; until then
-devops-modules is the source.
+will later move into this repository as `pins/reprobuild.json` on `dev`;
+until then devops-modules is the source.
 
 A Linux or macOS leg that already builds the pinned engine as a Nix package
 (`nix build github:metacraft-labs/reprobuild/<pin>#reprobuild`, for example
