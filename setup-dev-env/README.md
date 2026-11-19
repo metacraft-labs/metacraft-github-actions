@@ -54,6 +54,30 @@ jobs:
 | `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                           |
 | `runquota-socket`       | no       | RunQuota endpoint to export as `RUNQUOTA_SOCKET`. Empty (default) looks for the host's daemon and exports it when it answers. See below.                                  |
 
+### CI runs the fleet's Reprobuild
+
+When a repository's CI installs Reprobuild through this action, the revision
+must be the fleet pin: the `reprobuild` input that
+[devops-modules](https://github.com/metacraft-labs/devops-modules) (consumed
+as the flake input `nixos-modules`) records in its `flake.lock`. Set
+`repro-from-source: "true"` and pass that full 40-hex commit SHA as
+`repro-build-pin`, as a literal with a comment naming devops-modules as its
+source. Every leg, Windows included, then builds that revision from source.
+Leave `repro-runquota-pin`, `repro-io-mon-pin` and `repro-stackable-hooks-pin`
+empty, or set them to the entries the pinned revision's own `flake.lock`
+records. Do not pass a release tag, `latest` or a branch.
+
+The reason is one engine for the fleet and CI. The machines we build and
+develop on run the Reprobuild that this pin installs. A job that installs a
+release or a branch tip tests a different engine, so its result says nothing
+about the one in use, and a defect fixed or introduced in one shows up only in
+the other. When the pin moves, each workflow's literal moves with it. The pin
+will later move out of devops-modules into a shared home; until then
+devops-modules is the source.
+
+The release route below remains available, but fleet repositories' CI does
+not use it.
+
 ### Reprobuild release selection
 
 `repro-version` selects a release tag (for example `v0.2.10`) or `latest`
