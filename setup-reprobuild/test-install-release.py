@@ -20,6 +20,67 @@ import threading
 import unittest
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+
+# The Bash that executes install-release.sh. Defaults to the `bash` on PATH;
+# set INSTALL_RELEASE_BASH to run the installer cases under another one, such
+# as a Bash 3.2 build, without changing anything else the suite runs.
+INSTALL_BASH = os.environ.get('INSTALL_RELEASE_BASH') or 'bash'
+
+
+def find_bash3():
+    """Return a Bash 3.x to parse-check with, or (None, reason).
+
+    BASH32 overrides the search and must name a Bash 3.x. Otherwise /bin/bash
+    is used when it is one, which it is on stock macOS, whose runners are where
+    the action's scripts meet it."""
+    override = os.environ.get('BASH32')
+    candidates = [override] if override else ['/bin/bash']
+    for candidate in candidates:
+        if not os.access(candidate, os.X_OK):
+            if override:
+                raise AssertionError(f'BASH32={override} is not executable')
+            continue
+        version = subprocess.run(
+            [candidate, '-c', 'printf %s "${BASH_VERSINFO[0]}"'],
+            text=True, capture_output=True, timeout=10).stdout.strip()
+        if version == '3':
+            return candidate, None
+        if override:
+            raise AssertionError(f'BASH32={override} is Bash {version!r}, not 3.x')
+    return None, ('no Bash 3.x found: /bin/bash is not one here; set BASH32 '
+                  'to a Bash 3.2 build to run this check off macOS')
+
+
+def repository_shell_scripts():
+    listed = subprocess.run(['git', '-C', str(REPO), 'ls-files', '-z', '--', '*.sh'],
+                            capture_output=True)
+    if listed.returncode == 0:
+        names = [n for n in listed.stdout.decode().split('\0') if n]
+        return sorted(REPO / n for n in names)
+    return sorted(p for p in REPO.rglob('*.sh') if '.git' not in p.parts)
+
+
+class Bash32Parse(unittest.TestCase):
+    """Every shell script must parse under Bash 3.2, the /bin/bash on macOS.
+
+    Bash 3.2's command-substitution parser rejects bodies newer Bash accepts:
+    a `while`/`case` loop with comments inside `$(...)` made install-release.sh
+    fail on every macOS runner before running a single line, while the Linux
+    legs, on Bash 5, stayed green. Only a real 3.x interpreter detects this, so
+    the check runs one rather than linting for known shapes."""
+
+    def test_every_shell_script_parses_under_bash_3(self):
+        bash3, reason = find_bash3()
+        if bash3 is None:
+            self.skipTest(reason)
+        scripts = repository_shell_scripts()
+        self.assertIn(HERE / 'install-release.sh', scripts)
+        for script in scripts:
+            with self.subTest(script=str(script.relative_to(REPO))):
+                result = subprocess.run([bash3, '-n', str(script)], text=True,
+                                        capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 def step_lines(name):
@@ -104,7 +165,7 @@ class ReleaseSelection(unittest.TestCase):
         self.routes[prefix + asset] = (200, payload)
 
     def install(self):
-        return subprocess.run(['bash', str(HERE / 'install-release.sh')],
+        return subprocess.run([INSTALL_BASH, str(HERE / 'install-release.sh')],
                               env=self.env, text=True, capture_output=True, timeout=20)
 
     def test_parent_forwards_release_and_source_selection_to_published_helper(self):
