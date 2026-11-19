@@ -1440,8 +1440,18 @@ runs:
         pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-exec.ps1" dev-exec-cmdline-from-env
         exit /b %ERRORLEVEL%
         EOF
+          # Only PATH changes. Each shell already picks its own wrapper by its
+          # own lookup: pwsh tries `<name>.ps1` before the PATHEXT extensions
+          # and does not run an extensionless file on Windows, cmd.exe follows
+          # PATHEXT (`.cmd`), and bash runs the extensionless script. Do NOT
+          # export PATHEXT through $GITHUB_ENV to steer this: every later step
+          # and every child of `repro exec` inherits it, and with `.PS1` in it
+          # cmd.exe resolves an npm shim such as `node_modules\.bin\napi` to
+          # `napi.ps1` and hands it to the shell file association instead of
+          # running `napi.cmd`. Depending on the host and account, the step
+          # then hangs or exits 0 without napi having run.
+          # test-github-env-exports.py fails if any such variable is exported.
           echo "$WIN_BIN_DIR_WIN" >> "$GITHUB_PATH"
-          echo "PATHEXT=.PS1;.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL" >> "$GITHUB_ENV"
         else
           echo "$BIN_DIR" >> "$GITHUB_PATH"
         fi

@@ -6,7 +6,8 @@ mocked: the wrappers it writes run real commands through real pwsh (and, on
 Windows, real cmd.exe). The checks:
 
 - each run writes its wrappers into a directory of its own under RUNNER_TEMP
-  and appends that directory to GITHUB_PATH;
+  and appends that directory to GITHUB_PATH, and writes nothing to
+  GITHUB_ENV;
 - the PowerShell wrapper (what `dev-exec` resolves to in a pwsh step on
   Windows, the default shell there) forwards every argument unchanged and exiting with the command's status;
 - a stale `dev-exec.ps1` in a directory later on PATH, as a reprobuild-flavor
@@ -71,16 +72,22 @@ class WindowsDiyDevExec(unittest.TestCase):
         self.runner_temp.mkdir()
         self.github_path = self.root / 'github-path'
         self.github_path.write_text('')
+        self.github_env = self.root / 'github-env'
+        self.github_env.write_text('')
         self.script = self.root / 'step.ps1'
         self.script.write_text(step_body())
 
     def install(self):
         environment = dict(os.environ, RUNNER_TEMP=str(self.runner_temp),
-                            GITHUB_PATH=str(self.github_path))
+                            GITHUB_PATH=str(self.github_path),
+                            GITHUB_ENV=str(self.github_env))
         run = subprocess.run([self.pwsh, '-NoLogo', '-NoProfile', '-File',
                               str(self.script)], cwd=self.root, env=environment,
                               text=True, capture_output=True, timeout=60)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        # Only PATH changes: anything in GITHUB_ENV reaches every later step
+        # and every process it starts (see test-github-env-exports.py).
+        self.assertEqual(self.github_env.read_text(), '')
         return Path(self.github_path.read_text().splitlines()[-1])
 
     def pwsh_in(self, path_dirs, command):

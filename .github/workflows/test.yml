@@ -64,6 +64,11 @@ jobs:
         # written: PowerShell's binder and `pwsh -File` both split such tokens.
         shell: bash
         run: python setup-dev-env/test-reprobuild-ps1-arguments.py -v
+      - name: setup-dev-env exports no variable that changes program lookup
+        # `$GITHUB_ENV` reaches every later step and every child of `repro
+        # exec`; an exported PATHEXT made cmd.exe run npm's `.ps1` shims.
+        shell: bash
+        run: python setup-dev-env/test-github-env-exports.py -v
       - name: Install the verified released compatibility baseline
         id: sdk
         shell: bash

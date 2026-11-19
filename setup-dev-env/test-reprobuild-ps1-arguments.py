@@ -18,6 +18,11 @@ environment. That is justified because the defect lives in how the wrapper
 hands arguments to `repro`, not in `repro`; this test needs no SDK, so it runs
 on every platform where pwsh exists. test-repro-wrapper-cwd.py covers the same
 wrappers against the real released CLI on Windows.
+
+On Windows it also checks lookup by name with PATHEXT as Windows ships it,
+without `.PS1`: a pwsh step's `dev-exec` must reach `dev-exec.ps1` and a cmd
+step's must reach `dev-exec.cmd`, with the extensionless bash wrapper beside
+them as the step installs it.
 """
 import json
 import os
@@ -48,9 +53,9 @@ sys.exit(subprocess.call(sys.argv[4:]))
 '''
 
 
-def heredoc(step, name):
-    """The text the step writes to `$WIN_BIN_DIR/<name>`, dedented as bash does."""
-    marker = 'cat > "$WIN_BIN_DIR/' + name + '" <<\'EOF\'\n'
+def heredoc(step, name, directory='WIN_BIN_DIR'):
+    """The text the step writes to `$<directory>/<name>`, dedented as bash does."""
+    marker = 'cat > "$' + directory + '/' + name + '" <<\'EOF\'\n'
     body = step.split(marker, 1)[1].split('\n        EOF\n', 1)[0]
     return '\n'.join(line[8:] for line in body.splitlines()) + '\n'
 
@@ -75,6 +80,10 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
         for name in ('dev-exec.ps1', 'dev-exec-run.ps1', 'dev-exec.cmd'):
             (self.wrappers / name).write_text(heredoc(step, name), encoding='utf-8',
                                               newline='\n')
+        # The extensionless bash wrapper sits beside them, as in the step, so
+        # that lookup by name has to choose between all three.
+        (self.wrappers / 'dev-exec').write_text(heredoc(step, 'dev-exec', 'BIN_DIR'),
+                                                encoding='utf-8', newline='\n')
         (self.wrappers / 'dev-exec.project-root').write_text(str(self.root) + '\n')
         fake = self.root / 'fake-repro.py'
         fake.write_text(FAKE_REPRO)
@@ -123,6 +132,51 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
         run = subprocess.run(['cmd.exe', '/d', '/c', str(self.wrappers / 'dev-exec.cmd'),
                               sys.executable, '-c', ARGV_PROGRAM, *arguments],
                               cwd=self.root, env=self.env, text=True,
+                              capture_output=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(json.loads(run.stdout), arguments)
+
+    def by_name_environment(self):
+        """The wrappers on PATH, PATHEXT as Windows ships it: no `.PS1`.
+
+        The action must not need `.PS1` in PATHEXT, because exporting it
+        reaches every cmd.exe the job starts (test-github-env-exports.py).
+        """
+        environment = dict(self.env)
+        for key in [key for key in environment if key.upper() == 'PATHEXT']:
+            del environment[key]
+        environment['PATHEXT'] = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC'
+        environment['PATH'] = str(self.wrappers) + os.pathsep + environment['PATH']
+        return environment
+
+    @unittest.skipUnless(WINDOWS, 'name lookup by extension is Windows behaviour')
+    def test_pwsh_resolves_dev_exec_to_the_powershell_wrapper_by_name(self):
+        # A pwsh step types `dev-exec`. pwsh tries `dev-exec.ps1` before the
+        # PATHEXT extensions and does not run the extensionless file, so the
+        # in-process wrapper that rejoins `-d:` `release` is the one that runs.
+        python = sys.executable.replace("'", "''")
+        quoted = ' '.join("'" + a.replace("'", "''") + "'" for a in QUOTED_ARGUMENTS)
+        command = ("(Get-Command dev-exec).Source; dev-exec '" + python + "' -c '" +
+                    ARGV_PROGRAM + "' " + ' '.join(BARE_ARGUMENTS) + ' ' + quoted +
+                    '; exit $LASTEXITCODE')
+        run = subprocess.run([self.pwsh, '-NoLogo', '-NoProfile', '-Command', command],
+                              cwd=self.root, env=self.by_name_environment(), text=True,
+                              capture_output=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        resolved, output = run.stdout.split('\n', 1)
+        # Compare files, not spellings: pwsh may report the temp directory in
+        # its 8.3 short form (`C:\Users\RUNNER~1\...`) where Python has the
+        # long one, as it does on GitHub's windows-latest image.
+        self.assertTrue(os.path.samefile(resolved.strip(), self.wrappers / 'dev-exec.ps1'),
+                        f'{resolved.strip()!r} is not {self.wrappers / "dev-exec.ps1"}')
+        self.assertEqual(json.loads(output), BARE_ARGUMENTS + QUOTED_ARGUMENTS)
+
+    @unittest.skipUnless(WINDOWS, 'cmd.exe exists only on Windows')
+    def test_cmd_resolves_dev_exec_to_the_trampoline_by_name(self):
+        arguments = BARE_ARGUMENTS + QUOTED_ARGUMENTS
+        run = subprocess.run(['cmd.exe', '/d', '/c', 'dev-exec', sys.executable, '-c',
+                              ARGV_PROGRAM, *arguments],
+                              cwd=self.root, env=self.by_name_environment(), text=True,
                               capture_output=True, timeout=120)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertEqual(json.loads(run.stdout), arguments)
