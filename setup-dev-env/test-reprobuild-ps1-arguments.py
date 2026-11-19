@@ -164,7 +164,11 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
                               capture_output=True, timeout=120)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         resolved, output = run.stdout.split('\n', 1)
-        self.assertEqual(Path(resolved.strip()), self.wrappers / 'dev-exec.ps1')
+        # Compare files, not spellings: pwsh may report the temp directory in
+        # its 8.3 short form (`C:\Users\RUNNER~1\...`) where Python has the
+        # long one, as it does on GitHub's windows-latest image.
+        self.assertTrue(os.path.samefile(resolved.strip(), self.wrappers / 'dev-exec.ps1'),
+                        f'{resolved.strip()!r} is not {self.wrappers / "dev-exec.ps1"}')
         self.assertEqual(json.loads(output), BARE_ARGUMENTS + QUOTED_ARGUMENTS)
 
     @unittest.skipUnless(WINDOWS, 'cmd.exe exists only on Windows')
