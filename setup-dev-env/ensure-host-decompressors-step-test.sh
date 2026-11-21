@@ -20,10 +20,14 @@
 #                                    -> exit 1, error names xz
 #   5. nix build fails               -> exit 1, error names xz
 #   6. xz AND bzip2 missing, no nix  -> exit 1, error names BOTH
+#   7. xz missing, and the nix on PATH has the new CLI and flakes disabled
+#      (a pre-installed Nix with a stock nix.conf, which setup-nix never
+#      configured)                   -> exit 0, its bin/ appended: the script
+#                                       enables them on its own command line
 #
 # NEGATIVE CONTROLS
 # -----------------
-# Cases 1, 2, 4 and 6 are each paired with a MUTANT of the shipped script with
+# Cases 1, 2, 4, 6 and 7 are each paired with a MUTANT of the shipped script with
 # one guard removed, and the suite requires the case to FAIL against it. A case
 # that passes against both the real script and one with its guard deleted is
 # not testing anything. Mutants are made by exact-line replacement, and
@@ -65,6 +69,10 @@ tooldir() {
 #   ok    -> prints the pre-built output for the requested attribute
 #   nobin -> prints an output directory with no bin/ in it
 #   fail  -> exits non-zero
+#   strict -> like ok, but refuses `build` the way a Nix with a stock
+#             nix.conf does, unless the command line enables nix-command and
+#             flakes with --extra-experimental-features (or
+#             --experimental-features)
 make_nix() {
   local path="$1" mode="$2" log="$3" outroot="$4"
   cat >"${path}" <<EOF
@@ -72,6 +80,21 @@ make_nix() {
 echo "\$*" >>"${log}"
 attr="\${@: -1}"; attr="\${attr#*#}"
 case "${mode}" in
+  strict)
+    features=""; prev=""
+    for a in "\$@"; do
+      case "\${prev}" in
+        --extra-experimental-features|--experimental-features) features="\${features} \${a}" ;;
+      esac
+      prev="\${a}"
+    done
+    case " \${features} " in *" nix-command "*) ;; *)
+      echo "error: experimental Nix feature 'nix-command' is disabled; add '--extra-experimental-features nix-command' to enable it" >&2; exit 1 ;;
+    esac
+    case " \${features} " in *" flakes "*) ;; *)
+      echo "error: experimental Nix feature 'flakes' is disabled; add '--extra-experimental-features flakes' to enable it" >&2; exit 1 ;;
+    esac
+    echo "${outroot}/\${attr}-doc"; echo "${outroot}/\${attr}" ;;
   ok)    echo "${outroot}/\${attr}-doc"; echo "${outroot}/\${attr}" ;;
   nobin) echo "${outroot}/\${attr}-nobin" ;;
   fail)  echo "error: attribute build failed" >&2; exit 1 ;;
@@ -127,6 +150,7 @@ two="${WORK}/two";   tooldir "${two}" tar gzip
 nix_ok="${WORK}/nix-ok";       make_nix "${nix_ok}" ok "${WORK}/nix-ok.log" "${outroot}"
 nix_nobin="${WORK}/nix-nobin"; make_nix "${nix_nobin}" nobin "${WORK}/nix-nobin.log" "${outroot}"
 nix_fail="${WORK}/nix-fail";   make_nix "${nix_fail}" fail "${WORK}/nix-fail.log" "${outroot}"
+nix_strict="${WORK}/nix-strict"; make_nix "${nix_strict}" strict "${WORK}/nix-strict.log" "${outroot}"
 
 # ---- case predicates: return 0 when the case's contract holds ------------
 
@@ -157,6 +181,11 @@ case6() { # two missing, no nix: both named
     && [[ "${OUT}" == *"::error::"*"bzip2"* ]]
 }
 
+case7() { # xz missing; nix refuses the new CLI and flakes unless enabled
+  run "$1" case7 "${noxz}" "${nix_strict}"
+  [ "${RC}" -eq 0 ] && grep -qxF "${outroot}/xz/bin" "${GP}"
+}
+
 check() { # check <name> <description>
   if "$1" "${SCRIPT}"; then pass "$2"; else fail "$2"; echo "${OUT}" | sed 's/^/    | /'; fi
 }
@@ -175,6 +204,7 @@ check case3 "3. xz missing, no nix: fails naming xz"
 check case4 "4. nix succeeds but yields no bin/xz: fails naming xz"
 check case5 "5. nix build fails: fails naming xz"
 check case6 "6. xz and bzip2 missing, no nix: fails naming both"
+check case7 "7. a nix with nix-command and flakes disabled still provides xz"
 
 control case1 "the PATH presence check" \
   '  if command -v "${tool}" >/dev/null 2>&1; then' \
@@ -185,6 +215,9 @@ control case2 "appending the provided bin/ to GITHUB_PATH" \
 control case4 "re-checking PATH instead of trusting nix build's exit status" \
   '  command -v "${tool}" >/dev/null 2>&1 || still+=("${tool}")' \
   '  :'
+control case7 "enabling nix-command and flakes on the nix build command line" \
+  '  if ! out="$("${NIX}" --extra-experimental-features '"'"'nix-command flakes'"'"' build --no-link --print-out-paths "${NIXPKGS}#${attr}" 2>&1)"; then' \
+  '  if ! out="$("${NIX}" build --no-link --print-out-paths "${NIXPKGS}#${attr}" 2>&1)"; then'
 control case6 "naming every missing tool, not just the first" \
   '  echo "::error::ensure-host-decompressors: not on PATH and could not be provided: ${still[*]}. repro provisions tools from tarballs with the host tar, which runs these as child processes; without them a later '"'"'repro build'"'"' fails with '"'"'tar (child): <tool>: Cannot exec'"'"'. Put them on the runner'"'"'s PATH, or make nix available to this step."' \
   '  echo "::error::ensure-host-decompressors: not on PATH and could not be provided: ${still[0]}."'

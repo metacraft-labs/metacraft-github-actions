@@ -76,7 +76,12 @@ for entry in "${missing[@]}"; do
     continue
   fi
   echo "ensure-host-decompressors: ${tool} is not on PATH; building ${NIXPKGS}#${attr}"
-  if ! out="$("${NIX}" build --no-link --print-out-paths "${NIXPKGS}#${attr}" 2>&1)"; then
+  # `nix build` and the `nixpkgs#attr` installable are the new CLI and
+  # flakes, both experimental features. This step also runs when Nix was
+  # already on the runner and setup-nix wrote no configuration, so it must
+  # not depend on the host nix.conf enabling them: name them here. The
+  # option adds to whatever is configured and removes nothing.
+  if ! out="$("${NIX}" --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths "${NIXPKGS}#${attr}" 2>&1)"; then
     echo "ensure-host-decompressors: nix build ${NIXPKGS}#${attr} failed:" >&2
     echo "${out}" >&2
     continue

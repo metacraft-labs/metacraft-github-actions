@@ -113,6 +113,12 @@ make_nix() {
   mkdir -p "${dir}"
   cat >"${dir}/nix" <<EOF
 #!${BASH_BIN}
+# A Nix with a stock nix.conf refuses the new CLI and flakes unless the
+# command line enables them.
+case "\${1:-} \${2:-}" in
+  "--extra-experimental-features "*nix-command*flakes*) shift 2 ;;
+  *) echo "error: experimental Nix feature 'nix-command' is disabled" >&2; exit 98 ;;
+esac
 printf 'nix %s\n' "\$*" >>"\${STUB_LOG}"
 echo \$\$ >>"\${STUB_PIDS}"; echo \$\$ >>"${ALLPIDS}"
 shift 3   # shell nixpkgs#awscli2 -c

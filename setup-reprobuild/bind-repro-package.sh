@@ -56,10 +56,17 @@ if [ -n "${GH_TOKEN:-}" ]; then
   export NIX_CONFIG
 fi
 
-nix path-info -- "$package" >/dev/null || fail "repro-package ${package} is not a valid Nix store path"
+# `nix path-info`, `nix eval` and the `github:` flake reference are the new
+# CLI and flakes, both experimental features. The caller's Nix may be one
+# that setup-nix never configured (a pre-installed Nix with a stock
+# nix.conf), so they are enabled on each command line; the option adds to
+# whatever is configured and removes nothing.
+nix_new_cli=(nix --extra-experimental-features 'nix-command flakes')
+
+"${nix_new_cli[@]}" path-info -- "$package" >/dev/null || fail "repro-package ${package} is not a valid Nix store path"
 
 flake="github:metacraft-labs/reprobuild/${pin}"
-expected="$(nix eval --raw --no-update-lock-file "${flake}#reprobuild.outPath")" \
+expected="$("${nix_new_cli[@]}" eval --raw --no-update-lock-file "${flake}#reprobuild.outPath")" \
   || fail "could not evaluate ${flake}#reprobuild"
 if [ "$expected" != "$package" ]; then
   fail "repro-package ${package} is not ${flake}#reprobuild on this system (${expected})"

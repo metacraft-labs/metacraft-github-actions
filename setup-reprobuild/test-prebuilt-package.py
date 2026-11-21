@@ -25,6 +25,12 @@ TOKEN = 'ghs_contract_token_never_printed'
 
 STUB_NIX = r'''#!BASH
 set -u
+# A Nix with a stock nix.conf: the new CLI and flakes are disabled unless the
+# command line enables them, so every call must start with that option.
+case "${1:-} ${2:-}" in
+  "--extra-experimental-features "*nix-command*flakes*|"--extra-experimental-features "*flakes*nix-command*) shift 2 ;;
+  *) echo "error: experimental Nix feature 'nix-command' is disabled; add '--extra-experimental-features nix-command' to enable it" >&2; exit 1 ;;
+esac
 printf '%s\n' "$*" >> "$STUB_LOG"
 case "${NIX_CONFIG:-}" in
   *"access-tokens = github.com=$STUB_TOKEN"*) printf 'token-in-config\n' >> "$STUB_LOG" ;;
