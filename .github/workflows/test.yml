@@ -297,6 +297,9 @@ jobs:
       - name: resolve-sibling-rev.sh contract suite
         run: bash clone-siblings/resolve-sibling-rev-test.sh
 
+      - name: evict-stale-git-credentials removes only credential-bearing keys
+        run: bash evict-stale-git-credentials/evict-test.sh
+
       # The resolver suite covers the lock reader; this one covers the step that
       # calls it — `clone-siblings.sh`, executed against local repositories, so
       # a defect downstream of a correctly-behaving resolver (an unvalidated

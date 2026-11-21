@@ -47,6 +47,19 @@ The first-release scope and migration ownership are tracked internally.
 Runner selection does not change artifact membership, signatures, installer
 checks, Linux portability checks or publication requirements.
 
+## `evict-stale-git-credentials`
+
+Removes credential-bearing keys (`http.*.extraheader`, `url.*x-access-token*`)
+from a reused self-hosted runner's `~/.gitconfig`. Run it as a job's first
+step, before `actions/checkout`: a stale owner-scoped `extraHeader` there
+outranks checkout's fresh one and makes checkout fail with "could not read
+Username". It is a remote action because it has to be on disk before any git
+operation runs, and the runner downloads actions without git. Pin it by SHA:
+
+```yaml
+- uses: metacraft-labs/metacraft-github-actions/evict-stale-git-credentials@<sha>
+```
+
 ## `git-auth`
 
 Runs a bash script with the job's scoped GitHub credential, delivered through
