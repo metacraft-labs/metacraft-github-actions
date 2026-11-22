@@ -6,6 +6,11 @@ a native Python child reports only its cwd, relative input and exact arguments.
 The installer is extracted by the
 existing native-status fixture. Windows wrappers run only on Windows, and
 Linux results never qualify their native execution. No SDK is built here.
+On Linux and macOS a further real build checks that `dev-exec repro build`
+runs inside the project's environment: the project declares path provisioning
+and only its environment puts the tool on PATH. That tool is a stand-in shell
+script named `capnp`, because Repro resolves a path-mode tool by executable
+name and the case must not depend on what the host has installed.
 The separately justified CLI argument-recorder controls are run afterwards;
 they test provisioning-argument dispatch, not SDK realization.
 """
@@ -35,12 +40,87 @@ def write_fixture(path, text):
     path.write_text(text, encoding='utf-8', newline='\n')
 
 
+# The project declares path provisioning, as the recorders do on Linux and
+# macOS, and its environment alone puts the tool's directory on PATH. The tool
+# is a stand-in named like a real one (Repro resolves a path-mode tool by its
+# executable name only), so the result does not depend on whether the host has
+# Cap'n Proto installed; its output proves which executable the edge ran.
+PATH_TOOL_RECIPE = """import repro_project_dsl
+import repro_dsl_stdlib/packages/sh
+
+package devExecPathTool:
+  defaultToolProvisioning path
+  uses:
+    "sh"
+    "capnp"
+  devEnv:
+    prependPath "PATH", TOOLS
+  build:
+    let probe = shell(
+      command = "capnp compile > probe.txt",
+      actionId = "probe.capnp",
+      extraOutputs = @["probe.txt"],
+      cacheable = false)
+    appendRegisteredActionToolIdentityRefs(probe.id, ["capnp"])
+    discard target("probe", probe)
+"""
+PATH_TOOL_SCRIPT = """#!/bin/sh
+case "$1" in --version) echo "Cap'n Proto version 1.0.2"; exit 0 ;; esac
+echo "dev-env capnp: $*"
+"""
+
+
+def path_tool_case(root, installer, install_env, env, run, bash, expect_old):
+    """Run `dev-exec repro build` in path mode with the tool on the env's PATH only."""
+    project = root / 'path tool project'
+    project.mkdir()
+    tools = root / 'dev env tools'
+    tools.mkdir()
+    write_fixture(tools / 'capnp', PATH_TOOL_SCRIPT)
+    (tools / 'capnp').chmod(0o755)
+    write_fixture(project / 'repro.nim',
+                  PATH_TOOL_RECIPE.replace('TOOLS', json.dumps(str(tools))))
+    build_env = dict(env, REPRO_TOOL_PROVISIONING='path')
+    if shutil.which('capnp', path=build_env['PATH']):
+        raise RuntimeError(
+            'capnp is on the ambient PATH; the path-tool case would not show '
+            'where Repro found it')
+    code, output, error = run([bash, str(installer)], project,
+                              dict(install_env, MCL_CONSUMER_ROOT=str(project)))
+    if code:
+        raise RuntimeError('path-tool installer failed:\n' + output + error)
+    wrapper = fixture.installed_wrapper_directory(root / 'github-path') / 'dev-exec'
+    # From the project root: `repro build` selects its project from the
+    # caller's directory, and the wrapper keeps that directory.
+    code, output, error = run([bash, str(wrapper), 'repro', 'build'], project, build_env)
+    probe = project / 'probe.txt'
+    produced = probe.read_text(encoding='utf-8') if probe.is_file() else None
+    row = {'installation': 'path-tool', 'wrapper': 'bash', 'status': code,
+            'probe': produced}
+    if expect_old:
+        if code == 0 or 'not found in PATH' not in error:
+            raise RuntimeError(
+                'old wrapper did not refuse the dev-env path tool:\n' + output + error)
+        row['intendedOldFailure'] = True
+        return row
+    if code != 0 or produced != 'dev-env capnp: compile\n':
+        raise RuntimeError(
+            'dev-exec repro build did not use the environment\'s path tool: '
+            + repr(produced) + '\n' + output + error)
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repro', type=Path, required=True)
     parser.add_argument('--action-yml', type=Path, default=HERE / 'action.yml')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--expect-old-cwd-bug', action='store_true')
+    # Negative control for the path-tool case: the action's wrapper ran
+    # `repro build|test` beside the environment, and a Repro whose path mode
+    # is PATH-only refused the tool. Skips the recorder-based controls, which
+    # fail for that wrapper by design.
+    parser.add_argument('--expect-old-build-bypass', action='store_true')
     args = parser.parse_args()
     repro = args.repro.resolve(strict=True)
     bash = shutil.which('bash')
@@ -235,7 +315,15 @@ def main():
                                         + repr(observed) + '\n' + output + error)
                 rows.append({'installation': 'first', 'wrapper': 'pwsh-in-process',
                               'status': 0, 'expected': tokens, 'observed': observed})
-            if not args.expect_old_cwd_bug:
+            if os.name != 'nt' and not args.expect_old_cwd_bug:
+                # `dev-exec repro build` must see what a developer's does: a
+                # path-mode tool that only the project's environment puts on
+                # PATH (as a flake dev shell does). Run beside the
+                # environment, Repro finds no such tool and refuses.
+                rows.append(path_tool_case(
+                    root, installer, install_env, env, run, bash,
+                    args.expect_old_build_bypass))
+            if not args.expect_old_cwd_bug and not args.expect_old_build_bypass:
                 code, output, error = run([
                     sys.executable, str(HERE / 'test-repro-exec.py'),
                     'ProvisioningArguments'], consumer,
@@ -243,7 +331,8 @@ def main():
                 if code:
                     raise RuntimeError('generated provisioning argument controls failed:\n' +
                                         output + error)
-            if os.name == 'nt' and not args.expect_old_cwd_bug:
+            if (os.name == 'nt' and not args.expect_old_cwd_bug
+                    and not args.expect_old_build_bypass):
                 # Run every existing special-dispatch and generic status case,
                 # not a new approximation of their CMD invocation boundary.
                 code, output, error = run([
@@ -258,7 +347,8 @@ def main():
     finally:
         write_fixture(args.report, json.dumps({'repro': str(repro),
             'action': str(args.action_yml.resolve()), 'platform': sys.platform,
-            'expectOldFailure': args.expect_old_cwd_bug, 'cases': rows,
+            'expectOldFailure': args.expect_old_cwd_bug,
+            'expectOldBuildBypass': args.expect_old_build_bypass, 'cases': rows,
             'commands': commands, 'nativeWindows': os.name == 'nt'}, indent=2) + '\n')
     print(json.dumps({'cases': len(rows), 'nativeWindows': os.name == 'nt',
                       'expectedOldFailure': args.expect_old_cwd_bug}))

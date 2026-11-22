@@ -529,7 +529,14 @@ runs the command in the caller's original directory, preserving argument
 boundaries and its exit status. It does not select a different environment
 from the later step's directory or move a relative command/input to the
 project root. Calls shaped as
-`dev-exec repro build ...` or `dev-exec repro test ...` automatically get
+`dev-exec repro build ...` or `dev-exec repro test ...` take the same route: they
+run inside the project's environment, as a developer's local `repro build` does,
+so a tool the project provisions in `path` mode is found on that environment's
+`PATH` (for example a flake dev shell's) and not only on the runner's. Repro's
+path mode takes tools from `PATH` alone, so run beside the environment such a
+build refuses the tool. The wrapper invokes the `repro` that setup selected by
+its absolute path, so a `repro` inside the environment does not replace it.
+These calls get
 `--daemon=off` appended unless the command already selects a daemon mode. An
 explicit `--tool-provisioning=...` flag passes through unchanged; without one,
 Repro uses `REPRO_TOOL_PROVISIONING` (see

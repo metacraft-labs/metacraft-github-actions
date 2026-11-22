@@ -345,9 +345,12 @@ def check_case(capture, name, argv, prior, direct, wrapper, tools, cwd, env):
     driver = wrapper.parent / ('case-' + name + '.cmd')
     invocation = write_cmd_driver(driver, wrapper, argv, tools['cmd.exe'], prior)
     wrapped = capture.run(invocation, cwd, env)
-    # Diagnostic/output equality also rejects a wrong executable or parser path.
+    # Output equality also rejects a wrong executable or parser path. The
+    # wrapper runs build/test inside `repro exec`, whose activation progress
+    # precedes the command's own diagnostics on stderr, so the direct stderr
+    # must appear whole within the wrapped stderr rather than equal it.
     if (not name.startswith('generic-') and
-            (wrapped.stdout != direct.stdout or wrapped.stderr != direct.stderr)):
+            (wrapped.stdout != direct.stdout or direct.stderr not in wrapped.stderr)):
         raise RuntimeError(name + ': wrapped output differs from real direct command:\n' +
                             wrapped.stdout + wrapped.stderr)
     if name.startswith('generic-'):

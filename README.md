@@ -9,7 +9,9 @@ For `dev-exec repro build` and `dev-exec repro test`, an explicit
 `REPRO_TOOL_PROVISIONING` when set, else the project's declared default. On a
 NixOS runner, `setup-dev-env` exports `REPRO_TOOL_PROVISIONING=nix` unless the
 job already set it, because NixOS cannot run the generic-Linux tool tarballs
-the other modes fall back to. The wrapper does not select PATH mode. It adds
+the other modes fall back to. The wrapper does not select PATH mode. It runs
+these commands inside the project's environment, as a developer does, so a
+`path`-mode tool comes from that environment's `PATH`. It adds
 `--daemon=off` only when no daemon selector is supplied. Generic commands retain
 the setup project's environment, the caller's working directory and child status.
 Projects declare their platform-specific tool realizations in `repro.nim`, rather

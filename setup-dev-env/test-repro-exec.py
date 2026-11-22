@@ -7,8 +7,13 @@ evaluation, installed closure, native Windows execution, or cache reuse.
 
 The generated-wrapper argument controls also use a CLI argument recorder:
 the SDK has no argument-inspection operation, and provisioning a package would
-test a different boundary. The actual installer, wrappers and child processes
-run unchanged. Real SDK activation/cwd/status coverage remains in
+test a different boundary. The recorder implements only `repro exec <root> --
+<command...>` (run the command, marking the environment it was run in) and
+reports every other invocation's arguments and environment marker, so the
+controls also show that `dev-exec repro build|test` runs inside the selected
+project's environment rather than beside it. The actual installer, wrappers
+and child processes run unchanged. Real SDK activation/cwd/status coverage,
+including a path-mode tool found only on the environment's PATH, remains in
 test-repro-wrapper-cwd.py, which also runs these controls on native Windows.
 """
 import importlib.util
@@ -128,6 +133,21 @@ shift 2
         self.assertIn('      working-directory: ${{ steps.roots.outputs.consumer-directory }}\n', step)
 
 
+RECORDER = """import json, os, subprocess, sys
+arguments = sys.argv[1:]
+if arguments[:1] == ['exec']:
+    # repro exec <root> -- <command...>: run the command in "the environment
+    # of <root>", which this stand-in reduces to a marker naming <root>.
+    if len(arguments) < 4 or arguments[2] != '--':
+        sys.exit('recorder: unexpected exec arguments: ' + repr(arguments))
+    environment = dict(os.environ, GHA_RECORDED_DEV_ENV=arguments[1])
+    sys.exit(subprocess.call(arguments[3:], env=environment))
+print(json.dumps({'devEnv': os.environ.get('GHA_RECORDED_DEV_ENV'),
+                  'cwd': os.getcwd(), 'args': arguments}))
+sys.exit(int(os.environ['GHA_ARGV_STATUS']))
+"""
+
+
 class ProvisioningArguments(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='wrapper-provisioning-')
@@ -137,6 +157,9 @@ class ProvisioningArguments(unittest.TestCase):
         self.tools.mkdir()
         self.consumer = self.root / 'consumer'
         self.consumer.mkdir()
+        # Later steps may run in a nested working-directory of the project.
+        self.nested = self.consumer / 'nested directory'
+        self.nested.mkdir()
         self.bash = shutil.which('bash')
         self.assertIsNotNone(self.bash)
         spec = importlib.util.spec_from_file_location(
@@ -144,9 +167,7 @@ class ProvisioningArguments(unittest.TestCase):
         self.fixture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.fixture)
         probe = self.root / 'record arguments.py'
-        probe.write_text('import json,os,sys\nprint(json.dumps(sys.argv[1:]))\n'
-                          'sys.exit(int(os.environ["GHA_ARGV_STATUS"]))\n',
-                          encoding='utf-8', newline='\n')
+        probe.write_text(RECORDER, encoding='utf-8', newline='\n')
         recorder = self.tools / 'repro'
         recorder.write_text('#!/usr/bin/env bash\nexec ' + shlex.quote(sys.executable) +
                             ' ' + shlex.quote(str(probe)) + ' "$@"\n',
@@ -188,11 +209,20 @@ class ProvisioningArguments(unittest.TestCase):
         self.calls += 1
         for name, argv in commands:
             with self.subTest(wrapper=name, arguments=tail, status=status):
-                result = subprocess.run(argv, cwd=self.consumer,
+                result = subprocess.run(argv, cwd=self.nested,
                     env=dict(self.env, GHA_ARGV_STATUS=str(status)),
                     text=True, capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, status, result.stderr)
-                self.assertEqual(json.loads(result.stdout), expected)
+                recorded = json.loads(result.stdout)
+                self.assertEqual(recorded['args'], expected)
+                # Repro ran inside the setup project's environment, as a
+                # developer's `repro build` does, not with the runner's.
+                self.assertIsNotNone(recorded['devEnv'], 'repro ran outside repro exec')
+                self.assertTrue(os.path.samefile(recorded['devEnv'], self.consumer),
+                                recorded['devEnv'])
+                # ...and in the caller's working directory.
+                self.assertTrue(os.path.samefile(recorded['cwd'], self.nested),
+                                recorded['cwd'])
 
     def test_default_leaves_project_provisioning_mode_unselected(self):
         for verb in ('build', 'test'):
