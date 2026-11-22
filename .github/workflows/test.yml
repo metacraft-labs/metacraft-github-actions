@@ -73,7 +73,7 @@ jobs:
         id: sdk
         shell: bash
         env:
-          REPRO_VERSION: v0.2.29
+          REPRO_VERSION: v0.2.31
           REPRO_REQUIRE_CHECKSUM: "true"
           REPRO_GITHUB_TOKEN: ${{ github.token }}
         run: |
