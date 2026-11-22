@@ -242,7 +242,23 @@ if [[ -n "$STACKABLE_HOOKS_PIN" && ! "$STACKABLE_HOOKS_PIN" =~ ^[0-9a-f]{40}$ ]]
   exit 2
 fi
 STACKABLE_HOOKS_REF="$(sibling_rev nim-stackable-hooks "${STACKABLE_HOOKS_PIN}" dev)" || exit 1
-CODETRACER_NATIVE_RECORDER_REF="$(sibling_rev codetracer-native-recorder "" stable)" || exit 1
+# reprobuild's flake took `codetracer-native-recorder` as an input until
+# reprobuild 3141282d55 ("drop a source input no derivation consumes", first
+# released in v0.2.0). A source build of a reprobuild whose lock does not pin
+# it has nothing to override, so the recorder is not cloned: in the default
+# layout the clone lands INSIDE the consumer's checkout, where a stale copy of
+# the recorder is scanned as part of whatever repository is being tested (the
+# recorder's own whole-tree source scans failed on exactly that copy). A lock
+# that does pin it (a pre-v0.2.0 reprobuild), or a standalone call that names
+# no reprobuild checkout, keeps the clone.
+CLONE_NATIVE_RECORDER=1
+if [ -n "${REPROBUILD_SOURCE_DIRECTORY}" ] &&
+  [ -z "$(locked_revs_of codetracer-native-recorder)" ]; then
+  CLONE_NATIVE_RECORDER=0
+  echo "reprobuild-provision: codetracer-native-recorder not cloned (the reprobuild being built has no such input)" >&2
+else
+  CODETRACER_NATIVE_RECORDER_REF="$(sibling_rev codetracer-native-recorder "" stable)" || exit 1
+fi
 if [ "${RUNNER_OS:-Linux}" = "Windows" ]; then
   # The Windows env.ps1 build reads these as source-only siblings. They follow
   # the reprobuild lock exactly as the flake inputs above do.
@@ -332,7 +348,8 @@ scoped_git_auth_export
 scoped_git_auth_report
 
 if [ -z "${GH_TOKEN:-}" ]; then
-  # Not fatal: `codetracer-native-recorder` is the only private entry, so a
+  # Not fatal: `codetracer-native-recorder`, cloned only for a reprobuild that
+  # still takes it as an input, is the only private entry, so a
   # tokenless run can still get some way in. It will however be cloning
   # anonymously, which is the exact condition this file exists to remove, so
   # it must not pass in silence.
@@ -499,11 +516,15 @@ if [ "${RUNNER_OS:-Linux}" != "Windows" ]; then
   # the tarball URL, so they are cloned adjacent and the flake inputs are
   # overridden to the local paths.
   # -----------------------------------------------------------------------
-  check_pins \
-    "${CLONE_OWNER}/codetracer-native-recorder:${CODETRACER_NATIVE_RECORDER_REF}" \
-    "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}"
+  linux_pins=("${CLONE_OWNER}/runquota:${RUNQUOTA_REF}")
+  if [ "${CLONE_NATIVE_RECORDER}" = 1 ]; then
+    linux_pins=("${CLONE_OWNER}/codetracer-native-recorder:${CODETRACER_NATIVE_RECORDER_REF}" "${linux_pins[@]}")
+  fi
+  check_pins "${linux_pins[@]}"
 
-  clone "${CLONE_OWNER}/codetracer-native-recorder" "$CODETRACER_NATIVE_RECORDER_REF"
+  if [ "${CLONE_NATIVE_RECORDER}" = 1 ]; then
+    clone "${CLONE_OWNER}/codetracer-native-recorder" "$CODETRACER_NATIVE_RECORDER_REF"
+  fi
   clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF"
 else
   # -----------------------------------------------------------------------

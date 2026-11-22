@@ -19,8 +19,8 @@ description: >
 
   Scope: the siblings provisioned here are
   REPROBUILD's OWN build-input siblings — the flake inputs its `repro` CLI build
-  depends on (codetracer-native-recorder, runquota) and the Windows env.ps1
-  source-only deps. When `reprobuild-source-directory` names the reprobuild
+  depends on (runquota; codetracer-native-recorder only for a pre-v0.2.0
+  reprobuild whose lock still pins it) and the Windows env.ps1 source-only deps. When `reprobuild-source-directory` names the reprobuild
   checkout being built (setup-reprobuild always does), each of them is cloned at
   the revision that checkout's `flake.lock` records for the repository of the
   same name, so a source build at `repro-build-pin` gets the dependency set that
