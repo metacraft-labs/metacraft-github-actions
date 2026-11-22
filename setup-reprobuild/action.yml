@@ -385,7 +385,7 @@ runs:
     # clones defaults to the revision repro-build-pin locks, not a mainline.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@54281115ed981eceaf49f76f5d37b386a86dae49
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@a8fe10f2993753adee0afa23789cbfefd88d0403
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -430,9 +430,13 @@ runs:
         # Use the dev shell's just target — the same path reprobuild's own CI
         # exercises — overriding the private flake inputs to the local clones
         # `reprobuild-provision` produced so Nix doesn't fetch them via tarball.
+        # `reprobuild-provision` clones the recorder only for a reprobuild
+        # whose lock still pins it (pre-v0.2.0), so override it only then.
+        if [ -d "${MCL_WORKSPACE_ROOT}/codetracer-native-recorder/.git" ]; then
+          nix_develop_args+=(--override-input codetracer-native-recorder "path:${MCL_WORKSPACE_ROOT}/codetracer-native-recorder")
+        fi
         nix "${nix_develop_args[@]}" \
           --profile "${RUNNER_TEMP}/reprobuild-source-shell" \
-          --override-input codetracer-native-recorder "path:${MCL_WORKSPACE_ROOT}/codetracer-native-recorder" \
           --override-input runquota-src "path:${MCL_WORKSPACE_ROOT}/runquota" \
           --command bash -c '
             set -euo pipefail

@@ -166,10 +166,23 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     assert result.returncode == 0, out
     assert version(workspace, "runquota") == "locked revision\n", (
         "runquota was not cloned at the revision the reprobuild being built locks:\n" + out)
-    # Not pinned by the lock: the named mainline remains.
-    assert version(workspace, "codetracer-native-recorder") == "dev tip\n", out
     assert f"runquota @ {locked} (locked by the reprobuild being built)" in out, out
+    # Not an input of the reprobuild being built: not cloned at all. In the
+    # default layout the workspace is the consumer's own checkout, and a stale
+    # recorder copy there was scanned as part of the recorder under test.
+    assert not (workspace / "codetracer-native-recorder").exists(), out
+    assert "codetracer-native-recorder not cloned (the reprobuild being built has no such input)" in out, out
     print("PASS Linux source build clones the RunQuota its reprobuild locks")
+
+    # 1b. A reprobuild that still takes the recorder as an input (its lock
+    #     pins it: reprobuild before v0.2.0) gets it, at the locked revision.
+    checkout = reprobuild_checkout("linux-old-recorder", dict(
+        linux_pins, **{"codetracer-native-recorder": github("codetracer-native-recorder", locked)}))
+    workspace, result = provision("linux-old-recorder", "Linux", checkout)
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+    assert version(workspace, "codetracer-native-recorder") == "locked revision\n", out
+    print("PASS a reprobuild whose lock pins the recorder still gets it")
 
     # 2. An explicit caller input still wins over the lock.
     checkout = reprobuild_checkout("linux-explicit", linux_pins)
@@ -282,7 +295,8 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
                       ("nim-stackable-hooks", "d715806424e8373708494913e59a48237978cc2a"),
                       ("test-certificates-tools", "a726655886808d1062390d05c50f4fce03150eb4")):
         assert f"{name} @ {rev} (locked by the reprobuild being built)" in out, name + "\n" + out
-    assert "codetracer-native-recorder @ stable (built-in default; the reprobuild lock does not pin it)" in out, out
+    # b9cf09b07 (v0.2.26) has no recorder input.
+    assert "codetracer-native-recorder not cloned (the reprobuild being built has no such input)" in out, out
     print(f"PASS without python3 or /usr/bin on PATH, b9cf09b07's lock yields runquota @ {B9_RUNQUOTA[:12]}")
 
     # 9. The whole Linux/macOS path with that PATH: every clone lands
@@ -292,7 +306,7 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     assert result.returncode == 0, out
     assert "command not found" not in out, out
     assert version(workspace, "runquota") == "locked revision\n", out
-    assert version(workspace, "codetracer-native-recorder") == "dev tip\n", out
+    assert not (workspace / "codetracer-native-recorder").exists(), out
     print("PASS without python3 or /usr/bin on PATH, the source build provisions the locked RunQuota")
 
     # 9b. The refusals hold with that PATH: a missing lock, and one
