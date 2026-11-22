@@ -329,6 +329,29 @@ class ReleaseSelection(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertFalse(Path(self.env['REPRO_INSTALL_DIR']).exists())
 
+    def test_windows_on_arm_selects_the_machine_not_the_emulated_bash(self):
+        # Git Bash answers `uname -m` with x86_64 on Windows on ARM: it runs
+        # emulated. The runner's RUNNER_ARCH names the machine.
+        shim = self.root / 'uname-shim'
+        shim.mkdir()
+        (shim / 'uname').write_text('#!/bin/sh\n'
+                                    'case "$1" in -s) echo MINGW64_NT-10.0-26100 ;;'
+                                    ' -m) echo x86_64 ;; esac\n')
+        (shim / 'uname').chmod(0o755)
+        prefix = '/metacraft-labs/reprobuild/releases/download/v1.2.3/'
+        for runner_arch, arch in (('ARM64', 'aarch64'), ('X64', 'x86_64'), (None, 'x86_64')):
+            with self.subTest(runner_arch=runner_arch):
+                env = dict(self.env, PATH=f'{shim}{os.pathsep}{self.env["PATH"]}')
+                env.pop('RUNNER_ARCH', None)
+                if runner_arch:
+                    env['RUNNER_ARCH'] = runner_arch
+                self.routes[prefix + 'SHA256SUMS'] = (200, b'')
+                self.requests.clear()
+                result = subprocess.run([INSTALL_BASH, str(HERE / 'install-release.sh')],
+                                        env=env, text=True, capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertIn(f'reprobuild-1.2.3-windows-{arch}.zip', result.stdout + result.stderr)
+
     def test_missing_asset_still_reports_the_resolved_release(self):
         # No asset for this platform (the linux-aarch64 case): the script skips
         # with exit 3 but names the release it resolved, so the source fallback

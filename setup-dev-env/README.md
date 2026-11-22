@@ -54,6 +54,40 @@ jobs:
 | `shared-store-path`     | no       | Where a shared, persistent reprobuild store is expected to be mounted. Defaults to `/srv/repro-store`; empty switches the probe off. See below.                           |
 | `runquota-socket`       | no       | RunQuota endpoint to export as `RUNQUOTA_SOCKET`. Empty (default) looks for the host's daemon and exports it when it answers. See below.                                  |
 
+### CI runs the fleet's Reprobuild
+
+When a repository's CI installs Reprobuild through this action, the revision
+must be the fleet pin: the `reprobuild` input that
+[devops-modules](https://github.com/metacraft-labs/devops-modules) (consumed
+as the flake input `nixos-modules`) records in its `flake.lock`. Set
+`repro-from-source: "true"` and pass that full 40-hex commit SHA as
+`repro-build-pin`, as a literal with a comment naming devops-modules as its
+source. Every leg, Windows included, then builds that revision from source.
+Leave `repro-runquota-pin`, `repro-io-mon-pin` and `repro-stackable-hooks-pin`
+empty, or set them to the entries the pinned revision's own `flake.lock`
+records. Do not pass a release tag, `latest` or a branch.
+
+The reason is one engine for the fleet and CI. The machines we build and
+develop on run the Reprobuild that this pin installs. A job that installs a
+release or a branch tip tests a different engine, so its result says nothing
+about the one in use, and a defect fixed or introduced in one shows up only in
+the other. When the pin moves, each workflow's literal moves with it. The pin
+will later move into this repository as `pins/reprobuild.json` on `dev`;
+until then devops-modules is the source.
+
+A Linux or macOS leg that already builds the pinned engine as a Nix package
+(`nix build github:metacraft-labs/reprobuild/<pin>#reprobuild`, for example
+to record its derivation and image hashes) passes that store path as
+`repro-package`. setup-reprobuild then builds nothing: it checks that the
+path is valid in the local store and is exactly the package output that
+pinned flake evaluates to on this system, and puts its `bin/` on PATH. A path
+of another revision, system or package fails the job. Without
+`repro-package` the leg source-builds the pin a second time, which costs
+20-40 minutes and yields an engine the receipts do not describe.
+
+The release route below remains available, but fleet repositories' CI does
+not use it.
+
 ### Reprobuild release selection
 
 `repro-version` selects a release tag (for example `v0.2.10`) or `latest`
@@ -495,7 +529,14 @@ runs the command in the caller's original directory, preserving argument
 boundaries and its exit status. It does not select a different environment
 from the later step's directory or move a relative command/input to the
 project root. Calls shaped as
-`dev-exec repro build ...` or `dev-exec repro test ...` automatically get
+`dev-exec repro build ...` or `dev-exec repro test ...` take the same route: they
+run inside the project's environment, as a developer's local `repro build` does,
+so a tool the project provisions in `path` mode is found on that environment's
+`PATH` (for example a flake dev shell's) and not only on the runner's. Repro's
+path mode takes tools from `PATH` alone, so run beside the environment such a
+build refuses the tool. The wrapper invokes the `repro` that setup selected by
+its absolute path, so a `repro` inside the environment does not replace it.
+These calls get
 `--daemon=off` appended unless the command already selects a daemon mode. An
 explicit `--tool-provisioning=...` flag passes through unchanged; without one,
 Repro uses `REPRO_TOOL_PROVISIONING` (see
@@ -510,7 +551,7 @@ replace the earlier installation's selected project.
 ### Wrapper contract tests
 
 The existing `test.yml` workflow enrolls the real wrapper contract on Linux
-and native Windows using the verified `v0.2.26` release installer. A missing
+and native Windows using the verified `v0.2.29` release installer. A missing
 baseline fails the test; it does not build an SDK or skip the contract.
 Windows executes the generated Bash, PowerShell and CMD wrappers and the
 existing native CMD status controls. Linux results do not qualify Windows.

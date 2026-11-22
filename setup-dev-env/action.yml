@@ -244,6 +244,17 @@ inputs:
       release was resolved. Set to a SHA for fully reproducible runs.
     required: false
     default: ""
+  repro-package:
+    description: >
+      Nix store path of the `reprobuild` package of repro-build-pin that the
+      caller already built (Linux and macOS, reprobuild flavor or repro-lock
+      strategy). Forwarded to setup-reprobuild, which admits it only when it
+      is exactly the package output of
+      `github:metacraft-labs/reprobuild/<repro-build-pin>` on this system and
+      then builds nothing; repro-build-pin must be a full commit SHA. Empty
+      (the default) keeps the release or source route.
+    required: false
+    default: ""
   repro-runquota-pin:
     description: RunQuota source ref for the source-built Reprobuild and its bootstrap daemon; empty takes the revision the reprobuild at repro-build-pin locks.
     required: false
@@ -964,7 +975,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@7cfa9a7fb036ecb8f75fe6f5369347bca5b879ac
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@4c57251ab0342a7a9692e80c7b9fc58e0467e526
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -977,6 +988,7 @@ runs:
         repro-version: ${{ inputs.repro-version }}
         repro-build-pin: ${{ inputs.repro-build-pin }}
         from-source: ${{ inputs.repro-from-source }}
+        repro-package: ${{ inputs.repro-package }}
         io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}
         sibling-owner: ${{ inputs.token-owner }}
         runquota-ref: ${{ inputs.repro-runquota-pin }}
@@ -1230,11 +1242,12 @@ runs:
         #
         #   reprobuild → `repro exec -- <cmd>`
         #
-        # Calling steps invoke `dev-exec just test` etc. and we route
-        # it through the setup project's recipe, even when a later step runs
-        # in a nested working-directory. Explicit selection also makes Repro
-        # start its child at the project root; the small child runner restores
-        # the caller's directory without rebuilding its environment.
+        # Calling steps invoke `dev-exec just test`, `dev-exec repro build`
+        # etc. and we route every one through the setup project's recipe,
+        # even when a later step runs in a nested working-directory.
+        # Explicit selection also makes Repro start its child at the
+        # project root; the small child runner restores the caller's
+        # directory without rebuilding its environment.
         : "${MCL_CONSUMER_ROOT:?setup consumer root is required}"
         : "${RUNNER_TEMP:?job-private runner temp is required}"
         runner_temp="$RUNNER_TEMP"
@@ -1272,7 +1285,12 @@ runs:
               if [ "$has_daemon" = false ]; then
                 args+=(--daemon=off)
               fi
-              exec "${args[@]}"
+              # Run it inside the project's environment, as a developer does:
+              # path-mode tools (`uses:`) come from the dev env's PATH, e.g. a
+              # flake dev shell. Run directly, Repro sees only the runner PATH
+              # and refuses. The absolute path keeps the CLI setup selected; a
+              # dev shell may carry another `repro`.
+              args[0]="$(command -v repro || echo repro)"
               ;;
           esac
         fi
@@ -1369,21 +1387,19 @@ runs:
             $cmdArgs += "--daemon=off"
           }
 
-          # `$cmdArgs[0]` is already "repro" — drop it before splatting or we
-          # would invoke `repro repro build ...` which repro treats as an
-          # unknown subcommand and exits with the usage banner.
-          $reproArgs = $cmdArgs[1..($cmdArgs.Count - 1)]
-          & repro @reproArgs
-          exit $LASTEXITCODE
+          # Like the bash dev-exec, run it inside the project's environment by
+          # the absolute path of the CLI setup selected, below.
+          $reproCommand = Get-Command repro -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -ne $reproCommand -and $reproCommand.Source) {
+            $cmdArgs[0] = $reproCommand.Source
+          }
         }
 
-        # Non-`repro build|test` path: pass through to `repro exec -- $@`. The
-        # cmdArgs here still hold the raw invocation the caller supplied; drop
-        # the leading "repro" (if present) with the same slice pattern so the
-        # `exec --` boundary lines up with what the caller expects.
-        if ($cmdArgs.Count -ge 1 -and $cmdArgs[0] -eq "repro") {
-          $cmdArgs = $cmdArgs[1..($cmdArgs.Count - 1)]
-        }
+        # Every command, `repro <verb>` included, runs as written inside
+        # `repro exec <root> --`, exactly as the bash dev-exec does: a leading
+        # "repro" is the command to run, not a prefix to strip, so
+        # `dev-exec repro version` runs `repro version` in the environment.
         $projectRoot = [IO.File]::ReadAllText(
           (Join-Path $PSScriptRoot "dev-exec.project-root")).TrimEnd([char[]]"`r`n")
         if ([string]::IsNullOrEmpty($projectRoot)) {

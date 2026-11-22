@@ -136,6 +136,19 @@ detect_platform() {
     arm64|aarch64)  ARCH=aarch64 ;;
     *) skip "unrecognised CPU '${uname_m}'; no release archive can be selected" ;;
   esac
+
+  # On Windows, `uname -m` describes Git Bash, not the machine. Git for
+  # Windows' MSYS2 runtime has no native ARM64 build, so on Windows on ARM
+  # Bash runs under x64 emulation and answers x86_64, and the x64 archive
+  # would be installed and emulated too. The runner itself is native, and
+  # says what the machine is in RUNNER_ARCH.
+  if [ "${PLATFORM}" = windows ] && [ -n "${RUNNER_ARCH:-}" ]; then
+    case "${RUNNER_ARCH}" in
+      X64)   ARCH=x86_64 ;;
+      ARM64) ARCH=aarch64 ;;
+      *) skip "unrecognised RUNNER_ARCH '${RUNNER_ARCH}'; no release archive can be selected" ;;
+    esac
+  fi
 }
 
 # ── SHA-256, portably ────────────────────────────────────────────────────────

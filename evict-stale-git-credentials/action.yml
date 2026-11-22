@@ -1,0 +1,98 @@
+name: Evict stale git credentials
+description: |
+  Remove credential-bearing keys (http.*.extraheader, url.*x-access-token*)
+  from the runner's persistent ~/.gitconfig, before any checkout.
+
+  This is a REMOTE action on purpose. It must run before the job's first git
+  operation, because the stale key it removes is what makes actions/checkout
+  fail (mode 1 below). A local ./.github/actions action needs the checkout to
+  exist first, and even a sparse checkout of .github/actions would be a git
+  fetch through that same poisoned ~/.gitconfig. The runner downloads a
+  remote action as a tarball over its own HTTP client, which reads no git
+  configuration, so this action is on disk before git ever runs. Callers pin
+  it by commit SHA.
+
+  The script uses only bash builtins and git. grep and sed are not on PATH in
+  a raw step on the nix-darwin runners, and the recount must not silently
+  verify nothing.
+
+  Rationale, carried over from the step this replaces:
+
+  MODE 1 of the self-hosted checkout outage, and the fix for it.
+
+  SYMPTOM. On m3-mcl-004 and m3-mcl-005, `actions/checkout` died three
+  times 20s apart with
+  fatal: could not read Username for 'https://github.com':
+  terminal prompts disabled
+  one line after it installed a freshly minted App token as
+  `http.https://github.com/.extraheader`. m3-mcl-001 and m3-mcl-006 ran
+  the identical step in the same run and succeeded. The variable is the
+  HOST, not the token.
+
+  MECHANISM (reproduced exactly, against the real github.com):
+  git config --local  http.https://github.com/.extraheader  <FRESH>
+  git config --global http.https://github.com/metacraft-labs/.extraHeader <STALE>
+  git ls-remote https://github.com/metacraft-labs/codetracer
+  -> fatal: could not read Username for 'https://github.com'
+  Git resolves `http.<url>.*` by LONGEST matching URL prefix, so the
+  owner-scoped `.../metacraft-labs/` key WINS over checkout's broader
+  `https://github.com/` key. `git config --get-urlmatch http <url>`
+  confirms only one header is applied -- this is not a duplicate-header
+  400, it is checkout's fresh credential being silently replaced by a
+  dead one. GitHub answers 401, git falls back to a credential prompt,
+  prompts are disabled, and you get the message above. The message is
+  the SYMPTOM OF A 401; it is not evidence that no credential existed.
+
+  WHY IT SURVIVES. actions/checkout COPIES `$HOME/.gitconfig` into
+  `_temp/<uuid>/.gitconfig` and overrides HOME before its own `--global`
+  writes. So the runner's persistent `~/.gitconfig` IS in effect during
+  the failing fetch -- an earlier fix for this same message was written
+  to `--global` and landed in the throwaway temp copy that the failing
+  step never read. That is why this step targets `$HOME/.gitconfig` BY
+  PATH rather than via `--global`: `--global` follows XDG and can
+  resolve to `~/.config/git/config`, which checkout does NOT copy, so a
+  `--global --unset` can report success while leaving the actual
+  offending file untouched.
+
+  CONFIRMED ON THE HOSTS, not merely reproduced. A six-leg diagnostic
+  (run 33729089916) dumped `git config --list --show-origin` from the
+  m3 pool before checkout. m3-mcl-004 and m3-mcl-005 -- the two that
+  failed -- carried, in `/private/var/lib/github-runners/mcl-00N/.gitconfig`:
+  http.https://github.com/metacraft-labs/.extraheader  (553 bytes)
+  m3-mcl-001 -- which succeeded -- had the SAME seven other keys and
+  NOT that one (243-byte file vs 856-byte file). One variable, and it
+  is this key. This step then removed it on m3-mcl-004 and the very
+  next `Checkout` on that host went green.
+
+  STILL UNKNOWN: WHO WRITES IT. `configure-git-auth.sh` in
+  metacraft-labs/metacraft-github-actions installs exactly this key but
+  deliberately passes it through `$GITHUB_ENV`, which is job-scoped, so
+  on its documented path nothing should reach this file. Something on
+  these runners writes it anyway (mcl-004's copy was stamped 08:15 on
+  the day of the outage). Until that writer is found this step is a
+  mitigation, not a cure -- it runs before every checkout precisely
+  because the poison can come back.
+
+  WHY IT IS NEVER LEGITIMATE. An `http.*.extraHeader` in a home
+  directory that is reused across jobs is a minted installation token
+  outliving the job that minted it: dead within the hour, and a live
+  secret readable by whatever runs next until then. Nothing should carry
+  one across jobs -- `configure-git-auth.sh` deliberately passes its
+  credential through `$GITHUB_ENV`, which is job-scoped, precisely so
+  this file stays clean. Anything found here is residue.
+
+  COUNT WHAT IS REMOVED. `--unset` on a key that is not there exits
+  cleanly and reads exactly like a fix that worked, so this step reports
+  how many keys it removed and prints what is left. "removed 0" is a
+  real, reportable result: it means this host was clean and mode 1 is
+  not what broke this job.
+
+  Credential-FREE `url.https://github.com/.insteadOf` rewrites are
+  deliberately preserved: they carry no secret, they are inert, and
+  `.gitmodules` resolution depends on them.
+runs:
+  using: composite
+  steps:
+    - name: Evict stale git credentials
+      shell: bash
+      run: bash "${{ github.action_path }}/evict.sh"

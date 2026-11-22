@@ -70,6 +70,10 @@ sys.exit(subprocess.run(sys.argv[sys.argv.index('--')+1:]).returncode)
       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
       nix_call = json.loads((root / 'nix-calls').read_text().splitlines()[0])
       self.assertEqual(nix_call.pop(0), str(root))
+      # The new CLI and flakes are enabled on the command line: the caller's
+      # Nix may have a stock nix.conf that enables neither.
+      self.assertEqual(nix_call[0:2], ['--extra-experimental-features', 'nix-command flakes'])
+      nix_call = nix_call[2:]
       self.assertEqual(nix_call[0:2], ['develop', '--profile'])
       self.assertEqual(nix_call[3:], ['path:project with spaces#ci', '--command', 'bash', str(HERE / 'prepare.sh')])
       self.assertTrue(Path(nix_call[2]).parent.is_dir())

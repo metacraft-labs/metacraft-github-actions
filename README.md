@@ -9,7 +9,9 @@ For `dev-exec repro build` and `dev-exec repro test`, an explicit
 `REPRO_TOOL_PROVISIONING` when set, else the project's declared default. On a
 NixOS runner, `setup-dev-env` exports `REPRO_TOOL_PROVISIONING=nix` unless the
 job already set it, because NixOS cannot run the generic-Linux tool tarballs
-the other modes fall back to. The wrapper does not select PATH mode. It adds
+the other modes fall back to. The wrapper does not select PATH mode. It runs
+these commands inside the project's environment, as a developer does, so a
+`path`-mode tool comes from that environment's `PATH`. It adds
 `--daemon=off` only when no daemon selector is supplied. Generic commands retain
 the setup project's environment, the caller's working directory and child status.
 Projects declare their platform-specific tool realizations in `repro.nim`, rather
@@ -46,6 +48,19 @@ Existing Linux/Windows ARM64 migration entries keep their explicit native routes
 The first-release scope and migration ownership are tracked internally.
 Runner selection does not change artifact membership, signatures, installer
 checks, Linux portability checks or publication requirements.
+
+## `evict-stale-git-credentials`
+
+Removes credential-bearing keys (`http.*.extraheader`, `url.*x-access-token*`)
+from a reused self-hosted runner's `~/.gitconfig`. Run it as a job's first
+step, before `actions/checkout`: a stale owner-scoped `extraHeader` there
+outranks checkout's fresh one and makes checkout fail with "could not read
+Username". It is a remote action because it has to be on disk before any git
+operation runs, and the runner downloads actions without git. Pin it by SHA:
+
+```yaml
+- uses: metacraft-labs/metacraft-github-actions/evict-stale-git-credentials@<sha>
+```
 
 ## `git-auth`
 

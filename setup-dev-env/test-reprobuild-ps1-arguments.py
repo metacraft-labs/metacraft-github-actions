@@ -45,11 +45,16 @@ BARE_ARGUMENTS = ['--path:src', '-d:release', '-x:y', '/opt:val', '--daemon=off'
 QUOTED_ARGUMENTS = ['', 'with space', '--', 'quoted:arg', '-quoted:value']
 ARGV_PROGRAM = 'import json, sys; print(json.dumps(sys.argv[1:]))'
 
-FAKE_REPRO = '''import subprocess, sys
-# repro exec <root> -- <command...>
+FAKE_REPRO = '''import json, os, subprocess, sys
+# repro exec <root> -- <command...>: run the command, marking the environment.
+if sys.argv[1:2] != ['exec'] and os.environ.get('FAKE_REPRO_ENV'):
+    # A `repro <verb>` the wrapper ran from inside `repro exec`.
+    print(json.dumps({'environment': os.environ['FAKE_REPRO_ENV'],
+                      'args': sys.argv[1:]}))
+    sys.exit(0)
 if len(sys.argv) < 5 or sys.argv[1] != 'exec' or sys.argv[3] != '--':
     sys.exit('fake repro: unexpected arguments: ' + repr(sys.argv[1:]))
-sys.exit(subprocess.call(sys.argv[4:]))
+sys.exit(subprocess.call(sys.argv[4:], env=dict(os.environ, FAKE_REPRO_ENV=sys.argv[2])))
 '''
 
 
@@ -125,6 +130,49 @@ class ReprobuildPowerShellArguments(unittest.TestCase):
             '-d:release; exit $LASTEXITCODE'],
             cwd=self.root, env=self.env, text=True, capture_output=True, timeout=120)
         self.assertEqual(run.returncode, 7, run.stdout + run.stderr)
+
+    def test_repro_build_runs_inside_the_environment(self):
+        # Like the bash wrapper, `dev-exec repro build` runs Repro inside the
+        # project's environment (so path-mode tools come from its PATH), with
+        # the arguments as written plus the --daemon=off default.
+        wrapper = str(self.wrappers / 'dev-exec.ps1').replace("'", "''")
+        run = subprocess.run(
+            [self.pwsh, '-NoLogo', '-NoProfile', '-Command',
+            "& '" + wrapper + "' repro build -d:release 'with space'; exit $LASTEXITCODE"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        observed = json.loads(run.stdout)
+        self.assertTrue(os.path.samefile(observed['environment'], self.root), observed)
+        self.assertEqual(
+            observed['args'], ['build', '-d:release', 'with space', '--daemon=off'])
+
+    def test_other_repro_verbs_run_as_repro_inside_the_environment(self):
+        # `dev-exec repro <verb>` for a verb other than build/test runs
+        # `repro <verb>` in the environment, as the bash wrapper does; the
+        # leading `repro` is the command, not a prefix to drop. Both wrappers
+        # are run, so the case also pins their parity.
+        wrapper = str(self.wrappers / 'dev-exec.ps1').replace("'", "''")
+        runs = {
+            'pwsh': subprocess.run(
+                [self.pwsh, '-NoLogo', '-NoProfile', '-Command',
+                "& '" + wrapper + "' repro version -d:release 'with space'; "
+                'exit $LASTEXITCODE'],
+                cwd=self.root, env=self.env, text=True, capture_output=True,
+                timeout=120)}
+        bash = shutil.which('bash')
+        if not WINDOWS and bash is not None:
+            runs['bash'] = subprocess.run(
+                [bash, str(self.wrappers / 'dev-exec'),
+                  'repro', 'version', '-d:release', 'with space'],
+                cwd=self.root, env=self.env, text=True, capture_output=True,
+                timeout=120)
+        for name, run in runs.items():
+            with self.subTest(wrapper=name):
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                observed = json.loads(run.stdout)
+                self.assertTrue(os.path.samefile(observed['environment'], self.root),
+                                observed)
+                self.assertEqual(observed['args'], ['version', '-d:release', 'with space'])
 
     @unittest.skipUnless(WINDOWS, 'cmd.exe exists only on Windows')
     def test_cmd_trampoline_keeps_colon_arguments_intact(self):

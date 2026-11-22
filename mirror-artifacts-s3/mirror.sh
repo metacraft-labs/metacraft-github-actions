@@ -71,7 +71,10 @@ fi
 if command -v aws >/dev/null 2>&1; then
   aws_cmd=(aws)
 elif command -v nix >/dev/null 2>&1; then
-  aws_cmd=(nix shell nixpkgs#awscli2 -c aws)
+  # `nix shell` and `nixpkgs#awscli2` are the new CLI and flakes. This
+  # action can run where Nix came with the runner and nothing enabled them,
+  # so the command line does; the option only adds to the configuration.
+  aws_cmd=(nix --extra-experimental-features 'nix-command flakes' shell nixpkgs#awscli2 -c aws)
 else
   warn "no aws/nix on this runner; skipping mirror (GitHub artifact retained)"
   exit 0
