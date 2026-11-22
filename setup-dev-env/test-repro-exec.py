@@ -133,7 +133,7 @@ shift 2
         self.assertIn('      working-directory: ${{ steps.roots.outputs.consumer-directory }}\n', step)
 
 
-RECORDER = """import json, os, subprocess, sys
+RECORDER = """import json, os, shutil, subprocess, sys
 arguments = sys.argv[1:]
 if arguments[:1] == ['exec']:
     # repro exec <root> -- <command...>: run the command in "the environment
@@ -141,7 +141,12 @@ if arguments[:1] == ['exec']:
     if len(arguments) < 4 or arguments[2] != '--':
         sys.exit('recorder: unexpected exec arguments: ' + repr(arguments))
     environment = dict(os.environ, GHA_RECORDED_DEV_ENV=arguments[1])
-    sys.exit(subprocess.call(arguments[3:], env=environment))
+    # Resolve the command from PATH, as Repro does. A bare name handed to
+    # CreateProcess is searched in System32 before PATH, so on Windows
+    # `bash` would be WSL's launcher rather than the Git Bash on PATH.
+    command = arguments[3:]
+    command[0] = shutil.which(command[0], path=environment.get('PATH')) or command[0]
+    sys.exit(subprocess.call(command, env=environment))
 print(json.dumps({'devEnv': os.environ.get('GHA_RECORDED_DEV_ENV'),
                   'cwd': os.getcwd(), 'args': arguments}))
 sys.exit(int(os.environ['GHA_ARGV_STATUS']))
