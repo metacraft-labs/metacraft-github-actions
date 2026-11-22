@@ -59,8 +59,9 @@ def step_lines(action, name):
 def step_body(action, name):
     lines = step_lines(action, name)
     run = lines.index('      run: |')
-    return '\n'.join(line[8:] if line.startswith('        ') else ''
-                     for line in lines[run + 1:]) + '\n'
+    return '\n'.join(
+        line[8:] if line.startswith('        ') else ''
+        for line in lines[run + 1:]) + '\n'
 
 
 class PackageAdmission(unittest.TestCase):
@@ -186,8 +187,9 @@ class Wiring(unittest.TestCase):
             return result, output.read_text().splitlines() if output.exists() else []
 
     def test_a_supplied_package_wins_over_the_source_route(self):
-        result, output = self.decide(REPRO_PACKAGE='/nix/store/p-reprobuild',
-                                     PACKAGE_BIN_DIR='/nix/store/p-reprobuild/bin')
+        result, output = self.decide(
+            REPRO_PACKAGE='/nix/store/p-reprobuild',
+            PACKAGE_BIN_DIR='/nix/store/p-reprobuild/bin')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('install-source=package', output)
         self.assertIn('repro-bin-dir=/nix/store/p-reprobuild/bin', output)
@@ -217,10 +219,10 @@ class Wiring(unittest.TestCase):
         self.assertIn("inputs.repro-package == ''", release)
         decide = '\n'.join(step_lines(self.ACTION, 'Decide install path'))
         self.assertIn('PACKAGE_BIN_DIR: ${{ steps.package.outputs.bin-dir }}', decide)
-        order = [source.index('    - name: ' + name) for name in
-                 ["Use the caller's prebuilt repro package",
-                  'Install prebuilt repro CLI from GitHub Release',
-                  'Decide install path', 'Clone reprobuild source']]
+        order = [source.index('    - name: ' + name) for name in [
+            "Use the caller's prebuilt repro package",
+            'Install prebuilt repro CLI from GitHub Release',
+            'Decide install path', 'Clone reprobuild source']]
         self.assertEqual(order, sorted(order))
 
     def test_setup_dev_env_forwards_the_package(self):
