@@ -55,7 +55,7 @@ class ResolvePin(unittest.TestCase):
         if windows:
             full['RUNNER_OS'] = 'Windows'
         result = subprocess.run(
-            ['bash', str(self.root / 'setup-reprobuild' / 'resolve-reprobuild-pin.sh')],
+            [shutil.which('bash'), str(self.root / 'setup-reprobuild' / 'resolve-reprobuild-pin.sh')],
             env=full, text=True, capture_output=True, timeout=60)
         return result, parse_output(output)
 
@@ -186,7 +186,7 @@ class CheckInstalled(unittest.TestCase):
         full = dict(os.environ, GITHUB_OUTPUT=str(output), REPRO_BIN_DIR=str(self.bin))
         full.pop('RUNNER_OS', None)
         full.update(env)
-        result = subprocess.run(['bash', str(HERE / 'check-installed-repro.sh')],
+        result = subprocess.run([shutil.which('bash'), str(HERE / 'check-installed-repro.sh')],
                                 env=full, text=True, capture_output=True, timeout=30)
         return result, parse_output(output)
 
