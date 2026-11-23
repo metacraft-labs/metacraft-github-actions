@@ -279,13 +279,18 @@ dotfiles' `codetracer` input. The pin format is in `pins/README.md`.
 CodeTracer itself is not a consumer. Its own flake keeps its own independently
 locked Reprobuild cohort, and nothing here changes that.
 
-The first pin is `a3986b0de1c215bcc9bd2bfa5c9619f0fa6bc5f3`, a commit on
-CodeTracer `dev` (`"kind": "dev-commit"`) and the revision blocktracer already
-built against. Its `narHash` is what
+The first pin is `a7cddd8bce554f5d73a7636e2bad15605b71963c`, a commit on
+CodeTracer `dev` (`"kind": "dev-commit"`). Its `narHash` is what
 `nix flake prefetch github:metacraft-labs/codetracer/<rev> --json` reports.
 A `github:` tree has no submodules, so a consumer that needs CodeTracer's
-submodules must fetch them separately. Blocktracer's
-`git+https://…?submodules=0` lock records the same hash.
+submodules must fetch them separately.
+
+The pin is not `a3986b0de1`, the revision blocktracer built against. That
+revision's `repro.lock` pins `codetracer-image-diff` at `e002498eac`, a commit
+that no longer exists on GitHub after that repository's history was rewritten.
+CodeTracer `c2481fc45` repinned it. The macOS job failed on `a3986b0de1` while
+it was provisioning the siblings, before the solve, so the gate could never
+pass with that revision.
 
 CodeTracer commits two solves: `repro.lock` (amd64-linux) and
 `locks/arm64-macosx.lock`. Reprobuild solves a lock only for the platform it
