@@ -9,6 +9,7 @@ Only `nix` is a stand-in, answering `path-info` and `eval` the way a store that
 holds (or lacks) the package would. The real admission script and the real
 decision step run under Bash.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -20,7 +21,10 @@ import unittest
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 SCRIPT = HERE / 'bind-repro-package.sh'
-PIN = '84b459adda91535f0b89424dfc95aa34bfa67a32'
+# The commit the action selects by default. The stand-in `nix` only echoes it,
+# so any full SHA would do; the pin keeps a second literal revision out of the
+# repository.
+PIN = json.loads((REPO / 'pins' / 'reprobuild.json').read_text())['rev']
 TOKEN = 'ghs_contract_token_never_printed'
 
 STUB_NIX = r'''#!BASH
@@ -179,7 +183,7 @@ class Wiring(unittest.TestCase):
             output = Path(scratch) / 'output'
             env = {k: v for k, v in os.environ.items() if not k.startswith(('REPRO_', 'GITHUB_'))}
             env.update(dict(RELEASE_INSTALLED='', RELEASE_BIN_DIR='', RESOLVED_TAG='',
-                            FROM_SOURCE='true', REPRO_VERSION='latest', REPRO_BUILD_PIN=PIN,
+                            REPRO_VERSION='', BUILD_REF=PIN, ORIGIN='pin',
                             REPRO_PACKAGE='', PACKAGE_BIN_DIR='', GITHUB_OUTPUT=str(output)),
                        **values)
             result = subprocess.run(['bash', '-c', step_body(self.ACTION, 'Decide install path')],
@@ -212,7 +216,8 @@ class Wiring(unittest.TestCase):
         admit = '\n'.join(step_lines(self.ACTION, "Use the caller's prebuilt repro package"))
         self.assertIn("      if: ${{ inputs.repro-package != '' }}", admit)
         self.assertIn('REPRO_PACKAGE: ${{ inputs.repro-package }}', admit)
-        self.assertIn('REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}', admit)
+        # The selected commit: the pin, or the caller's repro-build-pin.
+        self.assertIn('REPRO_BUILD_PIN: ${{ steps.pin.outputs.build-ref }}', admit)
         self.assertIn('GH_TOKEN: ${{ inputs.gh-token }}', admit)
         self.assertIn('bind-repro-package.sh', admit)
         release = '\n'.join(step_lines(self.ACTION, 'Install prebuilt repro CLI from GitHub Release'))

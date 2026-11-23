@@ -7,7 +7,9 @@ need a private repository and a token, and are exercised by the `pins`
 workflow itself.
 """
 
+import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -33,7 +35,7 @@ class CheckPins(unittest.TestCase):
                     body if isinstance(body, str) else json.dumps(body))
             done = subprocess.run(
                 [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
-                 "--pins-dir", str(pins)], capture_output=True, text=True)
+                  "--pins-dir", str(pins)], capture_output=True, text=True)
             return done.returncode, done.stdout + done.stderr
 
     def test_the_real_pins_pass(self):
@@ -104,6 +106,66 @@ class CheckPins(unittest.TestCase):
         code, out = self.run_with(demo="{not json")
         self.assertEqual(code, 1)
         self.assertIn("cannot be read as JSON", out)
+
+    def test_version_and_kind_come_together(self):
+        for extra in ({"version": "1.2.3"}, {"kind": "agents-commit"}):
+            code, out = self.run_with(demo={**GOOD, **extra})
+            self.assertEqual(code, 1, extra)
+            self.assertIn("version and kind must be given together", out)
+        code, out = self.run_with(demo={**GOOD, "version": "1.2.3", "kind": "release"})
+        self.assertEqual(code, 0, out)
+
+    def test_kind_and_version_values_are_checked(self):
+        for extra in ({"version": "1.2.3", "kind": "branch"},
+                      {"version": "dev", "kind": "agents-commit"}):
+            code, _ = self.run_with(demo={**GOOD, **extra})
+            self.assertEqual(code, 1, extra)
+
+    def test_the_owners_are_listed_for_the_token_matrix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pins = pathlib.Path(tmp)
+            shutil.copy(ROOT / "pins" / "pin.schema.json", pins)
+            for name, owner in (("demo", "b-owner"), ("other", "a-owner"), ("third", "b-owner")):
+                (pins / f"{name}.json").write_text(json.dumps({**GOOD, "tool": name, "owner": owner}))
+            done = subprocess.run(
+                [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
+                  "--pins-dir", str(pins), "--list-owners"], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(json.loads(done.stdout), ["a-owner", "b-owner"])
+            done = subprocess.run(
+                [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
+                  "--pins-dir", str(pins), "--owner", "nobody"], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 1)
+
+    def test_each_owner_gets_its_own_token(self):
+        # The workflow mints one token per owner; a pin is checked with its
+        # owner's token, handed to gh and nix only through the environment.
+        spec = importlib.util.spec_from_file_location("check_pins", ROOT / "tools" / "check-pins.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        for name in [k for k in os.environ if k.startswith("GH_TOKEN") or k == "NIX_CONFIG"]:
+            del os.environ[name]
+        os.environ.update(GH_TOKEN="fallback", GH_TOKEN_AGENT_HARBOR="harbor")
+        env = module.token_environment("agent-harbor")
+        self.assertEqual(env["GH_TOKEN"], "harbor")
+        self.assertEqual(env["NIX_CONFIG"], "access-tokens = github.com=harbor")
+        env = module.token_environment("metacraft-labs")
+        self.assertEqual(env["GH_TOKEN"], "fallback")
+        os.environ["NIX_CONFIG"] = "sandbox = true"
+        env = module.token_environment("agent-harbor")
+        self.assertEqual(env["NIX_CONFIG"], "sandbox = true\naccess-tokens = github.com=harbor")
+        del os.environ["GH_TOKEN"], os.environ["NIX_CONFIG"]
+        env = module.token_environment("metacraft-labs")
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertNotIn("NIX_CONFIG", env)
+
+    def test_the_real_reprobuild_pin_is_v0_2_34_on_agents(self):
+        pin = json.loads((ROOT / "pins" / "reprobuild.json").read_text())
+        self.assertEqual((pin["owner"], pin["repo"], pin["rev"], pin["version"], pin["kind"]),
+                          ("metacraft-labs", "reprobuild",
+                          "d1bf1f065aca01b90c3bbdddc57d14e977f49e1a", "0.2.34", "agents-commit"))
 
     def test_an_empty_directory_is_a_usage_error(self):
         code, _ = self.run_with()
