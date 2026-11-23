@@ -67,6 +67,9 @@ CONTRADICTED = '"bash >=4"'
 # 45206671911, engine reprobuild b90c910c). Either is the solver's own
 # answer; a bare exit status, or any other failure, is not.
 UNSAT_EXIT = 3
+# `repro develop --all` reports each sibling it leaves alone because a recipe
+# pins it: "skipped <name> — pinned by recipe at <file>:<line>: ...".
+RECIPE_PINNED_SKIP = re.compile(r"\bskipped ([A-Za-z0-9._-]+) \S+ pinned by recipe at ")
 UNSAT_TEXT = "solver UNSAT"
 UNSAT_EXCEPTION = "[EUnsatisfiable]"
 
@@ -492,15 +495,37 @@ def solve_stages(args, checkout, out, solve_log, result, finish):
     # so the credential reaches its clones only as a private GIT_CONFIG_GLOBAL
     # file (git-auth/scoped-git-auth.sh, scoped_git_auth_with_global).
     result["stage"] = "develop"
-    status = run_logged(
-        [
-            "bash", "-c", '. "$0" && scoped_git_auth_with_global "$@"', str(SCOPED_GIT_AUTH),
-            repro, "develop", "--all", "--reset", f"--into={checkout.parent}",
-        ],
-        str(checkout), env, solve_log)
+
+    def develop(*selection, capture=None):
+        return run_logged(
+            [
+                "bash", "-c", '. "$0" && scoped_git_auth_with_global "$@"', str(SCOPED_GIT_AUTH),
+                repro, "develop", "--all", *selection, "--reset", f"--into={checkout.parent}",
+            ],
+            str(checkout), env, solve_log, capture=capture)
+
+    output = []
+    status = develop(capture=output)
     if status != 0:
         result["outcome"] = "failed"
         return finish(1, f"provisioning the siblings at repro.lock's revisions failed (exit {status})")
+    # A bulk selection skips every sibling whose recipe pins an exact revision
+    # (reprobuild docs/user-guide/workspace-locking.md, "A bulk selection skips
+    # an exact pin"), yet `lock refresh` refuses (exit 5) while a develop-set
+    # sibling is not checked out: hosted run 45206671911 refused for
+    # test-certificates-tools and nim-shm-queue. Repro names each one it
+    # skipped; select exactly those explicitly, which places them at the
+    # revision the lock and the recipe pin agree on.
+    found = (RECIPE_PINNED_SKIP.search(line) for line in output)
+    pinned = sorted({match.group(1) for match in found if match})
+    result["recipe_pinned"] = pinned
+    if pinned:
+        status = develop(f"--only={','.join(pinned)}")
+        if status != 0:
+            result["outcome"] = "failed"
+            return finish(
+                1, f"provisioning the recipe-pinned siblings {', '.join(pinned)} failed "
+                f"(exit {status})")
 
     # After provisioning, so that only the solve can be what rejects it.
     if args.negative_control:

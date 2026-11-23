@@ -218,7 +218,8 @@ jobs:
 
       - name: Solve and check the aarch64-darwin lock
         id: solve
-        timeout-minutes: 60
+        # Measured on run 45206671911: develop 2 min, lock refresh 25 min.
+        timeout-minutes: 90
         env:
           GH_TOKEN: ${{ steps.clone-token.outputs.token }}
           EXPECT: ${{ inputs.expect }}

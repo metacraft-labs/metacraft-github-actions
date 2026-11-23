@@ -311,6 +311,11 @@ workflow calls it only when `pins/codetracer.json`, the workflow or
      `repro develop --all --reset`. Some of those siblings are private, so the
      clones are authenticated with a CI token provider token passed through
      `git-auth/scoped-git-auth.sh`.
+   - `--all` skips each sibling that a recipe pins to an exact revision, and
+     `lock refresh` refuses while any sibling is missing. So the job takes
+     the names that `develop` reports as `pinned by recipe` and places them
+     with a second `repro develop --all --only=<those> --reset`. The names
+     are recorded in `result.json` as `recipe_pinned`.
    - It runs
      `repro lock refresh . --lock locks/arm64-macosx.lock --platform=arm64-macosx`.
    - It checks the result: the platform is `arm64-macosx`, every dependency

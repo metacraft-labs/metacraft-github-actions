@@ -313,6 +313,14 @@ case "$1" in
     [ -n "${GIT_CONFIG_GLOBAL:-}" ] && [ -f "$GIT_CONFIG_GLOBAL" ] || { echo "no private git config" >&2; exit 9; }
     if grep -q 'extraHeader' "$GIT_CONFIG_GLOBAL"; then echo "develop-auth=header" >> "$STUB_LOG"; fi
     echo "develop-config=$GIT_CONFIG_GLOBAL" >> "$STUB_LOG"
+    case "$*" in
+      *--only=*) ;;
+      *)
+        for n in ${STUB_PINNED:-}; do
+          echo "repro develop --all: skipped $n — pinned by recipe at flake.nix:1: '$n' is not substituted by a bulk selection"
+        done ;;
+    esac
+    [ -z "${STUB_ONLY_STATUS:-}" ] || case "$*" in *--only=*) exit "$STUB_ONLY_STATUS" ;; esac
     exit "${STUB_DEVELOP_STATUS:-0}" ;;
   lock)
     # The real solver's answer to contradictory ranges: exit 3, "solver UNSAT".
@@ -379,6 +387,27 @@ class SolveTests(SolveFixture):
         self.assertNotIn("ghs_fixture_not_a_credential", summary.read_text())
         self.assertTrue((self.out / "arm64-macosx.lock").is_file())
         self.assertTrue((self.out / "committed-arm64-macosx.lock").is_file())
+
+    def test_recipe_pinned_siblings_skipped_by_develop_all_are_selected_explicitly(self):
+        res = self.solve(STUB_PINNED="test-certificates-tools nim-shm-queue")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.result()["recipe_pinned"], ["nim-shm-queue", "test-certificates-tools"])
+        log = self.stub_log()
+        only = f"develop --all --only=nim-shm-queue,test-certificates-tools --reset --into={self.ct.parent}"
+        self.assertIn(only, log)
+        self.assertLess(log.index(only), log.index("lock refresh"))
+
+    def test_no_recipe_pinned_siblings_means_one_develop(self):
+        res = self.solve()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.result()["recipe_pinned"], [])
+        self.assertNotIn("--only=", self.stub_log())
+
+    def test_a_failure_to_place_the_recipe_pinned_siblings_fails_before_the_solve(self):
+        res = self.solve(STUB_PINNED="nim-shm-queue", STUB_ONLY_STATUS="7")
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(self.result()["stage"], "develop")
+        self.assertNotIn("lock refresh", self.stub_log())
 
     def test_a_different_solve_is_produced(self):
         produced = self.write("p2.lock", lock_text("arm64-macosx", DEPS, packages="bash clang"))
