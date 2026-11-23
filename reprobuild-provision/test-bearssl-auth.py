@@ -42,7 +42,8 @@ TOKEN = "ghs_TESTONLYnotarealtoken0000000000000000"
 SIBLINGS = (
     "runquota", "nim-stackable-hooks", "io-mon", "nim-shm-lease", "nim-shm-queue",
     "nim-shm-gset", "reprobuild-test-adapters", "reprobuild-ct-test-runner",
-    "reprobuild-llm-agent-packages", "test-certificates-tools", "nim-cli-spec", "nimlib",
+    "reprobuild-llm-agent-packages", "test-certificates-tools", "nim-cli-spec", "nim-entrypoints",
+    "nim-confutils", "nimlib",
 )
 NIM_LIBS = ("nim-serialization", "nim-faststreams", "nim-json-serialization",
             "nim-stew", "nimcrypto")

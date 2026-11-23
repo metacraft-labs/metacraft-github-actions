@@ -43,7 +43,8 @@ REPOS = (
     "runquota", "nim-stackable-hooks", "io-mon", "codetracer", "nim-shm-lease",
     "nim-shm-queue", "nim-shm-gset", "reprobuild-test-adapters",
     "reprobuild-ct-test-runner", "reprobuild-llm-agent-packages",
-    "test-certificates-tools", "nim-cli-spec", "codetracer-native-recorder",
+    "test-certificates-tools", "nim-cli-spec", "nim-entrypoints",
+    "nim-confutils", "codetracer-native-recorder",
 )
 
 
@@ -242,6 +243,8 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
         "nim-shm-queue-src": github("nim-shm-queue", locked),
         "codetracer-src": github("codetracer", locked),
         "nim-cli-spec-src": github("nim-cli-spec", locked),
+        "nim-entrypoints-src": github("nim-entrypoints", locked),
+        "nim-confutils-src": github("nim-confutils", locked),
         "test-certificates-tools-src": {
             "type": "git", "url": "https://github.com/fixture/test-certificates-tools.git",
             "rev": locked}})
@@ -252,6 +255,7 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     for name in (
         "runquota", "io-mon", "nim-stackable-hooks", "nim-shm-queue",
         "codetracer", "test-certificates-tools", "nim-cli-spec",
+        "nim-entrypoints", "nim-confutils",
     ):
         assert version(workspace, name) == "locked revision\n", name + "\n" + out
     for name in ("nim-shm-lease", "nim-shm-gset", "reprobuild-test-adapters"):
