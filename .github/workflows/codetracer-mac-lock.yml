@@ -1,0 +1,286 @@
+name: codetracer-mac-lock
+
+# Solves and checks CodeTracer's Apple Silicon lock (`locks/arm64-macosx.lock`)
+# at the revision `pins/codetracer.json` names, on a GitHub-HOSTED arm64 macOS
+# runner. Reprobuild solves a lock only for the platform it runs on, so this is
+# the one place a CodeTracer pin bump can be shown to solve on macOS before it
+# merges. Fleet Macs are not CI runners for this (metacraft-pm
+# milestones/Single-Tool-Pins.milestones.org, STP3).
+#
+# It is a REUSABLE workflow. The `pins` workflow decides when it runs (only
+# when pins/codetracer.json or this job changed: hosted macOS minutes are
+# scarce) and folds its result into the pins gate. It has no push or
+# pull_request trigger of its own, so a pin bump does not run it twice.
+# `workflow_dispatch` is for a manual run: an explicit revision, or the
+# negative control (`expect: fail` with `negative-control: true`), which adds a
+# constraint contradicting one CodeTracer declares and passes only when the
+# solver itself answers UNSAT.
+#
+# What one run does (tools/codetracer-mac-lock.py has the detail):
+#   plan    (Linux)  resolve the revision, refuse a malformed one, fetch it,
+#                    refuse one that does not exist or has no darwin lock, and
+#                    decide whether credentials are available.
+#   solve   (macOS)  build the reprobuild that CodeTracer's own flake.lock
+#                    pins (its independent cohort: never this repository's
+#                    reprobuild pin), put every sibling at repro.lock's
+#                    revisions, re-solve the darwin lock, check it, upload it.
+#   result  (Linux)  one stable job that always runs and states the outcome.
+#
+# Outcome `confirmed`: the solve equals the committed darwin lock (its self
+# entry aside). `produced`: it differs; the fresh lock is the artifact, to be
+# committed to CodeTracer through CodeTracer's own process. This job never
+# pushes anywhere. Either one passes; an unsolvable lock or a failed check
+# fails.
+
+on:
+  workflow_call:
+    inputs:
+      rev:
+        description: Full CodeTracer commit SHA to solve. Empty takes pins/codetracer.json.
+        type: string
+        required: false
+        default: ""
+      expect:
+        description: "`solve` (the default) or `fail`, for the negative control."
+        type: string
+        required: false
+        default: solve
+      negative-control:
+        description: Add a `uses:` constraint that contradicts CodeTracer's `"bash >=4"` before solving.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      CI_TOKEN_PROVIDER_APP_ID:
+        required: false
+      CI_TOKEN_PROVIDER_PRIVATE_KEY:
+        required: false
+    outputs:
+      outcome:
+        description: confirmed, produced, skipped, or the failure (see the result job).
+        value: ${{ jobs.result.outputs.outcome }}
+      rev:
+        description: The CodeTracer revision the run solved.
+        value: ${{ jobs.plan.outputs.rev }}
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: Full CodeTracer commit SHA to solve. Empty takes pins/codetracer.json.
+        type: string
+        required: false
+        default: ""
+      expect:
+        description: "`fail` for the negative control: the run passes only if the solve fails."
+        type: choice
+        options: [solve, fail]
+        default: solve
+      negative-control:
+        description: Add a `uses:` constraint that contradicts CodeTracer's `"bash >=4"` before solving.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      rev: ${{ steps.resolve.outputs.rev }}
+      owner: ${{ steps.resolve.outputs.owner }}
+      repo: ${{ steps.resolve.outputs.repo }}
+      engine-rev: ${{ steps.inspect.outputs.engine-rev }}
+      run: ${{ steps.credentials.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve the revision
+        id: resolve
+        env:
+          INPUT_REV: ${{ inputs.rev }}
+          INPUT_EXPECT: ${{ inputs.expect }}
+        run: |
+          set -euo pipefail
+          case "$INPUT_EXPECT" in
+            solve|fail) ;;
+            *) echo "::error::expect must be 'solve' or 'fail', not '$INPUT_EXPECT'"; exit 2 ;;
+          esac
+          python3 -I tools/codetracer-mac-lock.py resolve --rev "$INPUT_REV" | tee -a "$GITHUB_OUTPUT"
+
+      # CodeTracer is public, so this needs no credential. A revision that does
+      # not exist, or one with no darwin lock, fails here in seconds instead of
+      # after an engine build on a macOS runner.
+      - name: The revision exists and carries a darwin lock
+        id: inspect
+        env:
+          OWNER: ${{ steps.resolve.outputs.owner }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+          REV: ${{ steps.resolve.outputs.rev }}
+        run: |
+          set -euo pipefail
+          dest="$(mktemp -d "$RUNNER_TEMP/ct.XXXXXX")/codetracer"
+          python3 -I tools/codetracer-mac-lock.py fetch --owner "$OWNER" --repo "$REPO" --rev "$REV" --dest "$dest"
+          python3 -I tools/codetracer-mac-lock.py inspect --checkout "$dest" | tee -a "$GITHUB_OUTPUT"
+
+      # The siblings in CodeTracer's lock include private repositories, so the
+      # solve needs the CI token provider. A fork's pull request gets no
+      # secrets: say so plainly and skip the macOS job rather than fail half
+      # way through it. The result job then FAILS: a pin change nobody solved
+      # must not pass the gate.
+      - name: Credentials for the private siblings
+        id: credentials
+        env:
+          HAVE_KEY: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAVE_KEY" = true ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::codetracer-mac-lock: no CI_TOKEN_PROVIDER_PRIVATE_KEY in this run (a fork's pull request receives no secrets), so the arm64 macOS solve is SKIPPED and this check fails. Nothing was verified; a maintainer must push the change to a branch of this repository."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  solve:
+    needs: plan
+    if: ${{ needs.plan.outputs.run == 'true' }}
+    # GitHub-hosted Apple Silicon. Not a self-hosted fleet Mac.
+    runs-on: macos-26
+    # Measured on Linux on 2026-11-23 (`nix build --dry-run`, aarch64-darwin,
+    # cache.nixos.org only): the engine needs 5 derivations built (nim-fork,
+    # runquota, libblake3-prefix, stackable-hooks-macos-tools, reprobuild) and
+    # 634 MiB fetched. Not yet timed on a hosted runner.
+    timeout-minutes: 180
+    outputs:
+      outcome: ${{ steps.solve.outputs.outcome }}
+    env:
+      OWNER: ${{ needs.plan.outputs.owner }}
+      REPO: ${{ needs.plan.outputs.repo }}
+      REV: ${{ needs.plan.outputs.rev }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: The runner is arm64 macOS
+        run: |
+          echo "$(uname -s) $(uname -m) $(sw_vers -productVersion)"
+          [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || { echo "::error::not an arm64 Mac"; exit 1; }
+
+      - name: Mint a read token for the CodeTracer flake inputs
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+          permission-contents: read
+
+      - name: Setup Nix (this checkout's action)
+        uses: ./setup-nix
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+          substituters: ${{ vars.ATTIC_SUBSTITUTER }}
+          trusted-public-keys: ${{ vars.ATTIC_TRUSTED_PUBLIC_KEY }}
+
+      - name: Fetch CodeTracer at the revision
+        run: |
+          set -euo pipefail
+          python3 -I tools/codetracer-mac-lock.py fetch --owner "$OWNER" --repo "$REPO" --rev "$REV" \
+            --dest "$RUNNER_TEMP/ct-ws/codetracer"
+
+      - name: Build the reprobuild CodeTracer's flake.lock pins
+        timeout-minutes: 150
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ct-out"
+          python3 -I tools/codetracer-mac-lock.py engine --owner "$OWNER" --repo "$REPO" --rev "$REV" \
+            --out "$RUNNER_TEMP/ct-engine.json"
+
+      # Installation tokens last an hour and the engine build can take most of
+      # it: refresh the job's Git and Nix credentials, and mint the one the
+      # sibling clones use, immediately before the solve.
+      - name: Refresh build authentication
+        uses: ./refresh-build-auth
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+
+      - name: Mint a read token for the sibling clones
+        id: clone-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+          permission-contents: read
+
+      - name: Solve and check the aarch64-darwin lock
+        id: solve
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ steps.clone-token.outputs.token }}
+          EXPECT: ${{ inputs.expect }}
+          NEGATIVE_CONTROL: ${{ inputs.negative-control }}
+        run: |
+          set -uo pipefail
+          extra=()
+          if [ "$NEGATIVE_CONTROL" = true ]; then extra+=(--negative-control); fi
+          set +e
+          python3 -I tools/codetracer-mac-lock.py solve --owner "$OWNER" --repo "$REPO" --rev "$REV" \
+            --checkout "$RUNNER_TEMP/ct-ws/codetracer" --out "$RUNNER_TEMP/ct-out" \
+            --engine-file "$RUNNER_TEMP/ct-engine.json" --expect "$EXPECT" ${extra[@]+"${extra[@]}"}
+          status=$?
+          set -e
+          outcome="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["outcome"])' \
+            "$RUNNER_TEMP/ct-out/result.json" 2>/dev/null || echo failed)"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload the solved lock and the solve log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # One run may call this workflow more than once (the pin and the
+          # negative control), and artifact names are unique per run.
+          name: codetracer-arm64-macosx-lock-${{ needs.plan.outputs.rev }}${{ inputs.negative-control && '-negative-control' || '' }}
+          path: ${{ runner.temp }}/ct-out/
+          if-no-files-found: warn
+
+  # One stable job name that always runs, so a caller (the pins gate, or a
+  # ruleset) has a single result to read whatever happened above.
+  result:
+    needs: [plan, solve]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      outcome: ${{ steps.decide.outputs.outcome }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          PLAN: ${{ needs.plan.result }}
+          RUN: ${{ needs.plan.outputs.run }}
+          SOLVE: ${{ needs.solve.result }}
+          OUTCOME: ${{ needs.solve.outputs.outcome }}
+          REV: ${{ needs.plan.outputs.rev }}
+          ENGINE: ${{ needs.plan.outputs.engine-rev }}
+        run: |
+          echo "codetracer ${REV:-?} (engine reprobuild ${ENGINE:-?}): plan=$PLAN solve=$SOLVE outcome=${OUTCOME:-none}"
+          if [ "$PLAN" != success ]; then
+            echo "outcome=invalid-pin" >> "$GITHUB_OUTPUT"
+            echo "::error::the CodeTracer revision is malformed, does not exist or has no darwin lock (see the plan job)"
+            exit 1
+          fi
+          if [ "$RUN" != true ]; then
+            echo "outcome=skipped" >> "$GITHUB_OUTPUT"
+            echo "::error::the arm64 macOS solve was skipped for lack of credentials; nothing was verified, so this does not pass"
+            exit 1
+          fi
+          echo "outcome=${OUTCOME:-failed}" >> "$GITHUB_OUTPUT"
+          if [ "$SOLVE" != success ]; then
+            echo "::error::the arm64 macOS solve failed: ${OUTCOME:-failed} (see the solve job and its artifact)"
+            exit 1
+          fi

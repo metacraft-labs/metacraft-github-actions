@@ -208,6 +208,20 @@ jobs:
         run: |
           printf '%s\n' 'inherited-masking-fixture-not-a-credential' 'fresh-masking-fixture-not-a-credential'
 
+  codetracer-mac-lock-tool:
+    # The Linux-testable half of the codetracer-mac-lock workflow: pin and
+    # revision refusals, the shallow fetch, the post-solve checks and the
+    # confirmed/produced classification, and the solve orchestration with a
+    # recording engine. The solve itself runs only on the arm64 macOS runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: codetracer-mac-lock tool contract
+        run: python3 -I tools/test-codetracer-mac-lock.py -v
+
   release-gates:
     # Like the other policy guards below, this uses only Node and real local
     # files. Keep it independent of the fleet whose release routing it checks.
