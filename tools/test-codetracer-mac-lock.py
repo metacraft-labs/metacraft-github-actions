@@ -11,6 +11,8 @@ scratch directory so nothing touches the caller's git configuration.
 Run: python3 -I tools/test-codetracer-mac-lock.py
 """
 
+import http.server
+import importlib.util
 import json
 import os
 import pathlib
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -84,6 +87,13 @@ REPRO_NIM = textwrap.dedent("""\
     """)
 
 
+def load_tool():
+    spec = importlib.util.spec_from_file_location("codetracer_mac_lock", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def run_tool(*argv, env=None, cwd=None):
     return subprocess.run([sys.executable, "-I", str(TOOL), *argv], capture_output=True,
                           text=True, env=env, cwd=cwd, check=False)
@@ -120,14 +130,31 @@ class Scratch(unittest.TestCase):
 
 
 class ResolveTests(Scratch):
-    def pin(self, **overrides):
+    def pin(self, drop=(), **overrides):
         pin = {
             "schema": 1, "tool": "codetracer", "owner": "metacraft-labs",
             "repo": "codetracer", "rev": SHA_A,
-            "narHash": "sha256-" + "A" * 43 + "=", "kind": "dev-commit",
+            "narHash": "sha256-" + "A" * 43 + "=", "version": "26.10.1", "kind": "dev-commit",
         }
         pin.update(overrides)
+        for key in drop:
+            del pin[key]
         return self.write("codetracer.json", json.dumps(pin))
+
+    def test_the_committed_pin_gives_version_and_kind_together(self):
+        # pins/pin.schema.json: "Required together with kind", and its pattern.
+        pin = json.loads(PIN.read_text())
+        self.assertEqual(pin.get("kind"), "dev-commit")
+        self.assertRegex(pin.get("version", ""), r"^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$")
+
+    def test_version_and_kind_must_be_given_together(self):
+        for drop in (("version",), ("kind",)):
+            with self.subTest(drop=drop):
+                res = run_tool("resolve", "--pin", str(self.pin(drop=drop)))
+                self.assertEqual(res.returncode, 2, res.stdout)
+                self.assertIn("version and kind must be given together", res.stderr)
+        res = run_tool("resolve", "--pin", str(self.pin(drop=("version", "kind"))))
+        self.assertEqual(res.returncode, 0, res.stderr)
 
     def test_the_committed_pin_resolves(self):
         res = run_tool("resolve", "--pin", str(PIN))
@@ -301,6 +328,187 @@ class CheckTests(Scratch):
         text = "\n".join(l for l in lock_text("arm64-macosx", DEPS).splitlines() if not l.startswith("deps"))
         res = self.check(text + "\n")
         self.assertEqual(res.returncode, 1)
+
+
+MISSING = "e" * 40
+DRIFTED = "d" * 40
+
+
+class SiblingTests(Scratch):
+    """The plan job's check that every sibling revision the two locks name
+    exists on GitHub, with a fake lookup in place of the API."""
+
+    def setUp(self):
+        super().setUp()
+        self.tool = load_tool()
+        # The darwin lock is ahead of repro.lock for one sibling, as at
+        # CodeTracer a7cddd8bc: both revisions must be checked.
+        self.ct = self.checkout(native=lock_text("arm64-macosx", dict(DEPS, isonim=DRIFTED)))
+        self.calls = []
+
+    def lookup(self, absent=(), unreadable=()):
+        def fake(owner, repo, rev):
+            self.calls.append((owner, repo, rev))
+            if rev in absent:
+                return "missing", "GitHub: no commit found for this SHA (HTTP 422)"
+            if rev in unreadable:
+                return "unverifiable", "HTTP 404"
+            return "present", ""
+        return fake
+
+    def check(self, **kw):
+        return self.tool.check_siblings(self.tool.sibling_revisions(self.ct), self.lookup(**kw))
+
+    def test_every_non_self_revision_of_both_locks_is_looked_up_once(self):
+        self.assertEqual(self.check(), ([], []))
+        self.assertEqual(sorted(self.calls), sorted([
+            ("metacraft-labs", "isonim", SHA_A), ("metacraft-labs", "isonim", DRIFTED),
+            ("metacraft-labs", "reprobuild", ENGINE),
+            ("metacraft-labs", "reprobuild-packages", CATALOG)]))
+        self.assertNotIn("9" * 40, [rev for _, _, rev in self.calls])  # the self entry
+
+    def test_a_missing_revision_is_named_with_its_locks(self):
+        missing, unverifiable = self.check(absent=(DRIFTED,))
+        self.assertEqual(unverifiable, [])
+        self.assertEqual(len(missing), 1)
+        self.assertTrue(missing[0].startswith(f"isonim@{DRIFTED} (metacraft-labs/isonim, "
+                                              "in locks/arm64-macosx.lock)"), missing[0])
+
+    def test_positive_control_the_pass_assertion_can_fail(self):
+        # The assertion the passing test makes, against a lookup that reports
+        # a revision absent: it must not hold, or that test proves nothing.
+        result = self.check(absent=(ENGINE,))
+        self.assertNotEqual(result, ([], []))
+        self.assertIn(f"reprobuild@{ENGINE}", result[0][0])
+
+    def test_an_unreadable_revision_is_unverifiable_not_present(self):
+        missing, unverifiable = self.check(unreadable=(CATALOG,))
+        self.assertEqual(missing, [])
+        names = [line.split(" ", 1)[0] for line in unverifiable]
+        self.assertEqual(names, [f"reprobuild-packages@{CATALOG}"])
+
+    def test_a_non_github_url_or_a_bad_revision_is_not_passed(self):
+        text = lock_text("amd64-linux", dict(DEPS, isonim="dev")).replace(
+            "https://github.com/metacraft-labs/reprobuild-packages",
+            "https://example.invalid/reprobuild-packages")
+        (self.ct / "repro.lock").write_text(text)
+        missing, unverifiable = self.check()
+        self.assertEqual([line.split(" ", 1)[0] for line in missing], ["isonim@dev"])
+        names = [line.split(" ", 1)[0] for line in unverifiable]
+        self.assertEqual(names, [f"reprobuild-packages@{CATALOG}"])
+
+
+class FakeGitHub(http.server.BaseHTTPRequestHandler):
+    """`GET /repos/<owner>/<repo>/commits/<sha>` as the GitHub REST API
+    answers it: 200 with the commit, 422 for an unknown SHA, 404 for an
+    unknown repository. It records the Authorization header it received."""
+
+    commits = {}
+    seen_auth = []
+
+    def do_GET(self):
+        FakeGitHub.seen_auth.append(self.headers.get("Authorization"))
+        parts = self.path.strip("/").split("/")
+        if len(parts) != 5 or parts[0] != "repos" or parts[3] != "commits":
+            return self.answer(400, {})
+        repo, sha = parts[2], parts[4]
+        if repo == "flaky":
+            return self.answer(503, {"message": "unavailable"})
+        if repo not in FakeGitHub.commits:
+            return self.answer(404, {"message": "Not Found"})
+        if sha not in FakeGitHub.commits[repo]:
+            return self.answer(422, {"message": f"No commit found for SHA: {sha}"})
+        return self.answer(200, {"sha": sha})
+
+    def answer(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+class SiblingCommandTests(Scratch):
+    """The `siblings` command end to end, over HTTP, against a fake API."""
+
+    TOKEN = "fixture-token-not-a-credential"
+
+    def setUp(self):
+        super().setUp()
+        FakeGitHub.commits = {"isonim": {SHA_A}, "reprobuild": {ENGINE},
+                              "reprobuild-packages": {CATALOG}}
+        FakeGitHub.seen_auth = []
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.api = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.ct = self.checkout()
+
+    def siblings(self, token=TOKEN, *extra):
+        env = dict(os.environ, GH_TOKEN=token)
+        return run_tool("siblings", "--checkout", str(self.ct), "--api-url", self.api,
+                        "--retry-delay", "0", *extra, env=env)
+
+    def test_all_present_passes_and_sends_the_token_only_as_a_header(self):
+        res = self.siblings(self.TOKEN, "--require-token")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(res.stdout, "sibling-check=ok\n")
+        self.assertEqual(set(FakeGitHub.seen_auth), {f"Bearer {self.TOKEN}"})
+        self.assertNotIn(self.TOKEN, res.stdout + res.stderr)
+
+    def test_a_missing_revision_is_invalid_pin_exit_3(self):
+        FakeGitHub.commits["isonim"] = set()
+        res = self.siblings()
+        self.assertEqual(res.returncode, 3, res.stdout + res.stderr)
+        self.assertIn("sibling-check=invalid-pin\n", res.stdout)
+        self.assertIn(f"problem=", res.stdout)
+        self.assertIn(f"isonim@{SHA_A}", res.stdout)
+        self.assertIn(f"MISSING isonim@{SHA_A}", res.stderr)
+        # stdout is exactly what the workflow appends to $GITHUB_OUTPUT.
+        for line in res.stdout.splitlines():
+            self.assertRegex(line, r"^(sibling-check|problem)=")
+
+    def test_an_unknown_repository_or_a_server_error_is_unverified_exit_1(self):
+        for repo in ("reprobuild-packages", "flaky"):
+            with self.subTest(repo=repo):
+                FakeGitHub.commits = {"isonim": {SHA_A}, "reprobuild": {ENGINE},
+                                      "reprobuild-packages": {CATALOG}}
+                if repo == "flaky":
+                    (self.ct / "repro.lock").write_text(
+                        (self.ct / "repro.lock").read_text().replace("/reprobuild-packages\"", "/flaky\""))
+                else:
+                    del FakeGitHub.commits[repo]
+                res = self.siblings()
+                self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+                self.assertIn("sibling-check=unverified\n", res.stdout)
+                self.assertIn(f"reprobuild-packages@{CATALOG}", res.stdout)
+
+    def test_the_token_is_never_sent_to_another_host(self):
+        env = dict(os.environ, GH_TOKEN=self.TOKEN)
+        argv = ["siblings", "--checkout", str(self.ct),
+                "--api-url", "https://example.invalid", "--retry-delay", "0"]
+        res = run_tool(*argv, env=env)
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        self.assertEqual(res.stdout, "")
+        self.assertNotIn(self.TOKEN, res.stderr)
+
+    def test_a_lock_with_no_readable_siblings_does_not_pass(self):
+        (self.ct / "locks/arm64-macosx.lock").write_text(lock_text("arm64-macosx", {}))
+        res = self.siblings()
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        self.assertNotIn("sibling-check=ok", res.stdout)
+        self.assertIn("no sibling entries", res.stderr)
+
+    def test_require_token_refuses_an_empty_token(self):
+        res = self.siblings("", "--require-token")
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        self.assertEqual(res.stdout, "")
+        self.assertEqual(FakeGitHub.seen_auth, [])
 
 
 STUB_REPRO = """\

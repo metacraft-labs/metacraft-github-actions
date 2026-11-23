@@ -18,8 +18,10 @@ name: codetracer-mac-lock
 #
 # What one run does (tools/codetracer-mac-lock.py has the detail):
 #   plan    (Linux)  resolve the revision, refuse a malformed one, fetch it,
-#                    refuse one that does not exist or has no darwin lock, and
-#                    decide whether credentials are available.
+#                    refuse one that does not exist or has no darwin lock,
+#                    decide whether credentials are available and, when they
+#                    are, refuse a revision whose locks name a sibling
+#                    revision that no longer exists on GitHub.
 #   solve   (macOS)  build the reprobuild that CodeTracer's own flake.lock
 #                    pins (its independent cohort: never this repository's
 #                    reprobuild pin), put every sibling at repro.lock's
@@ -29,8 +31,9 @@ name: codetracer-mac-lock
 # Outcome `confirmed`: the solve equals the committed darwin lock (its self
 # entry aside). `produced`: it differs; the fresh lock is the artifact, to be
 # committed to CodeTracer through CodeTracer's own process. This job never
-# pushes anywhere. Either one passes; an unsolvable lock or a failed check
-# fails.
+# pushes anywhere. Either one passes; an unsolvable lock, a failed check, an
+# invalid pin (including a sibling revision missing from GitHub) or an
+# unverified sibling check fails.
 
 on:
   workflow_call:
@@ -92,6 +95,10 @@ jobs:
       repo: ${{ steps.resolve.outputs.repo }}
       engine-rev: ${{ steps.inspect.outputs.engine-rev }}
       run: ${{ steps.credentials.outputs.run }}
+      # Set by the sibling check, also when it fails: `invalid-pin` (a
+      # revision is missing) or `unverified` (it could not settle one).
+      sibling-check: ${{ steps.siblings.outputs.sibling-check }}
+      problem: ${{ steps.siblings.outputs.problem }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -121,7 +128,7 @@ jobs:
           REV: ${{ steps.resolve.outputs.rev }}
         run: |
           set -euo pipefail
-          dest="$(mktemp -d "$RUNNER_TEMP/ct.XXXXXX")/codetracer"
+          dest="$RUNNER_TEMP/ct-plan/codetracer"
           python3 -I tools/codetracer-mac-lock.py fetch --owner "$OWNER" --repo "$REPO" --rev "$REV" --dest "$dest"
           python3 -I tools/codetracer-mac-lock.py inspect --checkout "$dest" | tee -a "$GITHUB_OUTPUT"
 
@@ -141,6 +148,45 @@ jobs:
             echo "::error::codetracer-mac-lock: no CI_TOKEN_PROVIDER_PRIVATE_KEY in this run (a fork's pull request receives no secrets), so the arm64 macOS solve is SKIPPED and this check fails. Nothing was verified; a maintainer must push the change to a branch of this repository."
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # A lock that names a sibling revision GitHub no longer has (as
+      # CodeTracer a3986b0de1 names codetracer-image-diff@e002498eac after that
+      # repository's history was rewritten) cannot be provisioned on the Mac,
+      # and before this check it failed there only after the engine build.
+      # Some siblings are private, so this reads with a CI token provider
+      # token, held only in GH_TOKEN. Without credentials the check does not
+      # run; the run is then `skipped`, which fails (above).
+      - name: Mint a read token for the sibling revision check
+        id: plan-token
+        if: ${{ steps.credentials.outputs.run == 'true' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+          permission-contents: read
+
+      - name: Every sibling revision in the two locks exists on GitHub
+        id: siblings
+        if: ${{ steps.credentials.outputs.run == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.plan-token.outputs.token }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/ct-plan/siblings.out"
+          set +e
+          python3 -I tools/codetracer-mac-lock.py siblings --require-token \
+            --checkout "$RUNNER_TEMP/ct-plan/codetracer" > "$out"
+          status=$?
+          set -e
+          cat "$out"
+          # Only the tool's key=value lines; its detail went to the log.
+          grep -E '^(sibling-check|problem)=' "$out" >> "$GITHUB_OUTPUT" || true
+          if [ "$status" -ne 0 ]; then
+            problem="$(sed -n 's/^problem=//p' "$out")"
+            echo "::error::codetracer-mac-lock: ${problem:-the sibling revision check failed (exit $status)}"
+          fi
+          exit "$status"
 
   solve:
     needs: plan
@@ -268,11 +314,20 @@ jobs:
           OUTCOME: ${{ needs.solve.outputs.outcome }}
           REV: ${{ needs.plan.outputs.rev }}
           ENGINE: ${{ needs.plan.outputs.engine-rev }}
+          SIBLING_CHECK: ${{ needs.plan.outputs.sibling-check }}
+          PROBLEM: ${{ needs.plan.outputs.problem }}
         run: |
           echo "codetracer ${REV:-?} (engine reprobuild ${ENGINE:-?}): plan=$PLAN solve=$SOLVE outcome=${OUTCOME:-none}"
           if [ "$PLAN" != success ]; then
-            echo "outcome=invalid-pin" >> "$GITHUB_OUTPUT"
-            echo "::error::the CodeTracer revision is malformed, does not exist or has no darwin lock (see the plan job)"
+            # `unverified` when the sibling check could not settle a revision;
+            # every other plan failure is a pin that cannot be solved.
+            if [ "$SIBLING_CHECK" = unverified ]; then outcome=unverified; else outcome=invalid-pin; fi
+            echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+            if [ -n "$PROBLEM" ]; then
+              echo "::error::$outcome: $PROBLEM"
+            else
+              echo "::error::$outcome: the CodeTracer revision is malformed, does not exist or has no darwin lock, or the plan could not run (see the plan job)"
+            fi
             exit 1
           fi
           if [ "$RUN" != true ]; then

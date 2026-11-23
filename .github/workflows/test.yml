@@ -210,9 +210,10 @@ jobs:
 
   codetracer-mac-lock-tool:
     # The Linux-testable half of the codetracer-mac-lock workflow: pin and
-    # revision refusals, the shallow fetch, the post-solve checks and the
-    # confirmed/produced classification, and the solve orchestration with a
-    # recording engine. The solve itself runs only on the arm64 macOS runner.
+    # revision refusals, the shallow fetch, the sibling revision check against
+    # a fake GitHub API, the post-solve checks and the confirmed/produced
+    # classification, and the solve orchestration with a recording engine.
+    # The solve itself runs only on the arm64 macOS runner.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

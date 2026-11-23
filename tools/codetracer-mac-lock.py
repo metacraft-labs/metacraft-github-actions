@@ -17,6 +17,8 @@ tools/test-codetracer-mac-lock.py):
             a fresh directory. Exit 3 when the revision does not exist there.
   inspect   Print the Reprobuild engine and catalog revisions CodeTracer's own
             flake.lock pins (its independent cohort, guide section 2).
+  siblings  Check that every sibling revision CodeTracer's two locks name
+            still exists on GitHub. Exit 3 naming each one that does not.
   inject-unsatisfiable
             Negative control: add a `uses:` constraint that contradicts one
             CodeTracer already declares, so the solve itself must be UNSAT.
@@ -28,8 +30,9 @@ tools/test-codetracer-mac-lock.py):
             flake.lock pins, provision the siblings at repro.lock's revisions,
             re-solve the darwin lock, and check it.
 
-Exit status: 0 success; 1 a check or the solve failed; 2 a usage error or a
-malformed input; 3 the revision does not exist in the repository.
+Exit status: 0 success; 1 a check or the solve failed, or `siblings` could
+not verify a revision; 2 a usage error or a malformed input; 3 the revision,
+or for `siblings` a sibling revision, does not exist in its repository.
 """
 
 import argparse
@@ -41,6 +44,10 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 NATIVE_LOCK = "locks/arm64-macosx.lock"
 CANONICAL_LOCK = "repro.lock"
@@ -115,6 +122,10 @@ def read_pin(path):
             raise Refusal(f"{path}: {key} {pin.get(key)!r} is not a GitHub name")
     if not isinstance(pin.get("rev"), str) or not REV_RE.fullmatch(pin["rev"]):
         raise Refusal(f"{path}: rev {pin.get('rev')!r} is not a full lowercase commit SHA")
+    # The pin format's own rule (pins/pin.schema.json, tools/check-pins.py),
+    # repeated here so this tool never acts on a pin that checker refuses.
+    if ("version" in pin) != ("kind" in pin):
+        raise Refusal(f"{path}: version and kind must be given together")
     return pin
 
 
@@ -188,7 +199,7 @@ def parse_lock(path):
     plat = re.search(r'^platform = "([^"]*)"$', text, re.M)
     schema = re.search(r'^schema = "([^"]*)"$', text, re.M)
     deps_line = re.search(r"^deps\s*=\s*\[(.*)\]\s*$", text, re.M)
-    deps, self_entry = {}, None
+    deps, urls, self_entry = {}, {}, None
     if deps_line:
         for entry in re.findall(r"\{([^{}]*)\}", deps_line.group(1)):
             fields = dict(re.findall(r'(\w+)\s*=\s*"([^"\\]*)"', entry))
@@ -198,6 +209,7 @@ def parse_lock(path):
                 self_entry = fields
                 continue
             deps[fields["name"]] = fields.get("revision", "")
+            urls[fields["name"]] = fields.get("url", "")
     # Everything but the deps line, for the classification. The self entry is
     # excluded on purpose: it records the commit the lock was refreshed on, so
     # it moves with every refresh and says nothing about the solve.
@@ -208,6 +220,7 @@ def parse_lock(path):
         "platform": plat.group(1) if plat else None,
         "has_deps": bool(deps_line),
         "deps": deps,
+        "urls": urls,
         "self": self_entry,
         "other": other,
     }
@@ -257,6 +270,152 @@ def cmd_inspect(args):
     revs = flake_revisions(args.checkout)
     print(f"engine-rev={revs['reprobuild']}")
     print(f"catalog-rev={revs['reprobuild-packages']}")
+    return 0
+
+
+# ── sibling revisions ────────────────────────────────────────────────────────
+
+# A sibling's `url` in CodeTracer's locks. Every one is a GitHub repository
+# (measured at CodeTracer a3986b0de1 and a7cddd8bc: 55 siblings in each lock).
+GITHUB_REPO_URL = re.compile(
+    r"^https://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
+GITHUB_API = "https://api.github.com"
+
+
+def sibling_revisions(checkout):
+    """Every non-self dependency revision of the two committed locks, one
+    entry per (url, revision), with the locks that name it. Recipe-pinned
+    siblings are among them: a recipe pin and the lock entry must agree, and
+    `repro develop` places them at that revision."""
+    root = pathlib.Path(checkout)
+    found = {}
+    for rel in (CANONICAL_LOCK, NATIVE_LOCK):
+        lock = parse_lock(root / rel)
+        # A lock this parser reads no siblings from would pass vacuously.
+        if not lock["deps"]:
+            raise Refusal(f"{root / rel}: no sibling entries could be read from its deps line")
+        for name, rev in lock["deps"].items():
+            url = lock["urls"].get(name, "")
+            entry = {"name": name, "url": url, "rev": rev, "locks": []}
+            found.setdefault((url, rev), entry)["locks"].append(rel)
+    return [found[key] for key in sorted(found, key=lambda k: (found[k]["name"], k[1]))]
+
+
+def token_may_go_to(api):
+    """The GitHub API itself, or a loopback fake (the tests). Never another
+    host: --api-url must not be a way to send the token elsewhere."""
+    parts = urllib.parse.urlsplit(api)
+    if parts.scheme == "https" and parts.hostname == "api.github.com":
+        return True
+    return parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1")
+
+
+def github_commit_lookup(token, api=GITHUB_API, attempts=3, delay=5.0):
+    """A lookup `(owner, repo, rev) -> (state, detail)` against the GitHub
+    REST API, where state is `present`, `missing` (GitHub answers 422 "No
+    commit found for SHA") or `unverifiable` (anything else: no access, a
+    renamed or deleted repository, a network or server error). The token goes
+    only into an Authorization header that is not repeated on a redirect."""
+    if token and not token_may_go_to(api):
+        raise Refusal(f"--api-url {api!r}: GH_TOKEN is sent only to {GITHUB_API} or a loopback fake")
+
+    def lookup(owner, repo, rev):
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "codetracer-mac-lock",
+        }
+        request = urllib.request.Request(f"{api}/repos/{owner}/{repo}/commits/{rev}", headers=headers)
+        if token:
+            request.add_unredirected_header("Authorization", f"Bearer {token}")
+        detail = "no answer"
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(delay * attempt)
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    body = json.load(response)
+            except urllib.error.HTTPError as err:
+                if err.code == 422:
+                    return "missing", "GitHub: no commit found for this SHA (HTTP 422)"
+                if err.code == 404:
+                    return "unverifiable", ("HTTP 404: the repository does not exist or "
+                                            "this credential cannot read it")
+                detail = f"HTTP {err.code}"
+                if err.code < 500 and err.code != 429:
+                    return "unverifiable", detail
+                continue
+            except (urllib.error.URLError, OSError, ValueError) as err:
+                detail = f"{type(err).__name__}: {err}"
+                continue
+            sha = body.get("sha") if isinstance(body, dict) else None
+            if sha == rev:
+                return "present", ""
+            return "unverifiable", f"GitHub answered with commit {sha!r}"
+        return "unverifiable", f"{detail} after {attempts} attempts"
+
+    return lookup
+
+
+def check_siblings(entries, lookup):
+    """(missing, unverifiable): one line per sibling revision that does not
+    exist on GitHub, and per one this check could not settle."""
+    missing, unverifiable = [], []
+    for entry in entries:
+        label = f"{entry['name']}@{entry['rev'] or '(no revision)'}"
+        where = f"in {', '.join(entry['locks'])}"
+        if not REV_RE.fullmatch(entry["rev"]):
+            missing.append(f"{label} ({where}): not a full commit SHA")
+            continue
+        match = GITHUB_REPO_URL.fullmatch(entry["url"])
+        if not match:
+            unverifiable.append(f"{label} ({where}): {entry['url']!r} is not a GitHub repository URL")
+            continue
+        owner, repo = match.groups()
+        state, detail = lookup(owner, repo, entry["rev"])
+        if state == "present":
+            continue
+        line = f"{label} ({owner}/{repo}, {where}): {detail}"
+        (missing if state == "missing" else unverifiable).append(line)
+    return missing, unverifiable
+
+
+def summarize(lines, limit=8):
+    """The `name@rev` of each line, at most `limit` of them, for one line of
+    $GITHUB_OUTPUT. The log names every one."""
+    names = [line.split(" ", 1)[0] for line in lines]
+    more = f" and {len(names) - limit} more (see the log)" if len(names) > limit else ""
+    return ", ".join(names[:limit]) + more
+
+
+def cmd_siblings(args):
+    token = os.environ.get("GH_TOKEN", "")
+    if args.require_token and not token:
+        raise Refusal("--require-token: GH_TOKEN is empty, and the private siblings "
+                      "cannot be read without it")
+    if not token:
+        log("GH_TOKEN is empty: probing anonymously, so a private sibling is unverifiable")
+    require_files(args.checkout)
+    entries = sibling_revisions(args.checkout)
+    missing, unverifiable = check_siblings(
+        entries, github_commit_lookup(token, api=args.api_url, delay=args.retry_delay))
+    for line in missing:
+        log(f"MISSING {line}")
+    for line in unverifiable:
+        log(f"UNVERIFIED {line}")
+    if missing:
+        names = summarize(missing)
+        print("sibling-check=invalid-pin")
+        print(f"problem=the pinned CodeTracer's locks name sibling revisions that do not "
+              f"exist on GitHub: {names}")
+        return 3
+    if unverifiable:
+        names = summarize(unverifiable)
+        print("sibling-check=unverified")
+        print(f"problem=could not verify that these sibling revisions exist on GitHub: {names}")
+        return 1
+    log(f"all {len(entries)} sibling revisions in {CANONICAL_LOCK} and {NATIVE_LOCK} exist on GitHub")
+    print("sibling-check=ok")
     return 0
 
 
@@ -638,6 +797,13 @@ def main(argv):
     p = sub.add_parser("inspect")
     p.add_argument("--checkout", required=True)
     p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("siblings")
+    p.add_argument("--checkout", required=True)
+    p.add_argument("--require-token", action="store_true", help="refuse to run without GH_TOKEN (the CI path)")
+    p.add_argument("--api-url", default=GITHUB_API, help="override the GitHub API (tests)")
+    p.add_argument("--retry-delay", type=float, default=5.0, help="seconds (tests)")
+    p.set_defaults(func=cmd_siblings)
 
     p = sub.add_parser("inject-unsatisfiable")
     p.add_argument("--checkout", required=True)
