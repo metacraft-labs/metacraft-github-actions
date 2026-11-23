@@ -40,6 +40,7 @@ actionlint
 python3 git-auth/test-private-global-config.py
 python3 git-auth/test-cargo-acquisition.py
 python3 -I tools/test-check-pins.py
+python3 -I tools/test-workspace-manifest-branches.py
 python3 -I tools/check-pins.py
 python3 -I setup-reprobuild/test-resolve-reprobuild-pin.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py

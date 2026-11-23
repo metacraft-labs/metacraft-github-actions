@@ -122,7 +122,9 @@ and passes trivially when a change touches no pin and none of the readers.
 - For the Reprobuild pin it runs sections 0 and 0b of the distribution guide:
   the pinned package, read through the flake output `pins` (which must agree
   with the JSON file), builds on Linux and macOS, and the binary reads the real
-  workspace manifests (metacraft-labs/repro-workspace `agents` and `dev`) and
+  workspace manifests (every metacraft-labs/repro-workspace branch among
+  `latest`, `dev` and `agents` that exists; `latest` must, see
+  `tools/workspace-manifest-branches.py`) and
   answers the managed-hook contract of the hooks it generates
   (`tools/check-reprobuild-fits-workspace.sh`).
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
