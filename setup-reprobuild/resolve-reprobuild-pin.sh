@@ -42,8 +42,10 @@ fail() {
   exit 1
 }
 
-script_dir="${BASH_SOURCE[0]%/*}"
-[ "${script_dir}" = "${BASH_SOURCE[0]}" ] && script_dir=.
+# Git Bash on Windows may name this script with backslashes.
+script_path="${BASH_SOURCE[0]//\\//}"
+script_dir="${script_path%/*}"
+[ "${script_dir}" = "${script_path}" ] && script_dir=.
 pin_file="${REPRO_PIN_FILE:-${script_dir}/../pins/reprobuild.json}"
 [ -f "${pin_file}" ] || fail "the Reprobuild pin ${pin_file} does not exist"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
