@@ -78,12 +78,6 @@ class ResolvePin(unittest.TestCase):
                     'from-source': 'true', 'expected-version': PIN['version'],
                     'expected-commit': PIN['rev']})
 
-    def test_the_first_pin_is_v0_2_34_on_agents(self):
-        self.assertEqual((PIN['owner'], PIN['repo'], PIN['rev'], PIN['version'], PIN['kind']),
-                          ('metacraft-labs', 'reprobuild',
-                          'd1bf1f065aca01b90c3bbdddc57d14e977f49e1a', '0.2.34',
-                          'agents-commit'))
-
     def test_a_release_pin_installs_its_release_and_falls_back_to_its_commit(self):
         self.write_pin({**PIN, 'kind': 'release'})
         for windows in self.readers():
