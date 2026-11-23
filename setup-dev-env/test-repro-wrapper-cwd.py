@@ -191,8 +191,15 @@ def main():
                 # Reuse the native fixture's private-pipe identity check. Never
                 # adopt or terminate a runner daemon, or leave an owned daemon
                 # holding the temporary consumer's directory during cleanup.
+                # A release bundle carries the companions beside the CLI; a
+                # source build (setup-reprobuild's Windows route) builds them
+                # from the selected RunQuota and names them in RUNQUOTAD_BIN
+                # and RUNQUOTA_BIN.
                 daemon_exe = repro.with_name('runquotad.exe')
                 quota_exe = repro.with_name('runquota.exe')
+                if not daemon_exe.is_file() and not quota_exe.is_file():
+                    daemon_exe = Path(os.environ.get('RUNQUOTAD_BIN', daemon_exe))
+                    quota_exe = Path(os.environ.get('RUNQUOTA_BIN', quota_exe))
                 if not daemon_exe.is_file() or not quota_exe.is_file():
                     raise RuntimeError('the real SDK RunQuota companions are required')
                 endpoint = r'\\.\pipe\gha-cwd-' + uuid.uuid4().hex

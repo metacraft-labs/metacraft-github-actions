@@ -13,6 +13,10 @@ if (-not (Test-Path (Join-Path $leaseSource 'shm_lease/anchor.nim'))) {
 $outputRoot = Join-Path $env:RUNNER_TEMP 'reprobuild-bootstrap-runquota'
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $daemon = Join-Path $outputRoot 'runquotad.exe'
+# The client too: a source-built SDK has no release bundle to carry it, and
+# callers that query the daemon (the wrapper contract test) need the matching
+# one. RUNQUOTA_BIN names it, as RUNQUOTAD_BIN names the daemon.
+$client = Join-Path $outputRoot 'runquota.exe'
 $cache = Join-Path $outputRoot 'nimcache'
 $previousLeaseSource = $env:SHM_LEASE_SRC
 try {
@@ -21,9 +25,15 @@ try {
     try {
         nim c --threads:on -d:release "--nimcache:$cache" "--out:$daemon" apps/runquotad/runquotad.nim
         if ($LASTEXITCODE -ne 0) { throw "RunQuota bootstrap compilation failed: $LASTEXITCODE" }
+        nim c --threads:on -d:release "--nimcache:$cache-client" "--out:$client" apps/runquota/runquota.nim
+        if ($LASTEXITCODE -ne 0) { throw "RunQuota client bootstrap compilation failed: $LASTEXITCODE" }
     } finally { Pop-Location }
 } finally { $env:SHM_LEASE_SRC = $previousLeaseSource }
 & $daemon --version
 if ($LASTEXITCODE -ne 0) { throw "RunQuota bootstrap executable failed: $LASTEXITCODE" }
 $env:RUNQUOTAD_BIN = (Resolve-Path -LiteralPath $daemon).Path
 Add-Content -Path $env:GITHUB_ENV -Value "RUNQUOTAD_BIN=$env:RUNQUOTAD_BIN"
+& $client --version
+if ($LASTEXITCODE -ne 0) { throw "RunQuota client bootstrap executable failed: $LASTEXITCODE" }
+$env:RUNQUOTA_BIN = (Resolve-Path -LiteralPath $client).Path
+Add-Content -Path $env:GITHUB_ENV -Value "RUNQUOTA_BIN=$env:RUNQUOTA_BIN"
