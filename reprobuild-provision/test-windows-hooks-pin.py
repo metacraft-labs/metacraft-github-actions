@@ -15,7 +15,7 @@ REPOS = (
     "runquota", "nim-stackable-hooks", "io-mon", "codetracer", "nim-shm-lease",
     "nim-shm-queue", "nim-shm-gset", "reprobuild-test-adapters",
     "reprobuild-ct-test-runner", "reprobuild-llm-agent-packages",
-    "test-certificates-tools",
+    "test-certificates-tools", "nim-cli-spec",
 )
 
 

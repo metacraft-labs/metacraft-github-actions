@@ -269,6 +269,7 @@ if [ "${RUNNER_OS:-Linux}" = "Windows" ]; then
   REPROBUILD_TEST_ADAPTERS_REF="$(sibling_rev reprobuild-test-adapters "" dev)" || exit 1
   REPROBUILD_CT_TEST_RUNNER_REF="$(sibling_rev reprobuild-ct-test-runner "" dev)" || exit 1
   REPROBUILD_LLM_AGENT_PACKAGES_REF="$(sibling_rev reprobuild-llm-agent-packages "" dev)" || exit 1
+  NIM_CLI_SPEC_REF="$(sibling_rev nim-cli-spec "" dev)" || exit 1
 fi
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
@@ -544,6 +545,7 @@ else
     "${CLONE_OWNER}/reprobuild-test-adapters:${REPROBUILD_TEST_ADAPTERS_REF}" \
     "${CLONE_OWNER}/reprobuild-ct-test-runner:${REPROBUILD_CT_TEST_RUNNER_REF}" \
     "${CLONE_OWNER}/reprobuild-llm-agent-packages:${REPROBUILD_LLM_AGENT_PACKAGES_REF}" \
+    "${CLONE_OWNER}/nim-cli-spec:${NIM_CLI_SPEC_REF}" \
     "${CLONE_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
 
   clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
@@ -561,6 +563,10 @@ else
   clone "${CLONE_OWNER}/reprobuild-test-adapters" "${REPROBUILD_TEST_ADAPTERS_REF}"
   clone "${CLONE_OWNER}/reprobuild-ct-test-runner" "${REPROBUILD_CT_TEST_RUNNER_REF}"
   clone "${CLONE_OWNER}/reprobuild-llm-agent-packages" "${REPROBUILD_LLM_AGENT_PACKAGES_REF}"
+  # The CLI front end compiles against `../nim-cli-spec/src` (env.ps1's
+  # CLI_SPEC_SRC); without it build_apps stops at `missing nim-cli-spec
+  # source`. Linux/macOS get it from the `nim-cli-spec-src` flake input.
+  clone "${CLONE_OWNER}/nim-cli-spec" "${NIM_CLI_SPEC_REF}"
   # The engine links the `test_certificates` package (store, note framing,
   # two-note merge) from this sibling: without `../test-certificates-tools/src`
   # the engine compile stops at `certificate_store.nim: cannot open file:
