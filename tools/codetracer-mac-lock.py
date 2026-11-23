@@ -242,6 +242,16 @@ def require_files(checkout):
                           "Apple Silicon lock to solve")
 
 
+def lock_drift(checkout):
+    """The siblings CodeTracer's committed darwin lock pins at a revision
+    other than repro.lock's, sorted."""
+    root = pathlib.Path(checkout)
+    canonical = parse_lock(root / CANONICAL_LOCK)["deps"]
+    native = parse_lock(root / NATIVE_LOCK)["deps"]
+    return sorted(name for name in set(canonical) & set(native)
+                  if canonical[name] != native[name])
+
+
 def cmd_inspect(args):
     require_files(args.checkout)
     revs = flake_revisions(args.checkout)
@@ -533,6 +543,17 @@ def solve_stages(args, checkout, out, solve_log, result, finish):
 
     result["stage"] = "solve"
     refresh = [repro, "lock", "refresh", ".", "--lock", NATIVE_LOCK, f"--platform={NATIVE_PLATFORM}"]
+    # The siblings sit at repro.lock's revisions, and the solve must name
+    # those (post_solve_problems). Where the committed darwin lock pins a
+    # sibling elsewhere, the refresh refuses (exit 4) to move that pin
+    # "backward": at CodeTracer a7cddd8bc the darwin lock is ahead of
+    # repro.lock for six siblings (hosted run 45235030418). Allow exactly
+    # those, the drift between CodeTracer's two committed locks, and no
+    # other: any further regression still refuses.
+    drift = lock_drift(checkout)
+    result["pin_regressions_allowed"] = drift
+    if drift:
+        refresh.append(f"--allow-pin-regression={','.join(drift)}")
     output = []
     status = run_logged(refresh, str(checkout), env, solve_log, capture=output)
     if status != 0:

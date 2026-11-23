@@ -318,6 +318,12 @@ workflow calls it only when `pins/codetracer.json`, the workflow or
      are recorded in `result.json` as `recipe_pinned`.
    - It runs
      `repro lock refresh . --lock locks/arm64-macosx.lock --platform=arm64-macosx`.
+     The committed darwin lock can pin a sibling at a different revision from
+     `repro.lock`. In that case the refresh would refuse to move the pin
+     "backward" to `repro.lock`'s revision. So exactly those siblings are
+     passed as `--allow-pin-regression`, and they are recorded in
+     `result.json` as `pin_regressions_allowed`. At `a7cddd8bc` there are six
+     of them. The refresh still refuses any other regression.
    - It checks the result: the platform is `arm64-macosx`, every dependency
      revision equals `repro.lock`'s, and `reprobuild` and `reprobuild-packages`
      equal `flake.lock`'s. When the revision carries CodeTracer's own

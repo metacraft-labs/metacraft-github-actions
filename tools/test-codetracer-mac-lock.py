@@ -409,6 +409,22 @@ class SolveTests(SolveFixture):
         self.assertEqual(self.result()["stage"], "develop")
         self.assertNotIn("lock refresh", self.stub_log())
 
+    def test_drift_between_the_two_committed_locks_is_the_only_regression_allowed(self):
+        drifted = lock_text("arm64-macosx", dict(DEPS, isonim=SHA_B))
+        (self.ct / "locks/arm64-macosx.lock").write_text(drifted)
+        res = self.solve()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.result()["pin_regressions_allowed"], ["isonim"])
+        self.assertIn("--platform=arm64-macosx --allow-pin-regression=isonim\n", self.stub_log())
+        # The solve moved isonim back to repro.lock's revision: produced.
+        self.assertEqual(self.result()["outcome"], "produced")
+
+    def test_no_drift_allows_no_regression(self):
+        res = self.solve()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.result()["pin_regressions_allowed"], [])
+        self.assertNotIn("--allow-pin-regression", self.stub_log())
+
     def test_a_different_solve_is_produced(self):
         produced = self.write("p2.lock", lock_text("arm64-macosx", DEPS, packages="bash clang"))
         res = self.solve(STUB_PRODUCED=str(produced))
