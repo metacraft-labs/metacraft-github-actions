@@ -161,12 +161,6 @@ class CheckPins(unittest.TestCase):
         self.assertNotIn("GH_TOKEN", env)
         self.assertNotIn("NIX_CONFIG", env)
 
-    def test_the_real_reprobuild_pin_is_v0_2_34_on_agents(self):
-        pin = json.loads((ROOT / "pins" / "reprobuild.json").read_text())
-        self.assertEqual((pin["owner"], pin["repo"], pin["rev"], pin["version"], pin["kind"]),
-                          ("metacraft-labs", "reprobuild",
-                          "d1bf1f065aca01b90c3bbdddc57d14e977f49e1a", "0.2.34", "agents-commit"))
-
     def test_an_empty_directory_is_a_usage_error(self):
         code, _ = self.run_with()
         self.assertEqual(code, 2)

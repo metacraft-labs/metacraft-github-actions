@@ -186,8 +186,9 @@ jobs:
           pin['rev'] = '0' * 39 + '1'
           json.dump(pin, open(sys.argv[2], 'w'))
           PY
-          python3 -I tools/check-pins.py --remote --pins-dir "$control" > "$control/out" 2>&1
-          status=$?
+          # The step shell is `bash -e`: capture the expected failure.
+          status=0
+          python3 -I tools/check-pins.py --remote --pins-dir "$control" > "$control/out" 2>&1 || status=$?
           cat "$control/out"
           [ "$status" -eq 1 ] && grep -q 'was not found in metacraft-labs/reprobuild' "$control/out"
 
