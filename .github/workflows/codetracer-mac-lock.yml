@@ -65,6 +65,9 @@ on:
       rev:
         description: The CodeTracer revision the run solved.
         value: ${{ jobs.plan.outputs.rev }}
+      problem:
+        description: When the sibling revision check failed, what it found (each missing or unverified sibling@rev).
+        value: ${{ jobs.plan.outputs.problem }}
   workflow_dispatch:
     inputs:
       rev:
