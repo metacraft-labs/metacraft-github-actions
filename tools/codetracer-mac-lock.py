@@ -58,11 +58,25 @@ NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # no version satisfies both, and the solver must answer UNSAT.
 UNSATISFIABLE = '    "bash <4"  # codetracer-mac-lock negative control, contradicts "bash >=4"\n'
 CONTRADICTED = '"bash >=4"'
-# `repro lock refresh` exits 3, printing "solver UNSAT", when the constraints
-# cannot hold together; every other failure is a different exit status
-# (reprobuild repro_cli_support.nim, runLockGeneration).
+# How the engine says the constraints cannot hold together. `repro lock
+# refresh` exits 3 printing "solver UNSAT" when its own solve is UNSAT
+# (reprobuild repro_cli_support.nim, runLockGeneration). When the recipe's
+# interface extraction runs the solve first, as it does for CodeTracer, the
+# solver's exception surfaces there instead, and the refresh exits 1 with
+# "no satisfying assignment exists ... [EUnsatisfiable]" (hosted macOS run
+# 45206671911, engine reprobuild b90c910c). Either is the solver's own
+# answer; a bare exit status, or any other failure, is not.
 UNSAT_EXIT = 3
 UNSAT_TEXT = "solver UNSAT"
+UNSAT_EXCEPTION = "[EUnsatisfiable]"
+
+
+def is_unsat(status, output):
+    if status == 0:
+        return False
+    if status == UNSAT_EXIT and any(UNSAT_TEXT in line for line in output):
+        return True
+    return any(UNSAT_EXCEPTION in line for line in output)
 HERE = pathlib.Path(__file__).resolve().parent
 SCOPED_GIT_AUTH = HERE.parent / "git-auth" / "scoped-git-auth.sh"
 
@@ -497,7 +511,7 @@ def solve_stages(args, checkout, out, solve_log, result, finish):
     output = []
     status = run_logged(refresh, str(checkout), env, solve_log, capture=output)
     if status != 0:
-        unsat = status == UNSAT_EXIT and any(UNSAT_TEXT in line for line in output)
+        unsat = is_unsat(status, output)
         result["refresh_exit"] = status
         result["outcome"] = "unsolvable" if unsat else "failed"
         if args.expect == "fail":
@@ -508,8 +522,8 @@ def solve_stages(args, checkout, out, solve_log, result, finish):
             # regression (4), an incomplete solve (5), a crash or a network
             # error would pass a control that accepted any failure.
             return finish(
-                1, f"the solve failed, but not as UNSAT (exit {status}, no {UNSAT_TEXT!r}): "
-                "this is not the failure the run expected")
+                1, f"the solve failed, but not as UNSAT (exit {status}, neither {UNSAT_TEXT!r} "
+                f"nor {UNSAT_EXCEPTION!r}): this is not the failure the run expected")
         what = "does not solve (UNSAT)" if unsat else "could not be re-solved"
         return finish(1, f"the aarch64-darwin lock {what} at {args.rev} (exit {status})")
     if args.expect == "fail":

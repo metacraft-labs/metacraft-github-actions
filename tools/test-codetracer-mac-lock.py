@@ -319,6 +319,13 @@ case "$1" in
     # A floor alone is satisfiable (it grounds at the floor), so only a
     # contradiction is UNSAT here, as there.
     if grep -q '"bash <4"' repro.nim && grep -q '"bash >=4"' repro.nim; then
+      if [ -n "${STUB_UNSAT_IN_EXTRACT:-}" ]; then
+        # The shape measured on the hosted runner: the interface extraction
+        # runs the solve, and the refresh reports that as exit 1.
+        echo "repro lock refresh: failed to read inputs: could not read the solve of repro.nim" >&2
+        echo "Error: unhandled exception: no satisfying assignment exists for the supplied variant + package registry [EUnsatisfiable]" >&2
+        exit 1
+      fi
       echo "repro lock refresh: solver UNSAT — cannot pin a lock: bash" >&2; exit 3
     fi
     [ -z "${STUB_SOLVE_STATUS:-}" ] || { echo "${STUB_SOLVE_TEXT:-generation failed}" >&2; exit "$STUB_SOLVE_STATUS"; }
@@ -402,6 +409,12 @@ class SolveTests(SolveFixture):
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertEqual(self.result()["outcome"], "unsolvable")
         self.assertIn('"bash <4"', (self.ct / "repro.nim").read_text())
+
+    def test_negative_control_accepts_the_unsat_raised_by_interface_extraction(self):
+        res = self.solve("--expect", "fail", "--negative-control", STUB_UNSAT_IN_EXTRACT="1")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.result()["outcome"], "unsolvable")
+        self.assertEqual(self.result()["refresh_exit"], 1)
 
     def test_a_floor_alone_is_not_a_negative_control(self):
         # What the first version of this tool injected. The solver grounds a

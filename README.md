@@ -350,7 +350,9 @@ To run the solve by hand, use **Actions → codetracer-mac-lock → Run workflow
 - With `expect: fail` and `negative-control: true`, it is the negative
   control. `"bash <4"` is added after the siblings are provisioned, next to
   the `"bash >=4"` CodeTracer declares. The run passes only if
-  `repro lock refresh` answers UNSAT (exit 3, `solver UNSAT`). Any other
+  the solver itself reports UNSAT. That is either `repro lock refresh`'s own
+  `solver UNSAT` (exit 3), or the solver's `[EUnsatisfiable]` raised by the
+  recipe's interface extraction, which is how CodeTracer fails. Any other
   failure does not count, including one in provisioning or the engine build.
   A floor alone such as `"bash >=99999"` would not work as a control: the
   solver grounds a constraint with no upper bound at its floor, so that
