@@ -98,7 +98,7 @@ jobs:
           workflow='^\.github/workflows/pins\.yml$'
           pins=false reprobuild=false codetracer=false
           if matches "^pins/|^flake\.nix$|^tools/check-pins\.py$|^tools/update-pin\.sh$|$workflow"; then pins=true; fi
-          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|$workflow"; then reprobuild=true; fi
+          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
           if matches "^pins/codetracer\.json$|^\.github/workflows/codetracer-mac-lock\.yml$|^tools/codetracer-mac-lock\.py$"; then codetracer=true; fi
           printf 'pins=%s\nreprobuild=%s\ncodetracer=%s\n' "$pins" "$reprobuild" "$codetracer" | tee -a "$GITHUB_OUTPUT"
       - id: owners
@@ -115,6 +115,8 @@ jobs:
           persist-credentials: false
       - name: Tests of the checker
         run: python3 -I tools/test-check-pins.py
+      - name: Tests of section 0b's repro-workspace branch selection
+        run: python3 -I tools/test-workspace-manifest-branches.py
       - name: Every pin satisfies the schema
         run: python3 -I tools/check-pins.py
       - name: The setup actions' pin resolver and installed-CLI check
@@ -242,16 +244,41 @@ jobs:
           test "$("$out/bin/repro" --version)" = "repro $version"
           echo "repro=$out/bin/repro" >> "$GITHUB_OUTPUT"
 
-      - name: Check out the workspace manifests (agents)
+      # Section 0b reads the manifests on every repro-workspace branch people
+      # use. The workspace root is migrating from `dev`/`agents` to a single
+      # mainline `latest`, so the set is whichever of `latest`, `dev` and
+      # `agents` exists; `agents` is already gone, and when `dev` goes too the
+      # check keeps running on `latest` alone. `latest` missing, or none of
+      # them existing, fails the job instead of checking less or nothing.
+      # tools/workspace-manifest-branches.py holds the rule and its reasons.
+      - name: Which repro-workspace branches carry manifests
+        id: branches
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # The token reaches git through process-scoped configuration, never
+          # through a URL or argv; the base64 form is masked like the token.
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          heads="$(mktemp)"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/metacraft-labs/repro-workspace.extraHeader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git ls-remote --heads https://github.com/metacraft-labs/repro-workspace > "$heads"
+          python3 -I tools/workspace-manifest-branches.py --heads "$heads" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Check out the workspace manifests (latest)
         uses: actions/checkout@v5
         with:
           repository: metacraft-labs/repro-workspace
-          ref: agents
-          path: .workspaces/agents
+          ref: latest
+          path: .workspaces/latest
           token: ${{ steps.token.outputs.token }}
           persist-credentials: false
 
       - name: Check out the workspace manifests (dev)
+        if: ${{ steps.branches.outputs.dev == 'true' }}
         uses: actions/checkout@v5
         with:
           repository: metacraft-labs/repro-workspace
@@ -260,12 +287,24 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           persist-credentials: false
 
+      - name: Check out the workspace manifests (agents)
+        if: ${{ steps.branches.outputs.agents == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/repro-workspace
+          ref: agents
+          path: .workspaces/agents
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+
       - name: "Section 0b: the binary fits the workspace, with its negative controls"
         env:
           REPRO: ${{ steps.build.outputs.repro }}
+          BRANCHES: ${{ steps.branches.outputs.branches }}
         run: |
           set -euo pipefail
-          for branch in agents dev; do
+          case " $BRANCHES " in *" latest "*) ;; *) echo "no latest in '$BRANCHES'"; exit 1 ;; esac
+          for branch in $BRANCHES; do
             echo "::group::repro-workspace $branch at $(git -C ".workspaces/$branch" rev-parse HEAD)"
             python3 -I tools/test-check-reprobuild-fits-workspace.py \
               --repro "$REPRO" --workspace ".workspaces/$branch" -v
