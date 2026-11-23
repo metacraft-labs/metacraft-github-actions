@@ -31,7 +31,11 @@ schema), and refuses a
 schema keyword it does not implement, so extending the schema cannot silently
 weaken the check.
 
-Usage: tools/check-pins.py [--remote] [--owner OWNER] [--list-owners] [--pins-dir DIR]
+`--list-owners` prints the owners the pins name, and `--list-repos --owner
+OWNER` the repositories of that owner's pins, comma-separated: the `pins`
+workflow mints one token per owner, limited to those repositories.
+
+Usage: tools/check-pins.py [--remote] [--owner OWNER] [--list-owners | --list-repos] [--pins-dir DIR]
 Exit status 0 when every file passes, 1 when any fails, 2 on a usage error.
 """
 
@@ -197,8 +201,14 @@ def main(argv):
     parser.add_argument("--owner", help="only the pins of this owner (with --remote)")
     parser.add_argument("--list-owners", action="store_true",
                         help="print the owners the pins name as a JSON list, and check nothing")
+    parser.add_argument("--list-repos", action="store_true",
+                        help="print the repositories the pins of --owner name, comma-separated, and check nothing")
     parser.add_argument("--pins-dir", default=str(pathlib.Path(__file__).resolve().parent.parent / "pins"))
     args = parser.parse_args(argv)
+    if args.list_repos and (not args.owner or args.list_owners or args.remote):
+        print("error: --list-repos needs --owner, and neither --list-owners nor --remote",
+              file=sys.stderr)
+        return 2
     pins_dir = pathlib.Path(args.pins_dir)
     try:
         schema = json.loads((pins_dir / "pin.schema.json").read_text())
@@ -209,8 +219,8 @@ def main(argv):
     if not files:
         print(f"error: no pin files in {pins_dir}", file=sys.stderr)
         return 2
-    if args.list_owners:
-        owners = set()
+    if args.list_owners or args.list_repos:
+        owners, repos = set(), set()
         for path in files:
             pin, problems = check_local(path, schema)
             if problems:
@@ -218,7 +228,15 @@ def main(argv):
                     print(f"FAIL {problem}", file=sys.stderr)
                 return 1
             owners.add(pin["owner"])
-        print(json.dumps(sorted(owners)))
+            if pin["owner"] == args.owner:
+                repos.add(pin["repo"])
+        if args.list_owners:
+            print(json.dumps(sorted(owners)))
+            return 0
+        if not repos:
+            print(f"error: no pin names the owner {args.owner}", file=sys.stderr)
+            return 1
+        print(",".join(sorted(repos)))
         return 0
     failed = False
     checked = 0

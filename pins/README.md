@@ -129,3 +129,29 @@ and passes trivially when a change touches no pin and none of the readers.
   (`tools/check-reprobuild-fits-workspace.sh`).
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
   and with a release and a source-revision override.
+
+### Tokens
+
+The `remote` job runs one leg per owner the pins name, and each leg mints a
+token from the shared `CI_TOKEN_PROVIDER_APP_ID` / `CI_TOKEN_PROVIDER_PRIVATE_KEY`
+secrets: the `metacraft-labs-ci-token-provider` App, id 3115338. The App is
+registered with `contents: write`, `pull_requests: write`, `actions: read` and
+organization `self_hosted_runners: write`, so the leg narrows its token to the
+least it needs:
+
+- `permission-contents: read` and no other `permission-*` input. Everything
+  the leg does is a read of repository contents: `check-pins.py --remote` calls
+  the commits, compare, `git/ref/tags` and releases endpoints, and Nix fetches
+  the pinned tree and its inputs as tarballs.
+- `repositories:` the repositories the owner's pins name
+  (`check-pins.py --list-repos --owner <owner>`): `reprobuild` for
+  metacraft-labs, `agent-harbor` for agent-harbor. Every other flake input the
+  pinned revisions evaluate is public.
+
+**The App is installed on the agent-harbor organization, limited to the
+repository `agent-harbor/agent-harbor`** (operator decision, 2026-11-24). The
+installation exists so this workflow can verify the revisions in
+`pins/agent-harbor.json` and `pins/agent-harbor-llm-proxy.json`; the workflow
+requests `contents: read` only. A pin naming another agent-harbor repository
+needs that repository added to the installation first, and
+`tools/test-check-pins.py` fails until it is.

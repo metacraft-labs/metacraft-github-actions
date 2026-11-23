@@ -137,6 +137,37 @@ class CheckPins(unittest.TestCase):
                   "--pins-dir", str(pins), "--owner", "nobody"], capture_output=True, text=True)
             self.assertEqual(done.returncode, 1)
 
+    def test_each_owners_repositories_are_listed_for_its_token(self):
+        # Each owner's token is limited to the repositories its pins name.
+        with tempfile.TemporaryDirectory() as tmp:
+            pins = pathlib.Path(tmp)
+            shutil.copy(ROOT / "pins" / "pin.schema.json", pins)
+            for name, owner, repo in (("demo", "b-owner", "zeta"), ("other", "a-owner", "solo"),
+                                      ("third", "b-owner", "alpha"), ("fourth", "b-owner", "zeta")):
+                (pins / f"{name}.json").write_text(
+                    json.dumps({**GOOD, "tool": name, "owner": owner, "repo": repo}))
+            def list_repos(*extra):
+                return subprocess.run(
+                    [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
+                      "--pins-dir", str(pins), "--list-repos", *extra],
+                    capture_output=True, text=True)
+            done = list_repos("--owner", "b-owner")
+            self.assertEqual((done.returncode, done.stdout), (0, "alpha,zeta\n"), done.stderr)
+            done = list_repos("--owner", "a-owner")
+            self.assertEqual((done.returncode, done.stdout), (0, "solo\n"), done.stderr)
+            self.assertEqual(list_repos("--owner", "nobody").returncode, 1)
+            self.assertEqual(list_repos().returncode, 2)
+            self.assertEqual(list_repos("--owner", "a-owner", "--remote").returncode, 2)
+
+    def test_the_real_pins_name_their_repositories(self):
+        # The agent-harbor installation of the CI token provider App covers
+        # agent-harbor/agent-harbor only (pins/README.md); a pin naming another
+        # agent-harbor repository must fail here, not as a 404 in the workflow.
+        done = subprocess.run(
+            [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
+              "--list-repos", "--owner", "agent-harbor"], capture_output=True, text=True)
+        self.assertEqual((done.returncode, done.stdout), (0, "agent-harbor\n"), done.stderr)
+
     def test_each_owner_gets_its_own_token(self):
         # The workflow mints one token per owner; a pin is checked with its
         # owner's token, handed to gh and nix only through the environment.

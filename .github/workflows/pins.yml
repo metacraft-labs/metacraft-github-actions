@@ -154,6 +154,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: The owner's pinned repositories
+        id: repos
+        env:
+          OWNER: ${{ matrix.owner }}
+        # An assignment, not `echo "repos=$(...)"`: `bash -e` ignores a failing
+        # substitution inside an argument, and an empty `repositories:` input
+        # mints a token for every repository of the owner's installation.
+        run: |
+          repos="$(python3 -I tools/check-pins.py --list-repos --owner "$OWNER")"
+          echo "repos=$repos" | tee -a "$GITHUB_OUTPUT"
+
+      # Least privilege (pins/README.md, "Tokens"): contents:read only, on the
+      # owner's pinned repositories only. Everything this leg does with the
+      # token reads contents: the commits, compare, git/ref, and releases
+      # API calls of check-pins.py, and Nix's tarball fetches through
+      # setup-nix. The App also carries write permissions; requesting one
+      # `permission-*` input drops every permission not requested. The flake
+      # inputs outside these repositories are public.
       - name: Mint a read token for the owner
         id: token
         uses: actions/create-github-app-token@v2
@@ -161,6 +179,8 @@ jobs:
           app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
           private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
+          repositories: ${{ steps.repos.outputs.repos }}
+          permission-contents: read
 
       - name: Setup Nix (this checkout's action)
         uses: ./setup-nix
