@@ -123,7 +123,8 @@ class ResolvePin(unittest.TestCase):
         bad = [
             ({**PIN, 'rev': PIN['rev'][:39]}, 'rev'),
             ({**PIN, 'rev': 'agents'}, 'rev'),
-            ({**PIN, 'rev': PIN['rev'].upper()}, 'rev'),
+            # A fixed SHA with letters: the pin's own rev may have none.
+            ({**PIN, 'rev': OTHER.upper()}, 'rev'),
             ({**PIN, 'repo': 'other'}, 'not metacraft-labs/reprobuild'),
             ({**PIN, 'schema': 2}, 'schema'),
             ({**PIN, 'kind': 'branch'}, 'kind'),
