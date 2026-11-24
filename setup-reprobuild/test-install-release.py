@@ -212,6 +212,63 @@ class ReleaseSelection(unittest.TestCase):
             self.assertNotIn(':-latest}', source, manifest)
         self.assertNotIn(':-latest}', (HERE / 'install-release.sh').read_text())
 
+    def test_parent_names_a_setup_reprobuild_that_reads_the_pin(self):
+        # setup-dev-env runs setup-reprobuild at a fixed commit of this
+        # repository. That commit must be in this history, carry the pin and
+        # its resolver, keep no revision default, and accept every input the
+        # parent forwards; an older commit installs the pre-pin default the
+        # moment the parent's selection is empty, and silently drops inputs
+        # it does not declare. Reading it needs the full history
+        # (`fetch-depth: 0`); a shallow clone fails here instead of skipping.
+        parent = (HERE.parent / 'setup-dev-env' / 'action.yml').read_text()
+        step = parent.split('    - name: Install the repro CLI (reprobuild)\n', 1)[1]
+        step = step.split('    # ------------------------------------------------------------------', 1)[0]
+        sha = re.search(r'(?m)^      uses: metacraft-labs/metacraft-github-actions/'
+                        r'setup-reprobuild@([0-9a-f]{40})$', step).group(1)
+
+        def git(*args):
+            return subprocess.run(['git', '-C', str(REPO), *args],
+                                  text=True, capture_output=True, timeout=30)
+
+        exists = git('cat-file', '-e', sha + '^{commit}')
+        self.assertEqual(
+            exists.returncode, 0,
+            f'setup-reprobuild@{sha} is not in this clone; a shallow '
+            f'checkout cannot run this check (use fetch-depth: 0)')
+        self.assertEqual(
+            git('merge-base', '--is-ancestor', sha, 'HEAD').returncode, 0,
+            f'setup-reprobuild@{sha} is not in the history of HEAD')
+        for path in ('pins/reprobuild.json', 'setup-reprobuild/resolve-reprobuild-pin.sh'):
+            self.assertEqual(
+                git('cat-file', '-e', f'{sha}:{path}').returncode, 0,
+                f'setup-reprobuild@{sha} has no {path}')
+        leaf = git('show', f'{sha}:setup-reprobuild/action.yml')
+        self.assertEqual(leaf.returncode, 0, leaf.stderr)
+        leaf = leaf.stdout
+        for name in ('repro-version', 'repro-build-pin'):
+            block = re.search(r'^  ' + name + r':\n(.*?)(?=^  [a-z]|^outputs:|^runs:)',
+                              leaf, re.MULTILINE | re.DOTALL)
+            self.assertIsNotNone(block, (sha, name))
+            self.assertIn('    default: ""\n', block.group(1), (sha, name))
+        self.assertNotIn(':-dev}', leaf, sha)
+        self.assertNotIn(':-latest}', leaf, sha)
+        self.assertIn('resolve-reprobuild-pin.sh', leaf, sha)
+        inputs = leaf.split('\ninputs:\n', 1)[1].split('\noutputs:\n', 1)[0].split('\nruns:\n', 1)[0]
+        declared = set(re.findall(r'(?m)^  ([a-z][a-z0-9-]*):$', inputs))
+        with_block = step.split('      with:\n', 1)[1].split('\n    - name: ', 1)[0]
+        forwarded = re.findall(r'(?m)^        ([a-z][a-z0-9-]*): ', with_block)
+        self.assertTrue(forwarded)
+        for name in forwarded:
+            self.assertIn(name, declared, f'setup-reprobuild@{sha} has no input {name}')
+
+    def test_sdk_dependency_provisioner_chooses_no_reprobuild_revision(self):
+        # reprobuild-provision follows the checkout setup-reprobuild selected;
+        # an input of its own would be a second default beside the pin.
+        source = (HERE.parent / 'reprobuild-provision' / 'action.yml').read_text()
+        inputs = source.split('\ninputs:\n', 1)[1].split('\nruns:\n', 1)[0]
+        for name in ('repro-version', 'repro-build-pin', 'reprobuild-ref', 'reprobuild-rev'):
+            self.assertNotRegex(inputs, r'(?m)^  ' + name + r':$')
+
     def test_parent_has_no_unconditional_sdk_dependency_provisioner(self):
         parent = (HERE.parent / 'setup-dev-env' / 'action.yml').read_text()
         self.assertNotRegex(parent, r'(?m)^\s+uses: metacraft-labs/'

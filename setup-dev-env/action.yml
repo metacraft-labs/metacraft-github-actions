@@ -1066,7 +1066,10 @@ runs:
     # setup-reprobuild named below is a fixed older commit of this repository,
     # so its own pin file is not the one the caller selected with `uses:`.
     # A pinned commit is forwarded as a source build of that commit, which
-    # every setup-reprobuild revision honours.
+    # every setup-reprobuild revision honours. That commit must still carry
+    # pins/reprobuild.json and no revision default of its own, so that nothing
+    # but this selection can choose the revision; setup-reprobuild's
+    # test-install-release.py checks it against this repository's history.
     - name: Select the Reprobuild revision (reprobuild)
       id: repro-pin
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
@@ -1082,7 +1085,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@a571c43b669b5c40fadfb0260d02119ed6ae7377
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@c155573136c3b8f3d7a8bbf23127f214c50e9264
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
