@@ -176,10 +176,12 @@ class ReleaseSelection(unittest.TestCase):
         step = step.split('    # ------------------------------------------------------------------', 1)[0]
         self.assertRegex(step, r'(?m)^      uses: metacraft-labs/'
                         r'metacraft-github-actions/setup-reprobuild@[0-9a-f]{40}$')
-        for child, source in [('repro-version', 'repro-version'),
-                              ('repro-build-pin', 'repro-build-pin'),
-                              ('from-source', 'repro-from-source'),
-                              ('sibling-owner', 'token-owner'),
+        # The revision is the parent's own pin selection, never the raw inputs.
+        for child, output in [('repro-version', 'release-version'),
+                              ('repro-build-pin', 'build-ref'),
+                              ('from-source', 'from-source')]:
+            self.assertIn('        ' + child + ': ${{ steps.repro-pin.outputs.' + output + ' }}\n', step)
+        for child, source in [('sibling-owner', 'token-owner'),
                               ('runquota-ref', 'repro-runquota-pin'),
                               ('io-mon-ref', 'repro-io-mon-pin'),
                               ('stackable-hooks-pin', 'repro-stackable-hooks-pin')]:
@@ -187,7 +189,28 @@ class ReleaseSelection(unittest.TestCase):
         parent_input = re.search(r'^  repro-version:\n(.*?)(?=^  [a-z])',
                                 parent, re.MULTILINE | re.DOTALL)
         self.assertIsNotNone(parent_input)
-        self.assertIn('    default: "latest"\n', parent_input.group(1))
+        self.assertIn('    default: ""\n', parent_input.group(1))
+        select = parent.split('    - name: Select the Reprobuild revision (reprobuild)\n', 1)[1]
+        select = select.split('    - name: ', 1)[0]
+        self.assertIn('../setup-reprobuild/resolve-reprobuild-pin.sh', select)
+        for name, source in [('REPRO_VERSION', 'repro-version'),
+                              ('REPRO_BUILD_PIN', 'repro-build-pin'),
+                              ('FROM_SOURCE', 'repro-from-source')]:
+            self.assertIn('        ' + name + ': ${{ inputs.' + source + ' }}\n', select)
+
+    def test_no_revision_default_remains(self):
+        # The pin is the only default: no `dev` branch and no `latest`
+        # release is chosen when the caller names nothing.
+        for manifest in (HERE / 'action.yml', HERE.parent / 'setup-dev-env' / 'action.yml'):
+            source = manifest.read_text()
+            for name in ('repro-version', 'repro-build-pin'):
+                block = re.search(r'^  ' + name + r':\n(.*?)(?=^  [a-z]|^outputs:|^runs:)',
+                                  source, re.MULTILINE | re.DOTALL)
+                self.assertIsNotNone(block, (manifest, name))
+                self.assertIn('    default: ""\n', block.group(1), (manifest, name))
+            self.assertNotIn(':-dev}', source, manifest)
+            self.assertNotIn(':-latest}', source, manifest)
+        self.assertNotIn(':-latest}', (HERE / 'install-release.sh').read_text())
 
     def test_parent_has_no_unconditional_sdk_dependency_provisioner(self):
         parent = (HERE.parent / 'setup-dev-env' / 'action.yml').read_text()
@@ -247,8 +270,7 @@ class ReleaseSelection(unittest.TestCase):
 
     def test_old_already_present_flag_cannot_override_selected_release(self):
         self.env.update(ALREADY_PRESENT='true', RELEASE_INSTALLED='true',
-                        RELEASE_BIN_DIR='/selected/package/bin', FROM_SOURCE='false',
-                        REPRO_BUILD_PIN='dev')
+                        RELEASE_BIN_DIR='/selected/package/bin', BUILD_REF='a' * 40)
         result = subprocess.run(['bash', '-c', step_body('Decide install path')],
                                 env=self.env, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -324,6 +346,13 @@ class ReleaseSelection(unittest.TestCase):
         self.assertIn('checksum MISMATCH', result.stderr)
         self.assertFalse(Path(self.env['REPRO_INSTALL_DIR']).exists())
 
+    def test_an_unnamed_release_is_refused_not_resolved_as_latest(self):
+        self.env.pop('REPRO_VERSION')
+        result = self.install()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('names no release', result.stderr)
+        self.assertNotIn('/releases/latest', self.requests)
+
     def test_missing_asset_retains_source_fallback_status(self):
         result = self.install()
         self.assertEqual(result.returncode, 3, result.stderr)
@@ -368,33 +397,65 @@ class ReleaseSelection(unittest.TestCase):
         self.assertIn('REPRO_RESOLVED_TAG=v1.2.3', lines)
         self.assertTrue(lines[-1].startswith('REPRO_BIN_DIR='), lines)
 
-    def test_source_fallback_builds_the_resolved_release_unless_pinned(self):
-        # An explicit pin wins, then the release this run resolved, then dev.
-        base = dict(ALREADY_PRESENT='', RELEASE_INSTALLED='false', RELEASE_BIN_DIR='',
-                    FROM_SOURCE='false', REPRO_VERSION='latest')
+    def test_source_fallback_builds_the_selected_ref_else_the_resolved_release(self):
+        # The selected ref wins, then the release this run resolved. With
+        # neither there is nothing to build: no branch default.
+        base = dict(RELEASE_INSTALLED='false', RELEASE_BIN_DIR='', REPRO_VERSION='latest')
         cases = (
             ('', 'v0.2.26', "'v0.2.26'"),
             ('a' * 40, 'v0.2.26', "'" + 'a' * 40 + "'"),
-            ('', '', "'dev'"),
         )
-        for pin, tag, expected in cases:
-            with self.subTest(pin=pin, tag=tag):
-                self.env.update(base, REPRO_BUILD_PIN=pin, RESOLVED_TAG=tag)
+        for ref, tag, expected in cases:
+            with self.subTest(ref=ref, tag=tag):
+                self.env.update(base, BUILD_REF=ref, RESOLVED_TAG=tag)
                 result = subprocess.run(['bash', '-c', step_body('Decide install path')],
                                         env=self.env, text=True, capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('source build of ' + expected, result.stdout)
+        self.env.update(base, BUILD_REF='', RESOLVED_TAG='',
+                        GITHUB_OUTPUT=str(self.root / 'refused-output'))
+        result = subprocess.run(['bash', '-c', step_body('Decide install path')],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('no revision was selected to build', result.stdout)
+        self.assertFalse(Path(self.env['GITHUB_OUTPUT']).exists())
         clone = step_body('Clone reprobuild source')
-        self.assertIn('REF="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"', clone)
+        self.assertIn('REF="${BUILD_REF:-${RESOLVED_TAG:-}}"', clone)
+        for step in ('Decide install path', 'Clone reprobuild source'):
+            self.assertIn('BUILD_REF: ${{ steps.pin.outputs.build-ref }}',
+                          '\n'.join(step_lines(step)))
 
-    def test_explicit_source_route_stays_source(self):
-        self.env.update(ALREADY_PRESENT='true', RELEASE_INSTALLED='',
-                        RELEASE_BIN_DIR='', FROM_SOURCE='true', REPRO_BUILD_PIN='a' * 40)
+    def test_selected_source_route_stays_source(self):
+        # A pinned commit selects no release; the build is the route, not a
+        # fallback, so it is a notice and not a warning.
+        self.env.update(RELEASE_INSTALLED='', RELEASE_BIN_DIR='', REPRO_VERSION='',
+                        BUILD_REF='a' * 40, ORIGIN='pin')
         result = subprocess.run(['bash', '-c', step_body('Decide install path')],
                                 env=self.env, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('install-source=source', Path(self.env['GITHUB_OUTPUT']).read_text())
-        self.assertIn('from-source=true', result.stdout)
+        self.assertIn('::notice::setup-reprobuild: building repro from source at '
+                      + 'a' * 40 + ' (pin)', result.stdout)
+        self.assertNotIn('::warning::', result.stdout)
+
+    def test_every_route_reads_the_selection_not_the_raw_inputs(self):
+        source = (HERE / 'action.yml').read_text()
+        self.assertLess(source.index('    - name: Select the Reprobuild revision\n'),
+                        source.index('    - name: Use the caller\'s prebuilt repro package\n'))
+        release = '\n'.join(step_lines('Install prebuilt repro CLI from GitHub Release'))
+        self.assertIn("if: ${{ steps.pin.outputs.release-version != '' && inputs.repro-package == '' }}", release)
+        self.assertIn('REPRO_VERSION: ${{ steps.pin.outputs.release-version }}', release)
+        package = '\n'.join(step_lines("Use the caller's prebuilt repro package"))
+        self.assertIn('REPRO_BUILD_PIN: ${{ steps.pin.outputs.build-ref }}', package)
+        for step in ('Install prebuilt repro CLI from GitHub Release', 'Decide install path',
+                      'Clone reprobuild source', "Use the caller's prebuilt repro package"):
+            body = '\n'.join(step_lines(step))
+            self.assertNotIn('inputs.repro-build-pin', body, step)
+            self.assertNotIn('inputs.repro-version', body, step)
+        check = '\n'.join(step_lines('Check the installed repro is the selected one'))
+        self.assertIn('check-installed-repro.sh', check)
+        self.assertGreater(source.index('    - name: Check the installed repro is the selected one'),
+                            source.index('    - name: Build repro CLI (Windows)'))
 
     def test_source_dependency_action_is_guarded_and_ordered(self):
         source = (HERE / 'action.yml').read_text()
@@ -444,7 +505,7 @@ class ReleaseSelection(unittest.TestCase):
 
     def test_release_decision_disables_source_dependencies(self):
         self.env.update(RELEASE_INSTALLED='true', RELEASE_BIN_DIR='/selected/package/bin',
-                        FROM_SOURCE='false', REPRO_BUILD_PIN='dev')
+                        BUILD_REF='a' * 40)
         result = subprocess.run(['bash', '-c', step_body('Decide install path')],
                                 env=self.env, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -453,7 +514,7 @@ class ReleaseSelection(unittest.TestCase):
     def test_real_no_asset_fallback_selects_source_dependencies(self):
         self.assertEqual(self.install().returncode, 3)
         self.env.update(RELEASE_INSTALLED='false', RELEASE_BIN_DIR='',
-                        FROM_SOURCE='false', REPRO_BUILD_PIN='dev')
+                        BUILD_REF='a' * 40)
         result = subprocess.run(['bash', '-c', step_body('Decide install path')],
                                 env=self.env, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)

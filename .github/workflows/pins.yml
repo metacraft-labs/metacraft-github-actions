@@ -1,0 +1,496 @@
+name: pins
+
+# Validates the tooling pins under pins/ (see pins/README.md) and gates every
+# change to them. A pin move is a deploy for every consumer that follows it:
+# every repository's CI installs the reprobuild pin through setup-reprobuild /
+# setup-dev-env, and infra, devops-modules and ~/dotfiles import the same
+# files. So a bad pin must fail here, before it merges, and not in a consumer.
+#
+# THE REQUIRED CHECK IS `pins-gate`. It is the only job a branch protection
+# rule (infra's governance, requiredStatusChecks for this repository) should
+# name. The workflow therefore runs on EVERY pull request and push, with no
+# workflow-level `paths:` filter: a required check that never reports blocks
+# every pull request that does not touch pins/. The `changes` job decides
+# which parts of the gate a change needs, the expensive jobs run only then,
+# and `pins-gate` accepts a skipped job only when `changes` said it was not
+# needed.
+#
+# What runs, and when:
+#   local               always: schema of every pin, the checker's and the
+#                       resolver's contract tests (stock runner, no secrets)
+#   remote              a pin changed: each rev exists in its repository,
+#                       the fetched tree matches narHash, every named package
+#                       exists, and rev qualifies as its `kind`; plus a
+#                       negative control proving a nonexistent commit fails
+#   reprobuild-package  the reprobuild pin or its readers changed: section 0
+#                       (`nix build` of the pinned package, Linux and macOS)
+#                       and section 0b (the binary reads the real workspace
+#                       manifests and answers the managed-hook contract) of
+#                       metacraft-pm how-to-distribute-new-reprobuild-versions-internally.md
+#   setup-reprobuild    the same changes: the action installs the pin with no
+#                       repro-build-pin on Linux, macOS and Windows, and an
+#                       explicit override installs the override
+#   resolver-windows    the same changes: the Windows pin reader
+#                       (ConvertFrom-Json) on a real Windows runner
+#
+# The remote, package and install jobs mint a CI token provider app token, so
+# they fail rather than pass on a fork's pull request, which receives no
+# secrets: a pin change must come from a branch of this repository.
+
+on:
+  push:
+    branches: [agents, dev]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    # Which parts of the gate this change needs: `git diff BASE..HEAD`, where
+    # BASE is the pull request's base commit or the push's `before`. A missing
+    # or all-zero BASE, a diff that fails, a schedule and a dispatch all count
+    # as changing everything.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      pins: ${{ steps.diff.outputs.pins }}
+      reprobuild: ${{ steps.diff.outputs.reprobuild }}
+      codetracer: ${{ steps.diff.outputs.codetracer }}
+      owners: ${{ steps.owners.outputs.owners }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -uo pipefail
+          files="$RUNNER_TEMP/changed-files"
+          all=false
+          case "$EVENT" in
+            pull_request | push)
+              if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+                all=true
+              elif ! git diff --name-only "$BASE..HEAD" > "$files"; then
+                echo "::warning::git diff $BASE..HEAD failed; treating every part as changed"
+                all=true
+              fi
+              ;;
+            *) all=true ;;
+          esac
+          [ -f "$files" ] || : > "$files"
+          echo "all=$all; changed files:"
+          cat "$files"
+          matches() {
+            "$all" || grep -Eq "$1" "$files"
+          }
+          workflow='^\.github/workflows/pins\.yml$'
+          pins=false reprobuild=false codetracer=false
+          if matches "^pins/|^flake\.nix$|^tools/check-pins\.py$|^tools/update-pin\.sh$|$workflow"; then pins=true; fi
+          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
+          if matches "^pins/codetracer\.json$|^\.github/workflows/codetracer-mac-lock\.yml$|^tools/codetracer-mac-lock\.py$"; then codetracer=true; fi
+          printf 'pins=%s\nreprobuild=%s\ncodetracer=%s\n' "$pins" "$reprobuild" "$codetracer" | tee -a "$GITHUB_OUTPUT"
+      - id: owners
+        # The owners the pins name: the remote job mints one token for each.
+        run: echo "owners=$(python3 -I tools/check-pins.py --list-owners)" | tee -a "$GITHUB_OUTPUT"
+
+  local:
+    # Stock runner, Python standard library only: no Nix, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Tests of the checker
+        run: python3 -I tools/test-check-pins.py
+      - name: Tests of section 0b's repro-workspace branch selection
+        run: python3 -I tools/test-workspace-manifest-branches.py
+      - name: Every pin satisfies the schema
+        run: python3 -I tools/check-pins.py
+      - name: The setup actions' pin resolver and installed-CLI check
+        # pwsh is on every hosted runner; REQUIRE_PWSH makes the Windows
+        # reader's cases run here too instead of skipping.
+        run: REQUIRE_PWSH=1 python3 -I setup-reprobuild/test-resolve-reprobuild-pin.py
+
+  resolver-windows:
+    needs: changes
+    if: ${{ needs.changes.outputs.reprobuild == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: The pin resolver through Git Bash and the native PowerShell reader
+        shell: bash
+        run: REQUIRE_PWSH=1 python setup-reprobuild/test-resolve-reprobuild-pin.py
+
+  remote:
+    # One leg per owner the pins name, each with a CI token provider app
+    # token for that owner; a new pin's owner needs no workflow change.
+    needs: [changes, local]
+    if: ${{ needs.changes.outputs.pins == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        owner: ${{ fromJSON(needs.changes.outputs.owners) }}
+    name: remote (${{ matrix.owner }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: The owner's pinned repositories
+        id: repos
+        env:
+          OWNER: ${{ matrix.owner }}
+        # An assignment, not `echo "repos=$(...)"`: `bash -e` ignores a failing
+        # substitution inside an argument, and an empty `repositories:` input
+        # mints a token for every repository of the owner's installation.
+        run: |
+          repos="$(python3 -I tools/check-pins.py --list-repos --owner "$OWNER")"
+          echo "repos=$repos" | tee -a "$GITHUB_OUTPUT"
+
+      # Least privilege (pins/README.md, "Tokens"): contents:read only, on the
+      # owner's pinned repositories only. Everything this leg does with the
+      # token reads contents: the commits, compare, git/ref, and releases
+      # API calls of check-pins.py, and Nix's tarball fetches through
+      # setup-nix. The App also carries write permissions; requesting one
+      # `permission-*` input drops every permission not requested. The flake
+      # inputs outside these repositories are public.
+      - name: Mint a read token for the owner
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+          repositories: ${{ steps.repos.outputs.repos }}
+          permission-contents: read
+
+      - name: Setup Nix (this checkout's action)
+        uses: ./setup-nix
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+          token-owner: ${{ matrix.owner }}
+
+      - name: The revisions exist, hash as pinned, name real packages and qualify as their kind
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          OWNER: ${{ matrix.owner }}
+        run: python3 -I tools/check-pins.py --remote --owner "$OWNER"
+
+      - name: "Negative control: a pin naming a nonexistent commit fails"
+        if: ${{ matrix.owner == 'metacraft-labs' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -uo pipefail
+          control="$(mktemp -d)"
+          cp pins/pin.schema.json "$control/"
+          python3 -I - pins/reprobuild.json "$control/reprobuild.json" <<'PY'
+          import json, sys
+          pin = json.load(open(sys.argv[1]))
+          pin['rev'] = '0' * 39 + '1'
+          json.dump(pin, open(sys.argv[2], 'w'))
+          PY
+          # The step shell is `bash -e`: capture the expected failure.
+          status=0
+          python3 -I tools/check-pins.py --remote --pins-dir "$control" > "$control/out" 2>&1 || status=$?
+          cat "$control/out"
+          [ "$status" -eq 1 ] && grep -q 'was not found in metacraft-labs/reprobuild' "$control/out"
+
+  reprobuild-package:
+    # Sections 0 and 0b of the distribution guide, on each OS we distribute
+    # to. macOS runs on the hosted arm64 image; the darwin postFixup
+    # (install_name_tool, lipo, signing) is invisible from Linux.
+    needs: [changes, local]
+    if: ${{ needs.changes.outputs.reprobuild == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Mint a read token for metacraft-labs
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+
+      - name: Setup Nix
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
+        with:
+          nix-github-token: ${{ steps.token.outputs.token }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+
+      - name: "Section 0: the pinned package builds"
+        id: build
+        run: |
+          set -euo pipefail
+          # Through the flake output `pins`, the way Nix consumers read it; it
+          # must agree with the JSON file the setup actions read.
+          ref="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.flakeRef)"
+          rev="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.rev)"
+          test "$rev" = "$(python3 -I -c 'import json; print(json.load(open("pins/reprobuild.json"))["rev"])')"
+          case "$ref" in "github:metacraft-labs/reprobuild/$rev?narHash="*) ;; *) echo "unexpected flakeRef $ref"; exit 1 ;; esac
+          echo "building $ref#default"
+          out="$(nix build --no-link --print-out-paths "$ref#default")"
+          echo "$out"
+          "$out/bin/repro" --version
+          version="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.version)"
+          test "$("$out/bin/repro" --version)" = "repro $version"
+          echo "repro=$out/bin/repro" >> "$GITHUB_OUTPUT"
+
+      # Section 0b reads the manifests on every repro-workspace branch people
+      # use. The workspace root is migrating from `dev`/`agents` to a single
+      # mainline `latest`, so the set is whichever of `latest`, `dev` and
+      # `agents` exists; `agents` is already gone, and when `dev` goes too the
+      # check keeps running on `latest` alone. `latest` missing, or none of
+      # them existing, fails the job instead of checking less or nothing.
+      # tools/workspace-manifest-branches.py holds the rule and its reasons.
+      - name: Which repro-workspace branches carry manifests
+        id: branches
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # The token reaches git through process-scoped configuration, never
+          # through a URL or argv; the base64 form is masked like the token.
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          heads="$(mktemp)"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/metacraft-labs/repro-workspace.extraHeader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git ls-remote --heads https://github.com/metacraft-labs/repro-workspace > "$heads"
+          python3 -I tools/workspace-manifest-branches.py --heads "$heads" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Check out the workspace manifests (latest)
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/repro-workspace
+          ref: latest
+          path: .workspaces/latest
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+
+      - name: Check out the workspace manifests (dev)
+        if: ${{ steps.branches.outputs.dev == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/repro-workspace
+          ref: dev
+          path: .workspaces/dev
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+
+      - name: Check out the workspace manifests (agents)
+        if: ${{ steps.branches.outputs.agents == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/repro-workspace
+          ref: agents
+          path: .workspaces/agents
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: false
+
+      - name: "Section 0b: the binary fits the workspace, with its negative controls"
+        env:
+          REPRO: ${{ steps.build.outputs.repro }}
+          BRANCHES: ${{ steps.branches.outputs.branches }}
+        run: |
+          set -euo pipefail
+          case " $BRANCHES " in *" latest "*) ;; *) echo "no latest in '$BRANCHES'"; exit 1 ;; esac
+          for branch in $BRANCHES; do
+            echo "::group::repro-workspace $branch at $(git -C ".workspaces/$branch" rev-parse HEAD)"
+            python3 -I tools/test-check-reprobuild-fits-workspace.py \
+              --repro "$REPRO" --workspace ".workspaces/$branch" -v
+            echo "::endgroup::"
+          done
+
+  setup-reprobuild:
+    # stp1_setup_reprobuild_installs_the_pinned_commit: the action, from this
+    # checkout, installs the pin when the caller names nothing, and installs
+    # the override when the caller names one.
+    needs: [changes, local]
+    if: ${{ needs.changes.outputs.reprobuild == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, case: pin }
+          - { os: macos-15, case: pin }
+          - { os: windows-2025, case: pin }
+          - { os: ubuntu-24.04, case: release-override, repro-version: v0.2.31 }
+          - { os: macos-15, case: release-override, repro-version: v0.2.31 }
+          - { os: windows-2025, case: release-override, repro-version: v0.2.31 }
+          # v0.2.31's commit on reprobuild agents, built from source.
+          - {
+              os: ubuntu-24.04,
+              case: build-override,
+              repro-build-pin: 7618e3cb21ce17f5c86fbd290f501d60d52e9be1,
+            }
+    name: setup-reprobuild (${{ matrix.case }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Mint a read token for metacraft-labs
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+
+      - name: Install repro (no repro-build-pin for the pin case)
+        id: repro
+        uses: ./setup-reprobuild
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          repro-version: ${{ matrix.repro-version || '' }}
+          repro-build-pin: ${{ matrix.repro-build-pin || '' }}
+
+      - name: The installed repro is the selected one
+        shell: bash
+        env:
+          CASE: ${{ matrix.case }}
+          ORIGIN: ${{ steps.repro.outputs.origin }}
+          VERSION: ${{ steps.repro.outputs.version }}
+          COMMIT: ${{ steps.repro.outputs.commit }}
+          INSTALL_SOURCE: ${{ steps.repro.outputs.install-source }}
+        run: |
+          set -euo pipefail
+          echo "case=$CASE origin=$ORIGIN version=$VERSION commit=$COMMIT install-source=$INSTALL_SOURCE"
+          repro --version
+          # Windows images have `python`, not `python3`.
+          python="$(command -v python3 || command -v python)"
+          pin_version="$("$python" -I -c 'import json; print(json.load(open("pins/reprobuild.json"))["version"])' | tr -d '\r')"
+          pin_rev="$("$python" -I -c 'import json; print(json.load(open("pins/reprobuild.json"))["rev"])' | tr -d '\r')"
+          case "$CASE" in
+            pin)
+              test "$ORIGIN" = pin
+              test "$VERSION" = "$pin_version"
+              test "$COMMIT" = "$pin_rev"
+              test "$INSTALL_SOURCE" = source
+              ;;
+            release-override)
+              test "$ORIGIN" = override
+              test "$VERSION" = 0.2.31
+              test "$INSTALL_SOURCE" = release
+              ;;
+            build-override)
+              test "$ORIGIN" = override
+              test "$VERSION" = 0.2.31
+              test "$COMMIT" = 7618e3cb21ce17f5c86fbd290f501d60d52e9be1
+              test "$INSTALL_SOURCE" = source
+              ;;
+            *) exit 1 ;;
+          esac
+          test "$(repro --version | tr -d '\r')" = "repro $VERSION"
+
+  # ── Plug-in point for the CodeTracer pin (STP3) ───────────────────────────
+  # The reusable workflow .github/workflows/codetracer-mac-lock.yml solves and
+  # checks CodeTracer's aarch64-darwin lock on an arm64 macOS runner. It is
+  # not on this branch yet, and a `uses:` naming a missing local file breaks
+  # this whole workflow, so the job stays commented out until that file
+  # lands. To plug it in: uncomment the job below and add
+  # `codetracer-mac-lock` to `pins-gate`'s `needs`. The gate already knows
+  # the job (REQUIRED below) and checks its `outcome` output; until then it
+  # fails any change that touches the CodeTracer files.
+  #
+  # codetracer-mac-lock:
+  #   needs: changes
+  #   if: ${{ needs.changes.outputs.codetracer == 'true' }}
+  #   uses: ./.github/workflows/codetracer-mac-lock.yml
+  #   secrets: inherit
+
+  pins-gate:
+    # THE REQUIRED CHECK. Always reports. A needed job must have succeeded; a
+    # job that was not needed must have been skipped (or succeeded). Every job
+    # in `needs` is judged, so a job added there and not to REQUIRED fails.
+    name: pins-gate
+    needs:
+      [
+        changes,
+        local,
+        resolver-windows,
+        remote,
+        reprobuild-package,
+        setup-reprobuild,
+      ]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ['NEEDS'])
+          changes = needs.get('changes', {}).get('outputs', {})
+          flag = lambda name: changes.get(name) == 'true'
+          # Job id -> whether this change needs it.
+          REQUIRED = {
+              'changes': True,
+              'local': True,
+              'resolver-windows': flag('reprobuild'),
+              'remote': flag('pins'),
+              'reprobuild-package': flag('reprobuild'),
+              'setup-reprobuild': flag('reprobuild'),
+              'codetracer-mac-lock': flag('codetracer'),
+          }
+          failed = False
+          for job, state in sorted(needs.items()):
+              result = state.get('result', 'missing')
+              if job not in REQUIRED:
+                  print(f'FAIL {job}: in needs but not in REQUIRED'); failed = True; continue
+              ok = result == 'success' or (not REQUIRED[job] and result == 'skipped')
+              print(f"{'ok  ' if ok else 'FAIL'} {job}: {result} (needed: {REQUIRED[job]})")
+              failed = failed or not ok
+          for job in ('changes', 'local'):
+              if job not in needs:
+                  print(f'FAIL {job}: missing from needs'); failed = True
+          # A CodeTracer change needs the lock job: until the job above is
+          # plugged in, such a change cannot pass.
+          if flag('codetracer') and 'codetracer-mac-lock' not in needs:
+              print('FAIL codetracer-mac-lock: the CodeTracer pin changed, but the job is not in needs')
+              failed = True
+          # The CodeTracer lock job reports whether it actually solved.
+          if 'codetracer-mac-lock' in needs and flag('codetracer'):
+              outcome = needs['codetracer-mac-lock'].get('outputs', {}).get('outcome', '')
+              if outcome == 'skipped':
+                  print('FAIL codetracer-mac-lock: outcome skipped although pins/codetracer.json changed')
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY

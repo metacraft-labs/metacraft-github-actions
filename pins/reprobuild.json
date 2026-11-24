@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "tool": "reprobuild",
+  "owner": "metacraft-labs",
+  "repo": "reprobuild",
+  "rev": "d1bf1f065aca01b90c3bbdddc57d14e977f49e1a",
+  "narHash": "sha256-bpyBLWPK6k+8aI1AHpMZW4kuDH54251bja5lMCQaWz8=",
+  "version": "0.2.34",
+  "kind": "agents-commit",
+  "attrs": {
+    "repro": "default"
+  }
+}

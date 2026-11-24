@@ -110,6 +110,18 @@ def path_tool_case(root, installer, install_env, env, run, bash, expect_old):
     return row
 
 
+def runquota_companions(repro):
+    """The RunQuota daemon and client that belong to the Windows CLI.
+
+    A release bundle carries them beside the CLI. A source build
+    (setup-reprobuild's Windows route) builds them from the selected RunQuota
+    and names them in RUNQUOTAD_BIN and RUNQUOTA_BIN."""
+    daemon, client = repro.with_name('runquotad.exe'), repro.with_name('runquota.exe')
+    if not daemon.is_file() and not client.is_file():
+        daemon = Path(os.environ.get('RUNQUOTAD_BIN', daemon))
+        client = Path(os.environ.get('RUNQUOTA_BIN', client))
+    return daemon, client
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repro', type=Path, required=True)
@@ -191,8 +203,7 @@ def main():
                 # Reuse the native fixture's private-pipe identity check. Never
                 # adopt or terminate a runner daemon, or leave an owned daemon
                 # holding the temporary consumer's directory during cleanup.
-                daemon_exe = repro.with_name('runquotad.exe')
-                quota_exe = repro.with_name('runquota.exe')
+                daemon_exe, quota_exe = runquota_companions(repro)
                 if not daemon_exe.is_file() or not quota_exe.is_file():
                     raise RuntimeError('the real SDK RunQuota companions are required')
                 endpoint = r'\\.\pipe\gha-cwd-' + uuid.uuid4().hex
@@ -338,8 +349,8 @@ def main():
                 code, output, error = run([
                     sys.executable, str(HERE / 'test-windows-cmd-status.py'),
                     '--action-yml', str(args.action_yml.resolve()), '--repro', str(repro),
-                    '--runquotad', str(repro.with_name('runquotad.exe')),
-                    '--runquota', str(repro.with_name('runquota.exe')),
+                    '--runquotad', str(runquota_companions(repro)[0]),
+                    '--runquota', str(runquota_companions(repro)[1]),
                     '--consumer', str(consumer), '--profile-input', str(consumer / 'repro.nim'),
                     '--report', str(args.report.with_name('native-status-result.json'))], consumer, env)
                 if code:

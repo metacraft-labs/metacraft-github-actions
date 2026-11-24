@@ -57,23 +57,22 @@ jobs:
 ### CI runs the fleet's Reprobuild
 
 When a repository's CI installs Reprobuild through this action, the revision
-must be the fleet pin: the `reprobuild` input that
-[devops-modules](https://github.com/metacraft-labs/devops-modules) (consumed
-as the flake input `nixos-modules`) records in its `flake.lock`. Set
-`repro-from-source: "true"` and pass that full 40-hex commit SHA as
-`repro-build-pin`, as a literal with a comment naming devops-modules as its
-source. Every leg, Windows included, then builds that revision from source.
+is the fleet pin: [`pins/reprobuild.json`](../pins/README.md) in the checkout
+of this action the workflow names in `uses:`. That is the default, so leave
+`repro-version`, `repro-build-pin` and `repro-from-source` unset. The same file
+is what devops-modules, infra, `~/dotfiles` and the workspace dev shells
+install, so CI tests the engine the machines run. A pinned commit on
+reprobuild `dev` or `agents` is built from source on every leg, Windows
+included; a pinned release is installed from its archive. The step
+"Check the installed repro is the selected one" then requires `repro --version`
+to report the pin's version and a source build to be at the pinned commit.
 Leave `repro-runquota-pin`, `repro-io-mon-pin` and `repro-stackable-hooks-pin`
-empty, or set them to the entries the pinned revision's own `flake.lock`
-records. Do not pass a release tag, `latest` or a branch.
+empty: the source build then uses the entries the pinned revision's own
+`flake.lock` records.
 
-The reason is one engine for the fleet and CI. The machines we build and
-develop on run the Reprobuild that this pin installs. A job that installs a
-release or a branch tip tests a different engine, so its result says nothing
-about the one in use, and a defect fixed or introduced in one shows up only in
-the other. When the pin moves, each workflow's literal moves with it. The pin
-will later move into this repository as `pins/reprobuild.json` on `dev`;
-until then devops-modules is the source.
+`repro-build-pin` (a revision, preferably a full commit SHA) and
+`repro-version` (a release tag) remain as explicit overrides, for testing a
+change that is not pinned yet. There is no branch, `dev` or `latest` default.
 
 A Linux or macOS leg that already builds the pinned engine as a Nix package
 (`nix build github:metacraft-labs/reprobuild/<pin>#reprobuild`, for example
@@ -85,18 +84,15 @@ of another revision, system or package fails the job. Without
 `repro-package` the leg source-builds the pin a second time, which costs
 20-40 minutes and yields an engine the receipts do not describe.
 
-The release route below remains available, but fleet repositories' CI does
-not use it.
-
 ### Reprobuild release selection
 
-`repro-version` selects a release tag (for example `v0.2.10`) or `latest`
-(the default) whenever the reprobuild flavor or repro-lock strategy installs
+`repro-version` overrides the pin with a release tag (for example
+`v0.2.10`) whenever the reprobuild flavor or repro-lock strategy installs
 Reprobuild. An ambient CLI never overrides the requested release. The shared
 installer checks the downloaded archive and its reported release version;
 this selection check alone does not qualify complete SDK or warm-store reuse.
 Set `repro-from-source: true` to choose the source route instead; that route
-ignores `repro-version` and uses the source inputs below.
+builds `repro-build-pin`, else the tag `repro-version` names, else the pin.
 
 For the reprobuild flavor, setup performs the first use of the real consumer's
 development environment before installing `dev-exec`: `repro exec` must run a
@@ -109,7 +105,7 @@ environment path, including the existing lock-schema checks for `repro-lock`.
 
 ### Source-built Reprobuild inputs
 
-`repro-build-pin` chooses the Reprobuild source revision. Empty (the default) builds the release that `repro-version` resolved, or `dev` when none was resolved.
+`repro-build-pin` overrides the Reprobuild source revision. Empty (the default) builds the pinned commit; with only `repro-version` given, a platform without its archive builds the release it resolved.
 Its source dependencies follow it: RunQuota (including the Windows bootstrap
 lease daemon) and, on Windows, io-mon, nim-stackable-hooks and the other
 env.ps1 siblings are cloned at the revisions that Reprobuild revision's
@@ -572,8 +568,9 @@ replace the earlier installation's selected project.
 ### Wrapper contract tests
 
 The existing `test.yml` workflow enrolls the real wrapper contract on Linux
-and native Windows using the verified `v0.2.35` release installer. A missing
-baseline fails the test; it does not build an SDK or skip the contract.
+and native Windows against the pinned Reprobuild (`pins/reprobuild.json`),
+installed by this checkout's setup-reprobuild. A failed install fails the
+test; it does not fall back to another CLI or skip the contract.
 Windows executes the generated Bash, PowerShell and CMD wrappers and the
 existing native CMD status controls. Linux results do not qualify Windows.
 
