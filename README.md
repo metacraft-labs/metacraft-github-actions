@@ -271,6 +271,136 @@ jobs:
 Outputs: `status` (`unchanged`, `would-refresh`, `refreshed`, `refused`),
 `changed`, and `branch`.
 
+## The CodeTracer pin and its Apple Silicon lock
+
+`pins/codetracer.json` is the one CodeTracer revision that other repositories
+consume: blocktracer's embedded SDK, reprobuild's `codetracer-src` and the
+dotfiles' `codetracer` input. The pin format is in `pins/README.md`.
+CodeTracer itself is not a consumer. Its own flake keeps its own independently
+locked Reprobuild cohort, and nothing here changes that.
+
+The first pin is `a7cddd8bce554f5d73a7636e2bad15605b71963c`, a commit on
+CodeTracer `dev` (`"kind": "dev-commit"`). The pin format requires `version`
+together with `kind`. Here `version` is `26.10.1`, the version CodeTracer
+reports at that revision: `CodeTracerVersionStr` in its `src/ct/version.nim`
+(`CodeTracerYear` 26, `CodeTracerMonth` 10, `CodeTracerBuild` 1), which is what
+`ct --version` prints. Its `narHash` is what
+`nix flake prefetch github:metacraft-labs/codetracer/<rev> --json` reports.
+A `github:` tree has no submodules, so a consumer that needs CodeTracer's
+submodules must fetch them separately.
+
+The pin is not `a3986b0de1`, the revision blocktracer built against. That
+revision's `repro.lock` pins `codetracer-image-diff` at `e002498eac`, a commit
+that no longer exists on GitHub after that repository's history was rewritten.
+CodeTracer `c2481fc45` repinned it. The macOS job failed on `a3986b0de1` while
+it was provisioning the siblings, after the engine build and before the solve,
+so the gate could never pass with that revision. The `plan` job now refuses
+such a revision on Linux in seconds (below).
+
+CodeTracer commits two solves: `repro.lock` (amd64-linux) and
+`locks/arm64-macosx.lock`. Reprobuild solves a lock only for the platform it
+runs on, so the darwin lock can be produced only on an Apple Silicon host. The
+reusable workflow `.github/workflows/codetracer-mac-lock.yml` does that on a
+GitHub-hosted arm64 macOS runner (`macos-26`), never on a fleet Mac. The `pins`
+workflow calls it, with no inputs, only when `pins/codetracer.json`, the
+workflow or `tools/codetracer-mac-lock.py` changed in a pull request, or in a
+push that no pull request run already proved; never on the weekly schedule,
+and on a manual dispatch of `pins` only when its `codetracer-mac-lock` input
+asks (pins/README.md, "When the CodeTracer lock job runs"). It runs three
+jobs:
+
+1. `plan` runs on Linux. It refuses a malformed revision, and one that does
+   not exist or has no `locks/arm64-macosx.lock`. It also reads the Reprobuild
+   revision that CodeTracer's own `flake.lock` pins. Then, when credentials
+   are available, it checks that every sibling revision named in
+   `repro.lock` and `locks/arm64-macosx.lock` still exists on GitHub
+   (`tools/codetracer-mac-lock.py siblings`). The self entry is skipped. The
+   recipe-pinned siblings are checked too, because they appear in the locks.
+   Each revision is looked up with `GET /repos/<owner>/<repo>/commits/<sha>`.
+   Some siblings are private, so the lookup uses a read-only CI token
+   provider token, held only in `GH_TOKEN` and sent only as a header, and
+   only to `api.github.com`. A lock with no readable sibling entries is
+   refused rather than passed.
+   - GitHub answers 422 "No commit found" for a revision it does not have.
+     The outcome is then `invalid-pin`, and the message names each missing
+     `sibling@rev`. At `a3986b0de1` this names
+     `codetracer-image-diff@e002498eac522ccc90c1dab4800e0b934bdc72fd`.
+   - Any other answer means the revision could not be checked: no access, a
+     deleted or renamed repository, or a server or network error after three
+     tries. The outcome is then `unverified`, and the check fails as well.
+   - Without credentials the check does not run, and the run is `skipped`,
+     which fails.
+2. `solve` runs on macOS:
+   - It builds that Reprobuild exactly as CodeTracer's dev shell does, as the
+     `reprobuild` input of `builtins.getFlake "github:metacraft-labs/codetracer/<rev>"`.
+     It also takes the `reprobuild-packages` catalog that shell exports.
+   - It puts every sibling at `repro.lock`'s revisions with
+     `repro develop --all --reset`. Some of those siblings are private, so the
+     clones are authenticated with a CI token provider token passed through
+     `git-auth/scoped-git-auth.sh`.
+   - `--all` skips each sibling that a recipe pins to an exact revision, and
+     `lock refresh` refuses while any sibling is missing. So the job takes
+     the names that `develop` reports as `pinned by recipe` and places them
+     with a second `repro develop --all --only=<those> --reset`. The names
+     are recorded in `result.json` as `recipe_pinned`.
+   - It runs
+     `repro lock refresh . --lock locks/arm64-macosx.lock --platform=arm64-macosx`.
+     The committed darwin lock can pin a sibling at a different revision from
+     `repro.lock`. In that case the refresh would refuse to move the pin
+     "backward" to `repro.lock`'s revision. So exactly those siblings are
+     passed as `--allow-pin-regression`, and they are recorded in
+     `result.json` as `pin_regressions_allowed`. At `a7cddd8bc` there are six
+     of them. The refresh still refuses any other regression.
+   - It checks the result: the platform is `arm64-macosx`, every dependency
+     revision equals `repro.lock`'s, and `reprobuild` and `reprobuild-packages`
+     equal `flake.lock`'s. When the revision carries CodeTracer's own
+     `scripts/check-platform-lock-pins.sh`, it runs that as well.
+   - It uploads the solved lock, the committed lock, the log and `result.json`
+     as the artifact `codetracer-arm64-macosx-lock-<rev>`.
+3. `result` always runs and reports one of these outcomes:
+   - `confirmed`: the solve equals the committed darwin lock, apart from its
+     `self` entry.
+   - `produced`: the solve differs. The artifact is the new lock.
+   - `unsolvable`, `failed-checks`, `invalid-pin`, `unverified` or `failed`.
+   - `skipped`: no credentials were available, as in a fork's pull request.
+     Nothing was verified, so it fails too.
+
+   `confirmed` and `produced` pass. Every other outcome fails, and
+   `pins-gate` checks the outcome itself as well as the job's result. This job
+   never pushes to CodeTracer. A produced lock reaches CodeTracer only through
+   CodeTracer's own process.
+
+To bump the pin:
+
+1. Pick a commit on CodeTracer `dev`.
+2. Rewrite `rev` and `narHash` (the prefetch command above), and `version`
+   to what `src/ct/version.nim` gives at the new revision. Keep `kind`
+   `dev-commit`. Change nothing else.
+3. Open a pull request. The pins gate runs the macOS solve.
+4. If the outcome is `produced`, commit the artifact's `arm64-macosx.lock` to
+   CodeTracer as `locks/arm64-macosx.lock` through a CodeTracer pull request.
+   Do this before the consumers move.
+
+A bump is a deploy for every consumer, so it needs a review from the consuming
+repositories' owners.
+
+To run the solve by hand, use **Actions → codetracer-mac-lock → Run workflow**:
+
+- With `rev` set, it solves any CodeTracer commit.
+- With `expect: fail` and `negative-control: true`, it is the negative
+  control. `"bash <4"` is added after the siblings are provisioned, next to
+  the `"bash >=4"` CodeTracer declares. The run passes only if
+  the solver itself reports UNSAT. That is either `repro lock refresh`'s own
+  `solver UNSAT` (exit 3), or the solver's `[EUnsatisfiable]` raised by the
+  recipe's interface extraction, which is how CodeTracer fails. Any other
+  failure does not count, including one in provisioning or the engine build.
+  A floor alone such as `"bash >=99999"` would not work as a control: the
+  solver grounds a constraint with no upper bound at its floor, so that
+  constraint solves.
+
+The Linux half of the tool is tested by `python3 -I tools/test-codetracer-mac-lock.py`,
+which `tools/lint.sh` and the `test` workflow both run.
+
 ## Contributor hooks on POSIX
 
 Authorize the repository-local pinned SDK with `direnv allow`, then run commands

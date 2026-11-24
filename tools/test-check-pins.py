@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -253,6 +254,327 @@ class CheckPins(unittest.TestCase):
     def test_an_empty_directory_is_a_usage_error(self):
         code, _ = self.run_with()
         self.assertEqual(code, 2)
+
+
+WORKFLOW = ROOT / ".github" / "workflows" / "pins.yml"
+
+
+def workflow_job(workflow, job):
+    """The text of the pins.yml job `job`, up to the next job."""
+    start = workflow.index(f"\n  {job}:\n") + 1
+    end = workflow.find("\n  ", start + 1)
+    while end >= 0 and workflow[end + 3] in " #":
+        end = workflow.find("\n  ", end + 1)
+    return workflow[start:] if end < 0 else workflow[start:end]
+
+
+def gate_script(workflow):
+    """The Python `pins-gate` runs, exactly as the step's heredoc holds it."""
+    step = workflow_step(workflow, "Every needed job passed")
+    body = step[step.index("<<'PY'\n") + len("<<'PY'\n"):step.index("\n          PY")]
+    return textwrap.dedent(body) + "\n"
+
+
+class PinsGate(unittest.TestCase):
+    """The `pins-gate` step's own Python, run on the `needs` context Actions
+    would hand it. The script is executed as written in pins.yml, so a change
+    to the gate is what these cases measure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = WORKFLOW.read_text()
+        cls.script = gate_script(cls.workflow)
+
+    def needs(self, codetracer=True, mac=("success", "confirmed")):
+        flags = {"pins": "true", "reprobuild": "false", "codetracer": str(codetracer).lower()}
+        needs = {
+            "changes": {"result": "success", "outputs": dict(flags, owners='["metacraft-labs"]')},
+            "local": {"result": "success", "outputs": {}},
+            "resolver-windows": {"result": "skipped", "outputs": {}},
+            "remote": {"result": "success", "outputs": {}},
+            "reprobuild-package": {"result": "skipped", "outputs": {}},
+            "setup-reprobuild": {"result": "skipped", "outputs": {}},
+        }
+        if mac is not None:
+            result, outcome = mac
+            needs["codetracer-mac-lock"] = {
+                "result": result, "outputs": {} if outcome is None else {"outcome": outcome}}
+        return needs
+
+    def gate(self, needs):
+        done = subprocess.run(
+            [sys.executable, "-I", "-"], input=self.script, capture_output=True, text=True,
+            env=dict(os.environ, NEEDS=json.dumps(needs)), check=False)
+        return done.returncode, done.stdout + done.stderr
+
+    def test_the_lock_job_is_in_the_gates_needs_and_runs_only_for_codetracer_changes(self):
+        gate = workflow_job(self.workflow, "pins-gate")
+        self.assertIn("        codetracer-mac-lock,\n", gate)
+        job = workflow_job(self.workflow, "codetracer-mac-lock")
+        self.assertIn("    if: ${{ needs.changes.outputs.codetracer == 'true' }}\n", job)
+        self.assertIn("    uses: ./.github/workflows/codetracer-mac-lock.yml\n", job)
+        self.assertIn("    secrets: inherit\n", job)
+        # Called with no inputs: it solves the pin and expects the solve to succeed.
+        self.assertNotIn("    with:", job)
+        self.assertNotIn("  # codetracer-mac-lock:", self.workflow)
+
+    def test_a_solved_lock_passes(self):
+        for outcome in ("confirmed", "produced"):
+            with self.subTest(outcome):
+                code, out = self.gate(self.needs(mac=("success", outcome)))
+                self.assertEqual(code, 0, out)
+
+    def test_every_other_outcome_fails_even_beside_a_successful_result(self):
+        # The reusable workflow's result job fails on each of these; the gate
+        # must not rely on that alone.
+        for outcome in ("unsolvable", "failed-checks", "invalid-pin", "failed", "skipped",
+                        "solved-unexpectedly", "unverified", "", None):
+            for result in ("success", "failure"):
+                with self.subTest(outcome=outcome, result=result):
+                    code, out = self.gate(self.needs(mac=(result, outcome)))
+                    self.assertEqual(code, 1, out)
+
+    def test_a_failed_or_cancelled_job_fails_whatever_its_outcome(self):
+        for result in ("failure", "cancelled"):
+            with self.subTest(result):
+                code, out = self.gate(self.needs(mac=(result, "confirmed")))
+                self.assertEqual(code, 1, out)
+
+    def test_a_skipped_lock_job_fails_a_codetracer_change(self):
+        code, out = self.gate(self.needs(mac=("skipped", None)))
+        self.assertEqual(code, 1, out)
+
+    def test_a_codetracer_change_without_the_job_in_needs_fails(self):
+        code, out = self.gate(self.needs(mac=None))
+        self.assertEqual(code, 1, out)
+        self.assertIn("not in needs", out)
+
+    def test_an_unrelated_change_passes_with_the_lock_job_skipped(self):
+        code, out = self.gate(self.needs(codetracer=False, mac=("skipped", None)))
+        self.assertEqual(code, 0, out)
+
+    def test_an_unrelated_change_does_not_accept_a_failed_lock_job(self):
+        code, out = self.gate(self.needs(codetracer=False, mac=("failure", "failed")))
+        self.assertEqual(code, 1, out)
+
+
+def changes_script(workflow):
+    """The shell the `changes` job's diff step runs, as pins.yml holds it."""
+    step = workflow_step(workflow, "Which parts of the gate this change needs")
+    body = step[step.index("        run: |\n") + len("        run: |\n"):]
+    return textwrap.dedent(body)
+
+
+# A stand-in for `gh api` on the two endpoints the CodeTracer proof reads: it
+# answers from the JSON files a case writes into $FAKE_GH, and fails like gh
+# does for any other request. Every call is logged.
+FAKE_GH = r"""#!/usr/bin/env python3
+import os, re, sys
+d = os.environ["FAKE_GH"]
+with open(os.path.join(d, "calls"), "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\n")
+url = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "api" else ""
+m = re.match(r"repos/[^/]+/[^/]+/actions/workflows/pins\.yml/runs\?.*head_sha=([0-9a-f]{40})", url)
+n = re.match(r"repos/[^/]+/[^/]+/actions/runs/(\d+)/jobs", url)
+name = f"runs-{m.group(1)}.json" if m else f"jobs-{n.group(1)}.json" if n else None
+if m and not all(q in url for q in ("event=pull_request", "status=success")):
+    name = None
+path = os.path.join(d, name) if name else None
+if not path or not os.path.exists(path):
+    print("gh: HTTP 404", file=sys.stderr); sys.exit(1)
+sys.stdout.write(open(path).read())
+"""
+
+
+class ChangesJob(unittest.TestCase):
+    """The `changes` job's shell, run as pins.yml holds it, on real Git
+    histories: which parts of the gate each event and change needs, above all
+    when the hosted Mac (`codetracer` flag) runs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = changes_script(WORKFLOW.read_text())
+
+    def setUp(self):
+        tmp = tempfile.mkdtemp(prefix="pins-changes-")
+        self.addCleanup(shutil.rmtree, tmp)
+        self.tmp = pathlib.Path(tmp)
+        self.repo = self.tmp / "repo"
+        self.gh = self.tmp / "gh"
+        for d in (self.repo, self.gh, self.tmp / "bin", self.tmp / "runner"):
+            d.mkdir()
+        (self.tmp / "bin" / "gh").write_text(FAKE_GH)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        (self.tmp / "script.sh").write_text(self.script)
+        self.git("init", "-q", "-b", "agents")
+        self.base = self.commit({"pins/codetracer.json": "v1\n", "README.md": "readme\n"}, "base")
+
+    def git(self, *args):
+        env = dict(
+            os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        return subprocess.run(["git", "-C", str(self.repo), "-c", "commit.gpgsign=false", *args],
+                              check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+    def commit(self, files, message):
+        for name, text in files.items():
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            self.git("add", name)
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def branch(self, files):
+        """A branch off base carrying `files`, merged into base with a merge
+        commit, as a pull request merges (and as its test merge looks):
+        (branch head, merge commit)."""
+        self.git("checkout", "-q", "-b", "feature", self.base)
+        head = self.commit(files, "feature")
+        self.git("checkout", "-q", "agents")
+        self.git("merge", "-q", "--no-ff", "-m", "merge", head)
+        return head, self.git("rev-parse", "HEAD")
+
+    def prove(self, sha, jobs=None, run=7):
+        """Record a successful pull_request run of pins.yml on `sha`."""
+        jobs = {"codetracer-mac-lock / result": "success", "pins-gate": "success"} \
+            if jobs is None else jobs
+        (self.gh / f"runs-{sha}.json").write_text(json.dumps({"workflow_runs": [{"id": run}]}))
+        (self.gh / f"jobs-{run}.json").write_text(json.dumps(
+            {"jobs": [{"name": k, "conclusion": v} for k, v in jobs.items()]}))
+
+    def run_changes(self, event, base="", dispatch=""):
+        out = self.tmp / "runner" / "output"
+        out.write_text("")
+        env = dict(
+            os.environ, EVENT=event, BASE=base, DISPATCH_CODETRACER=dispatch,
+            GH_TOKEN="unused", GITHUB_REPOSITORY="metacraft-labs/metacraft-github-actions",
+            GITHUB_OUTPUT=str(out), RUNNER_TEMP=str(self.tmp / "runner"),
+            FAKE_GH=str(self.gh), PATH=f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        # Actions runs a `run:` step with no `shell:` as `bash -e {0}`.
+        done = subprocess.run(["bash", "--noprofile", "--norc", "-e", str(self.tmp / "script.sh")],
+                              cwd=self.repo, env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        flags = dict(line.split("=", 1) for line in out.read_text().splitlines())
+        self.log = done.stdout + done.stderr
+        return {k: flags[k] for k in ("pins", "reprobuild", "codetracer")}
+
+    def gh_calls(self):
+        calls = self.gh / "calls"
+        return calls.read_text().splitlines() if calls.exists() else []
+
+    NONE = {"pins": "false", "reprobuild": "false", "codetracer": "false"}
+    CT = {"pins": "true", "reprobuild": "false", "codetracer": "true"}
+    CT_PROVEN = {"pins": "true", "reprobuild": "false", "codetracer": "false"}
+    EVERYTHING_BUT_CT = {"pins": "true", "reprobuild": "true", "codetracer": "false"}
+    EVERYTHING = {"pins": "true", "reprobuild": "true", "codetracer": "true"}
+
+    def test_a_pull_request_runs_the_mac_for_a_codetracer_change_only(self):
+        self.branch({"pins/codetracer.json": "v2\n"})
+        # The test merge's second parent is the pull request itself, so the
+        # push-only proof must not apply here even though one exists.
+        self.prove(self.git("rev-parse", "HEAD^2"))
+        self.assertEqual(self.run_changes("pull_request", self.base), self.CT)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_each_codetracer_file_is_a_codetracer_change(self):
+        names = (
+            "pins/codetracer.json", ".github/workflows/codetracer-mac-lock.yml",
+            "tools/codetracer-mac-lock.py")
+        for name in names:
+            with self.subTest(name):
+                self.commit({name: f"changed {name}\n"}, name)
+                flags = self.run_changes("pull_request", self.git("rev-parse", "HEAD^"))
+                self.assertEqual(flags["codetracer"], "true")
+
+    def test_an_unrelated_pull_request_runs_nothing(self):
+        self.branch({"README.md": "changed\n"})
+        self.assertEqual(self.run_changes("pull_request", self.base), self.NONE)
+
+    def test_a_reprobuild_pin_change_does_not_run_the_mac(self):
+        self.branch({"pins/reprobuild.json": "{}\n"})
+        self.assertEqual(
+            self.run_changes("pull_request", self.base),
+            {"pins": "true", "reprobuild": "true", "codetracer": "false"})
+
+    def test_a_merge_push_proven_on_its_pull_request_skips_the_mac(self):
+        head, _ = self.branch({"pins/codetracer.json": "v2\n"})
+        self.prove(head)
+        self.assertEqual(self.run_changes("push", self.base), self.CT_PROVEN)
+        self.assertIn(f"proven by pull request run 7 on {head}", self.log)
+
+    def test_a_merge_push_without_a_proof_runs_the_mac(self):
+        # Positive controls for the skip above: each missing piece of the
+        # proof runs the Mac.
+        cases = {
+            "no pull request run": None,
+            "the lock job did not succeed": {
+                "codetracer-mac-lock / result": "skipped", "pins-gate": "success"},
+            "the lock job is absent": {"pins-gate": "success"},
+            "the gate failed": {
+                "codetracer-mac-lock / result": "success", "pins-gate": "failure"},
+        }
+        head, _ = self.branch({"pins/codetracer.json": "v2\n"})
+        for why, jobs in cases.items():
+            with self.subTest(why):
+                for f in self.gh.iterdir():
+                    f.unlink()
+                if jobs is not None:
+                    self.prove(head, jobs)
+                self.assertEqual(self.run_changes("push", self.base), self.CT)
+                self.assertNotEqual(self.gh_calls(), [])
+
+    def test_a_merge_push_whose_files_differ_from_the_proven_branch_runs_the_mac(self):
+        # The merge itself changed the pin (a conflict resolution, an amended
+        # merge): the merged branch's proof is not about these bytes.
+        head, _ = self.branch({"pins/codetracer.json": "v2\n"})
+        self.prove(head)
+        (self.repo / "pins/codetracer.json").write_text("v3\n")
+        self.git("commit", "-q", "--amend", "-a", "--no-edit")
+        self.assertEqual(self.run_changes("push", self.base), self.CT)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_direct_push_runs_the_mac(self):
+        self.commit({"pins/codetracer.json": "v2\n"}, "direct")
+        self.assertEqual(self.run_changes("push", self.base), self.CT)
+
+    def test_an_unrelated_push_runs_nothing_and_asks_no_api(self):
+        self.branch({"README.md": "changed\n"})
+        self.assertEqual(self.run_changes("push", self.base), self.NONE)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_push_with_no_before_runs_the_mac_unless_proven(self):
+        self.commit({"pins/codetracer.json": "v2\n"}, "direct")
+        zero = "0" * 40
+        self.assertEqual(self.run_changes("push", zero), self.EVERYTHING)
+        self.git("reset", "-q", "--keep", self.base)
+        head, _ = self.branch({"pins/codetracer.json": "v2\n"})
+        self.prove(head)
+        self.assertEqual(self.run_changes("push", zero), self.EVERYTHING_BUT_CT)
+
+    def test_a_diff_that_fails_runs_everything(self):
+        self.commit({"README.md": "changed\n"}, "readme")
+        self.assertEqual(self.run_changes("pull_request", "f" * 40), self.EVERYTHING)
+
+    def test_the_schedule_never_runs_the_mac(self):
+        self.commit({"pins/codetracer.json": "v2\n"}, "direct")
+        self.assertEqual(self.run_changes("schedule"), self.EVERYTHING_BUT_CT)
+
+    def test_a_dispatch_runs_the_mac_only_when_its_input_asks(self):
+        self.assertEqual(self.run_changes("workflow_dispatch", dispatch=""), self.EVERYTHING_BUT_CT)
+        self.assertEqual(
+            self.run_changes("workflow_dispatch", dispatch="false"), self.EVERYTHING_BUT_CT)
+        self.assertEqual(self.run_changes("workflow_dispatch", dispatch="true"), self.EVERYTHING)
+
+    def test_the_dispatch_input_and_the_api_permission_are_declared(self):
+        workflow = WORKFLOW.read_text()
+        trigger = workflow[workflow.index("on:\n"):workflow.index("\npermissions:\n")]
+        self.assertIn("      codetracer-mac-lock:\n", trigger)
+        self.assertIn("        type: boolean\n        default: false\n", trigger)
+        job = workflow_job(workflow, "changes")
+        self.assertIn("    permissions:\n      contents: read\n", job)
+        self.assertIn("      actions: read\n", job)
+        self.assertIn("          DISPATCH_CODETRACER: ${{ inputs.codetracer-mac-lock }}\n", job)
 
 
 if __name__ == "__main__":
