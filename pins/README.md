@@ -4,12 +4,12 @@ One JSON file per tool: the revision of each real tool that CI, infra, the
 dotfiles, devops-modules and the workspace dev shells consume. Each tool has
 exactly one pin, here, and no consumer keeps a revision of its own.
 
-| File                          | Tool                                                       | Owner                                         |
-| ----------------------------- | ---------------------------------------------------------- | --------------------------------------------- |
-| `reprobuild.json`             | Reprobuild (`repro`); the default of `setup-reprobuild`    | Single-Tool-Pins (metacraft-pm `milestones/`) |
-| `agent-harbor.json`           | Agent Harbor                                               | agent-upgrades                                |
-| `agent-harbor-llm-proxy.json` | Agent Harbor's LLM proxy                                   | agent-upgrades                                |
-| `codetracer.json`             | CodeTracer, where other repositories use it (not yet here) | Single-Tool-Pins STP3                         |
+| File                          | Tool                                                    | Owner                                         |
+| ----------------------------- | ------------------------------------------------------- | --------------------------------------------- |
+| `reprobuild.json`             | Reprobuild (`repro`); the default of `setup-reprobuild` | Single-Tool-Pins (metacraft-pm `milestones/`) |
+| `agent-harbor.json`           | Agent Harbor                                            | agent-upgrades                                |
+| `agent-harbor-llm-proxy.json` | Agent Harbor's LLM proxy                                | agent-upgrades                                |
+| `codetracer.json`             | CodeTracer, for the repositories that use it            | Single-Tool-Pins STP3                         |
 
 ## Format
 
@@ -129,6 +129,13 @@ and passes trivially when a change touches no pin and none of the readers.
   (`tools/check-reprobuild-fits-workspace.sh`).
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
   and with a release and a source-revision override.
+- For the CodeTracer pin it calls `.github/workflows/codetracer-mac-lock.yml`,
+  which solves and checks CodeTracer's aarch64-darwin lock at the pinned
+  revision on a hosted arm64 Mac (see "The CodeTracer pin and its Apple
+  Silicon lock" in the repository README). It runs only when
+  `pins/codetracer.json`, that workflow or `tools/codetracer-mac-lock.py`
+  changed, and `pins-gate` passes it only when its `outcome` output is
+  `confirmed` or `produced`.
 
 ### Tokens
 
@@ -144,13 +151,23 @@ least it needs:
   the commits, compare, `git/ref/tags` and releases endpoints, and Nix fetches
   the pinned tree and its inputs as tarballs.
 - `repositories:` the repositories the owner's pins name
-  (`check-pins.py --list-repos --owner <owner>`): `reprobuild` for
-  metacraft-labs, `agent-harbor` for agent-harbor. Every other flake input the
-  pinned revisions evaluate is public.
+  (`check-pins.py --list-repos --owner <owner>`): `codetracer` and
+  `reprobuild` for metacraft-labs, `agent-harbor` for agent-harbor. Every
+  other flake input the pinned revisions evaluate is public. For CodeTracer
+  that includes listing `packages.<system>`: CodeTracer `a7cddd8bc` names
+  four private inputs (`codetracer-native-backend`,
+  `codetracer-native-recorder`, `codetracer-visual-replay`, `lldb-sys.rs`),
+  but on 2026-11-24 both systems' package names evaluated with no token at
+  all, in an empty store.
 
 An empty `repositories:` input would mint a token for every repository the
 owner's installation covers, so the step that lists the repositories fails
 rather than hand the minting step an empty list.
+
+The CodeTracer lock job (`codetracer-mac-lock.yml`) mints its own tokens from
+the same secrets, with `permission-contents: read` but no `repositories:`
+input: it reads and clones every sibling CodeTracer's locks name, some of them
+private, and that set moves with CodeTracer rather than with the pins.
 
 **The App is public and installed on the agent-harbor organization** as
 installation 185313720, with repository selection **all** (verified

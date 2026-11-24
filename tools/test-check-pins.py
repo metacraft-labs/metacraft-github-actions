@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -253,6 +254,108 @@ class CheckPins(unittest.TestCase):
     def test_an_empty_directory_is_a_usage_error(self):
         code, _ = self.run_with()
         self.assertEqual(code, 2)
+
+
+WORKFLOW = ROOT / ".github" / "workflows" / "pins.yml"
+
+
+def workflow_job(workflow, job):
+    """The text of the pins.yml job `job`, up to the next job."""
+    start = workflow.index(f"\n  {job}:\n") + 1
+    end = workflow.find("\n  ", start + 1)
+    while end >= 0 and workflow[end + 3] in " #":
+        end = workflow.find("\n  ", end + 1)
+    return workflow[start:] if end < 0 else workflow[start:end]
+
+
+def gate_script(workflow):
+    """The Python `pins-gate` runs, exactly as the step's heredoc holds it."""
+    step = workflow_step(workflow, "Every needed job passed")
+    body = step[step.index("<<'PY'\n") + len("<<'PY'\n"):step.index("\n          PY")]
+    return textwrap.dedent(body) + "\n"
+
+
+class PinsGate(unittest.TestCase):
+    """The `pins-gate` step's own Python, run on the `needs` context Actions
+    would hand it. The script is executed as written in pins.yml, so a change
+    to the gate is what these cases measure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = WORKFLOW.read_text()
+        cls.script = gate_script(cls.workflow)
+
+    def needs(self, codetracer=True, mac=("success", "confirmed")):
+        flags = {"pins": "true", "reprobuild": "false", "codetracer": str(codetracer).lower()}
+        needs = {
+            "changes": {"result": "success", "outputs": dict(flags, owners='["metacraft-labs"]')},
+            "local": {"result": "success", "outputs": {}},
+            "resolver-windows": {"result": "skipped", "outputs": {}},
+            "remote": {"result": "success", "outputs": {}},
+            "reprobuild-package": {"result": "skipped", "outputs": {}},
+            "setup-reprobuild": {"result": "skipped", "outputs": {}},
+        }
+        if mac is not None:
+            result, outcome = mac
+            needs["codetracer-mac-lock"] = {
+                "result": result, "outputs": {} if outcome is None else {"outcome": outcome}}
+        return needs
+
+    def gate(self, needs):
+        done = subprocess.run(
+            [sys.executable, "-I", "-"], input=self.script, capture_output=True, text=True,
+            env=dict(os.environ, NEEDS=json.dumps(needs)), check=False)
+        return done.returncode, done.stdout + done.stderr
+
+    def test_the_lock_job_is_in_the_gates_needs_and_runs_only_for_codetracer_changes(self):
+        gate = workflow_job(self.workflow, "pins-gate")
+        self.assertIn("        codetracer-mac-lock,\n", gate)
+        job = workflow_job(self.workflow, "codetracer-mac-lock")
+        self.assertIn("    if: ${{ needs.changes.outputs.codetracer == 'true' }}\n", job)
+        self.assertIn("    uses: ./.github/workflows/codetracer-mac-lock.yml\n", job)
+        self.assertIn("    secrets: inherit\n", job)
+        # Called with no inputs: it solves the pin and expects the solve to succeed.
+        self.assertNotIn("    with:", job)
+        self.assertNotIn("  # codetracer-mac-lock:", self.workflow)
+
+    def test_a_solved_lock_passes(self):
+        for outcome in ("confirmed", "produced"):
+            with self.subTest(outcome):
+                code, out = self.gate(self.needs(mac=("success", outcome)))
+                self.assertEqual(code, 0, out)
+
+    def test_every_other_outcome_fails_even_beside_a_successful_result(self):
+        # The reusable workflow's result job fails on each of these; the gate
+        # must not rely on that alone.
+        for outcome in ("unsolvable", "failed-checks", "invalid-pin", "failed", "skipped",
+                        "solved-unexpectedly", "unverified", "", None):
+            for result in ("success", "failure"):
+                with self.subTest(outcome=outcome, result=result):
+                    code, out = self.gate(self.needs(mac=(result, outcome)))
+                    self.assertEqual(code, 1, out)
+
+    def test_a_failed_or_cancelled_job_fails_whatever_its_outcome(self):
+        for result in ("failure", "cancelled"):
+            with self.subTest(result):
+                code, out = self.gate(self.needs(mac=(result, "confirmed")))
+                self.assertEqual(code, 1, out)
+
+    def test_a_skipped_lock_job_fails_a_codetracer_change(self):
+        code, out = self.gate(self.needs(mac=("skipped", None)))
+        self.assertEqual(code, 1, out)
+
+    def test_a_codetracer_change_without_the_job_in_needs_fails(self):
+        code, out = self.gate(self.needs(mac=None))
+        self.assertEqual(code, 1, out)
+        self.assertIn("not in needs", out)
+
+    def test_an_unrelated_change_passes_with_the_lock_job_skipped(self):
+        code, out = self.gate(self.needs(codetracer=False, mac=("skipped", None)))
+        self.assertEqual(code, 0, out)
+
+    def test_an_unrelated_change_does_not_accept_a_failed_lock_job(self):
+        code, out = self.gate(self.needs(codetracer=False, mac=("failure", "failed")))
+        self.assertEqual(code, 1, out)
 
 
 if __name__ == "__main__":

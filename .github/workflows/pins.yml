@@ -32,10 +32,15 @@ name: pins
 #                       explicit override installs the override
 #   resolver-windows    the same changes: the Windows pin reader
 #                       (ConvertFrom-Json) on a real Windows runner
+#   codetracer-mac-lock the CodeTracer pin, its lock workflow or its tool
+#                       changed: solve and check CodeTracer's aarch64-darwin
+#                       lock at the pinned revision on a hosted arm64 Mac
+#                       (.github/workflows/codetracer-mac-lock.yml)
 #
-# The remote, package and install jobs mint a CI token provider app token, so
-# they fail rather than pass on a fork's pull request, which receives no
-# secrets: a pin change must come from a branch of this repository.
+# The remote, package, install and CodeTracer lock jobs mint a CI token
+# provider app token, so they fail rather than pass on a fork's pull request,
+# which receives no secrets: a pin change must come from a branch of this
+# repository.
 
 on:
   push:
@@ -417,21 +422,21 @@ jobs:
           esac
           test "$(repro --version | tr -d '\r')" = "repro $VERSION"
 
-  # ── Plug-in point for the CodeTracer pin (STP3) ───────────────────────────
-  # The reusable workflow .github/workflows/codetracer-mac-lock.yml solves and
-  # checks CodeTracer's aarch64-darwin lock on an arm64 macOS runner. It is
-  # not on this branch yet, and a `uses:` naming a missing local file breaks
-  # this whole workflow, so the job stays commented out until that file
-  # lands. To plug it in: uncomment the job below and add
-  # `codetracer-mac-lock` to `pins-gate`'s `needs`. The gate already knows
-  # the job (REQUIRED below) and checks its `outcome` output; until then it
-  # fails any change that touches the CodeTracer files.
-  #
-  # codetracer-mac-lock:
-  #   needs: changes
-  #   if: ${{ needs.changes.outputs.codetracer == 'true' }}
-  #   uses: ./.github/workflows/codetracer-mac-lock.yml
-  #   secrets: inherit
+  codetracer-mac-lock:
+    # The reusable workflow solves and checks CodeTracer's aarch64-darwin lock
+    # at pins/codetracer.json's revision on a hosted arm64 macOS runner. It
+    # runs only when `changes` reports the CodeTracer files changed (a
+    # schedule or dispatch counts as everything changing): hosted macOS
+    # minutes are scarce, and no other pin moves this lock. It waits for
+    # `local`, so a pin the schema refuses never reaches a Mac. Called with no
+    # inputs it solves the pinned revision and expects the solve to succeed;
+    # its `outcome` output (`confirmed` or `produced` on success) is what
+    # `pins-gate` reads. It mints its own contents:read tokens from the same
+    # CI token provider app secrets as the jobs above.
+    needs: [changes, local]
+    if: ${{ needs.changes.outputs.codetracer == 'true' }}
+    uses: ./.github/workflows/codetracer-mac-lock.yml
+    secrets: inherit
 
   pins-gate:
     # THE REQUIRED CHECK. Always reports. A needed job must have succeeded; a
@@ -446,6 +451,7 @@ jobs:
         remote,
         reprobuild-package,
         setup-reprobuild,
+        codetracer-mac-lock,
       ]
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -481,16 +487,20 @@ jobs:
           for job in ('changes', 'local'):
               if job not in needs:
                   print(f'FAIL {job}: missing from needs'); failed = True
-          # A CodeTracer change needs the lock job: until the job above is
-          # plugged in, such a change cannot pass.
-          if flag('codetracer') and 'codetracer-mac-lock' not in needs:
-              print('FAIL codetracer-mac-lock: the CodeTracer pin changed, but the job is not in needs')
-              failed = True
-          # The CodeTracer lock job reports whether it actually solved.
-          if 'codetracer-mac-lock' in needs and flag('codetracer'):
-              outcome = needs['codetracer-mac-lock'].get('outputs', {}).get('outcome', '')
-              if outcome == 'skipped':
-                  print('FAIL codetracer-mac-lock: outcome skipped although pins/codetracer.json changed')
+          # A CodeTracer change needs the lock job, and the job must also say
+          # that it solved: `confirmed` (the solve equals the committed lock)
+          # or `produced` (it differs; the lock is the artifact). Any other
+          # outcome fails even beside a `success` result: skipped,
+          # unsolvable, solved-unexpectedly, failed-checks, invalid-pin,
+          # unverified, failed, or none at all.
+          if flag('codetracer'):
+              if 'codetracer-mac-lock' not in needs:
+                  print('FAIL codetracer-mac-lock: the CodeTracer files changed, but the job is not in needs')
                   failed = True
+              else:
+                  outcome = needs['codetracer-mac-lock'].get('outputs', {}).get('outcome', '')
+                  solved = outcome in ('confirmed', 'produced')
+                  print(f"{'ok  ' if solved else 'FAIL'} codetracer-mac-lock outcome: {outcome or '(none)'}")
+                  failed = failed or not solved
           sys.exit(1 if failed else 0)
           PY

@@ -17,6 +17,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -790,6 +791,41 @@ class EngineTests(SolveFixture):
     def test_engine_refuses_a_malformed_revision(self):
         res = run_tool("engine", "--rev", "dev", "--out", str(self.root / "e.json"), env=self.env)
         self.assertEqual(res.returncode, 2)
+
+
+class WorkflowCallTests(unittest.TestCase):
+    """The reusable workflow's interface as the `pins` workflow calls it: no
+    inputs, `secrets: inherit`, and the gate reading `outputs.outcome`. Text
+    checks, because the workflow only runs in Actions."""
+
+    def setUp(self):
+        text = (HERE.parent / ".github" / "workflows" / "codetracer-mac-lock.yml").read_text()
+        start = text.index("  workflow_call:\n")
+        self.call = text[start:text.index("  workflow_dispatch:\n", start)]
+        self.text = text
+
+    def input_block(self, name):
+        start = self.call.index(f"      {name}:\n")
+        end = self.call.find("\n      ", start + 1)
+        while end >= 0 and self.call[end + 7] == " ":
+            end = self.call.find("\n      ", end + 1)
+        return self.call[start:end] + "\n"
+
+    def test_a_call_with_no_inputs_solves_the_pinned_revision(self):
+        self.assertIn('        default: ""\n', self.input_block("rev"))
+        self.assertIn("        default: solve\n", self.input_block("expect"))
+        self.assertIn("        default: false\n", self.input_block("negative-control"))
+        self.assertNotIn("required: true", self.call)
+
+    def test_the_outcome_the_gate_reads_is_the_result_jobs(self):
+        self.assertIn("      outcome:\n", self.call)
+        self.assertIn("        value: ${{ jobs.result.outputs.outcome }}\n", self.call)
+
+    def test_it_uses_the_ci_token_provider_secrets_the_pins_workflow_uses(self):
+        for name in ("CI_TOKEN_PROVIDER_APP_ID", "CI_TOKEN_PROVIDER_PRIVATE_KEY"):
+            self.assertIn(f"      {name}:\n        required: false\n", self.call)
+        secrets = set(re.findall(r"secrets\.([A-Z0-9_]+)", self.text))
+        self.assertEqual(secrets, {"CI_TOKEN_PROVIDER_APP_ID", "CI_TOKEN_PROVIDER_PRIVATE_KEY"})
 
 
 if __name__ == "__main__":

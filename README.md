@@ -302,8 +302,10 @@ CodeTracer commits two solves: `repro.lock` (amd64-linux) and
 runs on, so the darwin lock can be produced only on an Apple Silicon host. The
 reusable workflow `.github/workflows/codetracer-mac-lock.yml` does that on a
 GitHub-hosted arm64 macOS runner (`macos-26`), never on a fleet Mac. The `pins`
-workflow calls it only when `pins/codetracer.json`, the workflow or
-`tools/codetracer-mac-lock.py` changed. It runs three jobs:
+workflow calls it, with no inputs, only when `pins/codetracer.json`, the
+workflow or `tools/codetracer-mac-lock.py` changed; like the rest of the gate,
+its weekly schedule and a manual dispatch count as everything changing. It
+runs three jobs:
 
 1. `plan` runs on Linux. It refuses a malformed revision, and one that does
    not exist or has no `locks/arm64-macosx.lock`. It also reads the Reprobuild
@@ -361,7 +363,8 @@ workflow calls it only when `pins/codetracer.json`, the workflow or
    - `skipped`: no credentials were available, as in a fork's pull request.
      Nothing was verified, so it fails too.
 
-   `confirmed` and `produced` pass. Every other outcome fails. This job
+   `confirmed` and `produced` pass. Every other outcome fails, and
+   `pins-gate` checks the outcome itself as well as the job's result. This job
    never pushes to CodeTracer. A produced lock reaches CodeTracer only through
    CodeTracer's own process.
 
