@@ -385,7 +385,7 @@ runs:
     # clones defaults to the revision repro-build-pin locks, not a mainline.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@a8fe10f2993753adee0afa23789cbfefd88d0403
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@67ad508ae540c7672d74013baf418438f64ea75d
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -446,6 +446,24 @@ runs:
             : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
             echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${GITHUB_ENV}"
             echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${GITHUB_ENV}"
+            # The sibling-first packages (reprobuild config.nims
+            # `addSiblingFirstPackagePath`; in the engine,
+            # `SiblingFirstPackageEnvNames`). An engine built from a git
+            # checkout of reprobuild (v0.2.34 on) compiles a recipe against
+            # exactly the revision that checkout pins for each of them: a
+            # `../<sibling>` checkout at the pin, or the tree `$<NAME>_SRC`
+            # names. The tree compiled into the engine is refused, so
+            # without these `repro exec` stops at "no acceptable source for
+            # SHM_QUEUE_SRC". The dev shell exports each one from the flake
+            # input locked at that revision, as the wrapper of the Nix package
+            # does with --set-default. Forward the ones it sets: an older
+            # reprobuild neither exports nor reads them.
+            for name in SHM_QUEUE_SRC SHM_GSET_SRC CLI_SPEC_SRC ENTRYPOINTS_SRC CONFUTILS_SRC; do
+              value="${!name:-}"
+              if [ -n "${value}" ]; then
+                echo "${name}=${value}" >> "${GITHUB_ENV}"
+              fi
+            done
             # Tool resolution also starts this helper outside the build shell.
             # Select the staged script with its pinned Python interpreter.
             # The profile above keeps that interpreter rooted for this job.

@@ -551,7 +551,7 @@ replace the earlier installation's selected project.
 ### Wrapper contract tests
 
 The existing `test.yml` workflow enrolls the real wrapper contract on Linux
-and native Windows using the verified `v0.2.29` release installer. A missing
+and native Windows using the verified `v0.2.35` release installer. A missing
 baseline fails the test; it does not build an SDK or skip the contract.
 Windows executes the generated Bash, PowerShell and CMD wrappers and the
 existing native CMD status controls. Linux results do not qualify Windows.

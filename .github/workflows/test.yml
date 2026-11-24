@@ -79,7 +79,7 @@ jobs:
         id: sdk
         shell: bash
         env:
-          REPRO_VERSION: v0.2.29
+          REPRO_VERSION: v0.2.35
           REPRO_REQUIRE_CHECKSUM: "true"
           REPRO_GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -284,6 +284,11 @@ jobs:
       # it is that pinned flake's own package output on this system.
       - name: Caller-built Reprobuild package admission contract
         run: python3 setup-reprobuild/test-prebuilt-package.py
+
+      # A source-built engine refuses its compiled-in sibling trees, so the
+      # build step must hand later steps the pinned trees the dev shell names.
+      - name: Source build forwards the sibling-first source variables
+        run: python3 setup-reprobuild/test-source-build-env.py
 
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
