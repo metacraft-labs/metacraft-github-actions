@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/metacraft-labs/metacraft-github-actions/pins/pin.schema.json",
+  "title": "Tooling pin",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tool", "owner", "repo", "rev", "narHash"],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "Format version. A reader refuses any other value."
+    },
+    "tool": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Must equal the file name without .json. Checked by tools/check-pins.py."
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+      "description": "GitHub owner of the source repository."
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "GitHub repository name."
+    },
+    "rev": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Full lowercase commit SHA. Never a branch or a tag."
+    },
+    "narHash": {
+      "type": "string",
+      "pattern": "^sha256-[A-Za-z0-9+/]{43}=$",
+      "description": "SRI hash of the fetched tree, as nix flake prefetch reports it."
+    },
+    "flake": {
+      "type": "boolean",
+      "default": true,
+      "description": "false when the tree is not a flake (fetchTree only)."
+    },
+    "systems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "x86_64-linux",
+          "aarch64-linux",
+          "x86_64-darwin",
+          "aarch64-darwin"
+        ]
+      },
+      "description": "Systems on which every attrs value must exist (checked by tools/check-pins.py --remote). Default: x86_64-linux and aarch64-darwin."
+    },
+    "attrs": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Tool-specific role to package attribute name in the flake's packages.<system>. Role names belong to the tool; the common reader does not interpret them."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.+-]+)?$",
+      "description": "The version the tool reports for rev (for reprobuild, what `repro --version` prints after `repro `). Required together with kind."
+    },
+    "kind": {
+      "enum": ["dev-commit", "agents-commit", "release"],
+      "description": "Why rev may be pinned: an ancestor of the repository's dev, an ancestor of its agents, or the commit of the published, non-draft GitHub release tagged v<version>. Required together with version. Checked by tools/check-pins.py --remote."
+    }
+  }
+}

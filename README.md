@@ -2,6 +2,14 @@
 
 Shared GitHub Actions for metacraft-labs projects
 
+## Tool pins
+
+[`pins/`](pins/README.md) holds the organisation's one pin of each real tool:
+`pins/reprobuild.json`, `pins/agent-harbor.json` and, where it is used,
+CodeTracer. `setup-reprobuild` and `setup-dev-env` install the Reprobuild pin
+by default, and Nix consumers read the pins through this repository's flake
+output `pins`. A change to a pin is gated by the `pins-gate` check.
+
 ## Reprobuild provisioning mode
 
 For `dev-exec repro build` and `dev-exec repro test`, an explicit

@@ -1,25 +1,35 @@
 name: Setup reprobuild (install the repro CLI)
 description: >
-  Put the `repro` CLI on PATH, preferring the prebuilt binary from a GitHub
-  Release and falling back to a source build only when no verified asset exists
-  for the running platform.
+  Put the `repro` CLI on PATH: by default the Reprobuild revision that
+  `pins/reprobuild.json` in this action's own checkout names, the
+  organisation's one Reprobuild pin (pins/README.md).
 
-  Resolution order:
+  Selection (resolve-reprobuild-pin.sh):
+    a. No override -> the pin. A pinned commit on reprobuild `dev` or `agents`
+        is built from source; a pinned published release is installed from
+        its prebuilt archive, with a source build of the pinned commit as the
+        fallback.
+    b. repro-version and/or repro-build-pin -> the caller's override, as
+        before: the named release is installed, and the named revision is
+        built when there is no release to install.
+  There is no branch, `dev` or `latest` default.
+
+  Install routes:
     -. A caller-built Nix package (repro-package) -> admit it if it is the
-        pinned flake's own package output, add its bin/ to PATH, build nothing.
-    0. Explicit from-source=true -> build the requested source revision.
-    1. The requested prebuilt release archive for this OS/arch -> download, verify its
-        SHA-256 against the release's SHA256SUMS, unpack, add bin/ to PATH.
+        selected commit's own flake package output, add its bin/ to PATH,
+        build nothing.
+    1. The selected prebuilt release archive for this OS/arch -> download,
+        verify its SHA-256 against the release's SHA256SUMS, unpack, add bin/
+        to PATH.
     2. Source build -- Nix dev shell on Linux/macOS, env.ps1 DIY contract on
-        Windows. Announced with a ::warning:: rather than taken silently, because
-        it is minutes-to-hours slower. Only this source path invokes the
-        canonical `reprobuild-provision` dependency action, after cloning the
-        selected Reprobuild source and before compiling it. Verified release
-        installation does not clone or build SDK source dependencies.
-
-  Step 1 is the reason release archives are published at all. It did not exist
-  until now: this action probed PATH and otherwise went straight to a source
-  build, so the release assets were never downloaded by anything.
+        Windows. A release that has no asset for this platform falls back to
+        it with a ::warning::, because it is minutes-to-hours slower. Only
+        this source path invokes the canonical `reprobuild-provision`
+        dependency action, after cloning the selected Reprobuild source and
+        before compiling it. Verified release installation does not clone or
+        build SDK source dependencies.
+  Afterwards the installed CLI must report the pinned version, and a source
+  build must be at the selected commit.
 
   WHY THIS ACTION LIVES HERE AND NOT IN `reprobuild`. It used to, and a job
   that merely `uses:` it had to download the whole 546 MB reprobuild
@@ -83,12 +93,13 @@ inputs:
     default: "https://cache.metacraft-labs.com/"
   repro-version:
     description: >
-      Release to install the prebuilt `repro` CLI from -- a tag (`v0.2.0`, or
-      the bare `0.2.0`) or `latest`. Pin this to make a consumer's CI
-      reproducible across reprobuild releases. Ignored when `from-source` is
-      true. An unrelated CLI on PATH never overrides this selection.
+      Override: the release to install the prebuilt `repro` CLI from, a tag
+      (`v0.2.0`, or the bare `0.2.0`). Empty (the default) installs the pin,
+      `pins/reprobuild.json`. With `from-source` true and no repro-build-pin,
+      that release's tag is built instead. An unrelated CLI on PATH never
+      overrides this selection.
     required: false
-    default: "latest"
+    default: ""
   io-mon-pin:
     description: Optional full io-mon source SHA for a Linux/macOS source build; empty retains the Reprobuild flake lock.
     required: false
@@ -102,15 +113,15 @@ inputs:
     required: false
     default: "metacraft-labs"
   runquota-ref:
-    description: RunQuota source ref for a source build; empty takes the revision the reprobuild at repro-build-pin locks in its flake.lock.
+    description: RunQuota source ref for a source build; empty takes the revision the selected Reprobuild revision locks in its flake.lock.
     required: false
     default: ""
   io-mon-ref:
-    description: Windows io-mon source ref; empty takes the revision the reprobuild at repro-build-pin locks. The separate io-mon-pin selects the POSIX Nix override.
+    description: Windows io-mon source ref; empty takes the revision the selected Reprobuild revision locks. The separate io-mon-pin selects the POSIX Nix override.
     required: false
     default: ""
   stackable-hooks-pin:
-    description: Optional full lowercase Windows hook-library SHA; empty takes the revision the reprobuild at repro-build-pin locks.
+    description: Optional full lowercase Windows hook-library SHA; empty takes the revision the selected Reprobuild revision locks.
     required: false
     default: ""
   from-source:
@@ -123,11 +134,12 @@ inputs:
   repro-package:
     description: >
       Nix store path of a `reprobuild` package the caller already built from
-      `github:metacraft-labs/reprobuild/<repro-build-pin>` (Linux and macOS).
-      When set, no release is installed and nothing is built: the path must
-      be valid in the local store and equal to the package output that pinned
-      flake evaluates to on this system, which requires repro-build-pin to be
-      a full commit SHA; its bin/ then goes on PATH. A workflow that builds
+      `github:metacraft-labs/reprobuild/<commit>`, the selected commit: the
+      pin, or repro-build-pin when given (Linux and macOS). When set, no
+      release is installed and nothing is built: the path must be valid in
+      the local store and equal to the package output that flake evaluates to
+      on this system, which requires the commit to be a full SHA; its bin/
+      then goes on PATH. A workflow that builds
       the package for its own identity receipts passes it here so the job
       does not build the engine a second time. Overrides from-source.
     required: false
@@ -152,13 +164,12 @@ inputs:
     default: "true"
   repro-build-pin:
     description: >
-      Git ref (branch, tag, or SHA) of `metacraft-labs/reprobuild` to build the
-      `repro` CLI from when the SOURCE fallback is used. Empty (the default)
-      builds the release tag the prebuilt path resolved from `repro-version`,
-      so a platform without a prebuilt asset runs the same reprobuild as the
-      others; when no release was resolved (`from-source: true`, or the lookup
-      failed) it builds `dev`. This does not affect which release the prebuilt
-      path installs -- that is `repro-version`.
+      Override: the revision of `metacraft-labs/reprobuild` (prefer a full
+      commit SHA) to build the `repro` CLI from. Empty (the default) installs
+      the pin, `pins/reprobuild.json`. Given alone it is built from source;
+      given with repro-version it is the source fallback for a platform that
+      release has no asset for. Without it, an override's fallback builds the
+      release repro-version resolved, and fails if none was resolved.
     required: false
     default: ""
 
@@ -173,6 +184,19 @@ outputs:
   repro-bin-dir:
     description: Directory added to PATH containing the selected `repro` CLI.
     value: ${{ steps.decide.outputs.repro-bin-dir }}
+  origin:
+    description: >
+      `pin` when the revision came from pins/reprobuild.json, `override` when
+      the caller chose it with repro-version or repro-build-pin.
+    value: ${{ steps.pin.outputs.origin }}
+  version:
+    description: The version the installed `repro --version` reports.
+    value: ${{ steps.check.outputs.version }}
+  commit:
+    description: >
+      The Reprobuild commit the CLI was built from: the source checkout's
+      commit, or the admitted package's. Empty for a release archive.
+    value: ${{ steps.check.outputs.commit || (steps.decide.outputs.install-source == 'package' && steps.pin.outputs.build-ref || '') }}
 
 runs:
   using: composite
@@ -186,6 +210,19 @@ runs:
       run: |
         . "${GITHUB_ACTION_PATH}/../ci-roots/route.sh"
         printf 'workspace-directory=%s\nlegacy-layout=%s\n' "$MCL_WORKSPACE_ROOT" "$MCL_LEGACY_LAYOUT" >> "$GITHUB_OUTPUT"
+
+    # The revision to install: the pin in this checkout unless the caller
+    # overrides it. Every later step reads the selection from here, never
+    # from the two override inputs.
+    - name: Select the Reprobuild revision
+      id: pin
+      shell: bash
+      env:
+        REPRO_VERSION: ${{ inputs.repro-version }}
+        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        FROM_SOURCE: ${{ inputs.from-source }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/resolve-reprobuild-pin.sh"
     # PATH discovery is not release identity: an older or incomplete installation
     # must not suppress the explicitly requested SDK. Reuse requires the owning
     # store/release provenance, not a successful --version string. Until that
@@ -206,24 +243,22 @@ runs:
       shell: bash
       env:
         REPRO_PACKAGE: ${{ inputs.repro-package }}
-        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        REPRO_BUILD_PIN: ${{ steps.pin.outputs.build-ref }}
         GH_TOKEN: ${{ inputs.gh-token }}
       run: |
         bash "${GITHUB_ACTION_PATH}/bind-repro-package.sh"
 
     - name: Install prebuilt repro CLI from GitHub Release
       id: release
-      if: ${{ inputs.from-source != 'true' && inputs.repro-package == '' }}
+      if: ${{ steps.pin.outputs.release-version != '' && inputs.repro-package == '' }}
       shell: bash
       env:
-        REPRO_VERSION: ${{ inputs.repro-version }}
+        REPRO_VERSION: ${{ steps.pin.outputs.release-version }}
         REPRO_REQUIRE_CHECKSUM: ${{ inputs.require-checksum }}
-        # Only used to authenticate the `latest` lookup against api.github.com.
-        # Anonymous API access is 60 requests/hour PER IP and the whole
-        # ephemeral-runner fleet egresses from one address, so without a token
-        # `repro-version: latest` starts 403ing under ordinary load -- which
-        # this action reads as "cannot resolve latest" and turns into a silent,
-        # much slower source build.
+        # Only used to authenticate an explicit `latest` lookup against
+        # api.github.com. Anonymous API access is 60 requests/hour PER IP and
+        # the whole ephemeral-runner fleet egresses from one address, so
+        # without a token that lookup starts 403ing under ordinary load.
         REPRO_GITHUB_TOKEN: ${{ inputs.gh-token }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
@@ -237,10 +272,9 @@ runs:
         set -e
 
         # The release this run resolved, whether or not an asset existed for
-        # this platform. The source fallback builds this tag by default, so a
-        # platform without a prebuilt (linux-aarch64) runs the same reprobuild
-        # as every other leg rather than a branch tip that may not read the
-        # consumer's lock schema.
+        # this platform. Without a selected build ref the source fallback
+        # builds this tag, so a platform without a prebuilt (linux-aarch64)
+        # runs the same reprobuild as every other leg.
         #
         # Parsed with bash builtins only, keeping the last match. This step's
         # PATH is the job's, and on self-hosted runners that is a Nix profile
@@ -291,9 +325,9 @@ runs:
       # forwards these from ~20 repos, some of which wire them to
       # workflow_dispatch inputs, so they are not trusted constants.
       env:
-        FROM_SOURCE: ${{ inputs.from-source }}
-        REPRO_VERSION: ${{ inputs.repro-version }}
-        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        ORIGIN: ${{ steps.pin.outputs.origin }}
+        REPRO_VERSION: ${{ steps.pin.outputs.release-version }}
+        BUILD_REF: ${{ steps.pin.outputs.build-ref }}
         RESOLVED_TAG: ${{ steps.release.outputs.resolved-tag }}
         RELEASE_INSTALLED: ${{ steps.release.outputs.installed }}
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
@@ -303,7 +337,7 @@ runs:
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
         set -euo pipefail
-        build_ref="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"
+        build_ref="${BUILD_REF:-${RESOLVED_TAG:-}}"
         if [ -n "${REPRO_PACKAGE:-}" ]; then
           if [ -z "${PACKAGE_BIN_DIR:-}" ]; then
             echo "::error::setup-reprobuild: repro-package was given but not admitted"
@@ -317,13 +351,17 @@ runs:
           echo "repro-bin-dir=${RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"
         else
-          # Announce the fallback. A source build is minutes-to-hours slower and
-          # pulls in the whole Nix/env.ps1 toolchain, so a consumer silently
-          # dropping into it -- which is what happened on EVERY runner before
-          # this action learned to use releases -- should be visible, not
-          # inferred from a long job time.
-          if [ "${FROM_SOURCE}" = "true" ]; then
-            echo "::notice::setup-reprobuild: building repro from source because from-source=true (ref: ${build_ref})."
+          # No branch default: a source build needs the selected revision, or
+          # the release the override resolved.
+          if [ -z "${build_ref}" ]; then
+            echo "::error::setup-reprobuild: no release was installed and no revision was selected to build (repro-version: '${REPRO_VERSION:-}'). Pass repro-build-pin, or leave both overrides empty to install the pin."
+            exit 1
+          fi
+          # Announce the route. A source build is minutes-to-hours slower and
+          # pulls in the whole Nix/env.ps1 toolchain, so a release that falls
+          # back to it should be visible, not inferred from a long job time.
+          if [ -z "${REPRO_VERSION:-}" ]; then
+            echo "::notice::setup-reprobuild: building repro from source at ${build_ref} (${ORIGIN:-})."
           else
             echo "::warning::setup-reprobuild: no verified prebuilt repro release for this platform (requested: ${REPRO_VERSION}); FALLING BACK to a source build of '${build_ref}'. See the preceding log lines for why. This is much slower and requires the sibling repos provisioned by reprobuild-provision."
           fi
@@ -338,16 +376,15 @@ runs:
       if: ${{ steps.decide.outputs.need-source == 'true' }}
       shell: bash
       env:
-        REPRO_BUILD_PIN: ${{ inputs.repro-build-pin }}
+        BUILD_REF: ${{ steps.pin.outputs.build-ref }}
         RESOLVED_TAG: ${{ steps.release.outputs.resolved-tag }}
         GH_TOKEN: ${{ inputs.gh-token }}
         GIT_AUTH_DIR: ${{ github.action_path }}/../git-auth
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
-        # Reprobuild's CI matrix builds `repro` on every push, so the
-        # default-branch tip is always a known-good source tree. Honour an
-        # optional pin so repos can lock reprobuild to a known SHA across runs.
+        # The revision is the one `Select the Reprobuild revision` chose: the
+        # pinned commit, or the caller's override.
         #
         # THIS GOES THROUGH `authenticated-clone.sh` and not a bare `git clone`.
         # `metacraft-labs/reprobuild` is PUBLIC, and git does not send a URL's
@@ -365,10 +402,14 @@ runs:
         # with no explanation at all. `authenticated-clone.sh` prints git's own
         # output, scrubbed, naming the repository.
         set -uo pipefail
-        # An explicit pin wins; otherwise the release this run resolved, so the
-        # fallback builds what the other platforms install; `dev` only when no
-        # release was resolved.
-        REF="${REPRO_BUILD_PIN:-${RESOLVED_TAG:-dev}}"
+        # The selected revision; for an override that names only a release,
+        # the release this run resolved, so the fallback builds what the other
+        # platforms install. `Decide install path` refused an empty one.
+        REF="${BUILD_REF:-${RESOLVED_TAG:-}}"
+        if [ -z "${REF}" ]; then
+          echo "::error::setup-reprobuild: no Reprobuild revision was selected to build"
+          exit 1
+        fi
         DEST="${MCL_WORKSPACE_ROOT}/.reprobuild-src"
         . "${GIT_AUTH_DIR}/scoped-git-auth.sh"
         export TOKEN_OWNERS="metacraft-labs"
@@ -414,6 +455,9 @@ runs:
         IO_MON_PIN: ${{ inputs.io-mon-pin }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
+        # The CLI this installs is the product, not a development build:
+        # compile it as the release archive is compiled. See the Windows step.
+        REPROBUILD_BUILD_MODE: release
       run: |
         set -euo pipefail
         cd "${MCL_WORKSPACE_ROOT}/.reprobuild-src"
@@ -559,6 +603,19 @@ runs:
       env:
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
+        # scripts/build_apps.sh builds DEBUG binaries unless told otherwise
+        # (`REPROBUILD_BUILD_MODE:-debug`), and that mode also selects io-mon's
+        # monitor shim. Release archives are built with `-d:release` (the
+        # `.#release` targets in reprobuild's repro.nim), so a source build
+        # without this is a slower CLI than the one the pin stands for.
+        # Measured on test.yml run 45222389094 (reprobuild d1bf1f06, Windows):
+        # the nim log says `opt: none (DEBUG BUILD ...)`; a reused dev-env
+        # activation took 5.6-6.6 s, where the v0.2.31 release took 0.37-0.95 s
+        # (run 45028869707), and a cold provider compile 102-139 s against
+        # 39-87 s. The CMD status fixture's 120 s bound then expired. Built in
+        # release mode (run 45228190104), the same cases took 1.3-1.7 s and
+        # 41-62 s, and the fixture passed.
+        REPROBUILD_BUILD_MODE: release
       run: |
         # Windows-side: replay reprobuild's own DIY contract. Source its env.ps1
         # (which pulls in the toolchain managed by windows/bootstrap-toolchain.ps1)
@@ -634,3 +691,16 @@ runs:
             }
           }
         }
+
+    # The CLI that later steps resolve must be the selected one: the pin's
+    # version, and for a source build a checkout at the selected commit.
+    - name: Check the installed repro is the selected one
+      id: check
+      shell: bash
+      env:
+        EXPECTED_VERSION: ${{ steps.pin.outputs.expected-version }}
+        EXPECTED_COMMIT: ${{ steps.pin.outputs.expected-commit }}
+        SOURCE_DIR: ${{ steps.decide.outputs.need-source == 'true' && format('{0}/.reprobuild-src', steps.roots.outputs.workspace-directory) || '' }}
+        REPRO_BIN_DIR: ${{ steps.decide.outputs.repro-bin-dir }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/check-installed-repro.sh"

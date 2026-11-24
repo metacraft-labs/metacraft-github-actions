@@ -68,7 +68,9 @@ esac
 export PATH
 
 REPO="${REPRO_REPO:-metacraft-labs/reprobuild}"
-VERSION="${REPRO_VERSION:-latest}"
+# The caller names the release; there is no `latest` default. setup-reprobuild
+# installs the pin (pins/reprobuild.json) unless its caller overrides it.
+VERSION="${REPRO_VERSION:-}"
 INSTALL_DIR="${REPRO_INSTALL_DIR:?REPRO_INSTALL_DIR must be set}"
 CHECKSUM_FILE_NAME="SHA256SUMS"
 
@@ -317,6 +319,7 @@ links_leaving_package() {
 }
 
 main() {
+  [ -n "${VERSION}" ] || die "REPRO_VERSION names no release; pass a release tag"
   detect_platform
   resolve_tag
 
