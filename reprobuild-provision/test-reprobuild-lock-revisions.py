@@ -44,6 +44,7 @@ REPOS = (
     "nim-shm-queue", "nim-shm-gset", "reprobuild-test-adapters",
     "reprobuild-ct-test-runner", "reprobuild-llm-agent-packages",
     "test-certificates-tools", "codetracer-native-recorder",
+    "nim-cli-spec", "nim-entrypoints", "nim-confutils",
 )
 
 
@@ -234,13 +235,21 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     print("PASS only a conflict on a cloned sibling is refused")
 
     # 7. Windows: every env.ps1 sibling the lock pins follows it, including a
-    #    `git`-type input; an unpinned one keeps its mainline.
+    #    `git`-type input; an unpinned one keeps its mainline. The sibling-first
+    #    packages reprobuild's config.nims reads from `../nim-cli-spec`,
+    #    `../nim-entrypoints` and `../nim-confutils` are cloned when the lock
+    #    pins them and skipped, not defaulted to a branch, when it does not
+    #    (`nim-confutils` has no `dev`). Without them a v0.2.35 Windows source
+    #    build cannot compile the engine, and its `repro exec` refuses with
+    #    "no acceptable source for CLI_SPEC_SRC".
     checkout = reprobuild_checkout("windows", {
         "runquota-src": github("runquota", locked),
         "io-mon-src": github("io-mon", locked),
         "nim-stackable-hooks-src": github("nim-stackable-hooks", locked),
         "nim-shm-queue-src": github("nim-shm-queue", locked),
         "codetracer-src": github("codetracer", locked),
+        "nim-cli-spec-src": github("nim-cli-spec", locked),
+        "nim-confutils-src": github("nim-confutils", locked),
         "test-certificates-tools-src": {
             "type": "git", "url": "https://github.com/fixture/test-certificates-tools.git",
             "rev": locked}})
@@ -250,9 +259,11 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
     assert "updating codetracer's source-only Nim submodules failed" in out, out
     for name in (
         "runquota", "io-mon", "nim-stackable-hooks", "nim-shm-queue",
-        "codetracer", "test-certificates-tools",
+        "codetracer", "test-certificates-tools", "nim-cli-spec", "nim-confutils",
     ):
         assert version(workspace, name) == "locked revision\n", name + "\n" + out
+    assert not (workspace / "nim-entrypoints").exists(), out
+    assert "nim-entrypoints not cloned (the reprobuild being built does not lock it)" in out, out
     for name in ("nim-shm-lease", "nim-shm-gset", "reprobuild-test-adapters"):
         assert version(workspace, name) == "dev tip\n", name + "\n" + out
     print("PASS Windows clones every sibling its reprobuild locks at that revision")

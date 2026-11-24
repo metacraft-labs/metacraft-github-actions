@@ -279,6 +279,11 @@ jobs:
       - name: Caller-built Reprobuild package admission contract
         run: python3 setup-reprobuild/test-prebuilt-package.py
 
+      # A source-built engine refuses its compiled-in sibling trees, so the
+      # build step must hand later steps the pinned trees the dev shell names.
+      - name: Source build forwards the sibling-first source variables
+        run: python3 setup-reprobuild/test-source-build-env.py
+
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
 

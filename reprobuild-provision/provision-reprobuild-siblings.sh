@@ -269,6 +269,25 @@ if [ "${RUNNER_OS:-Linux}" = "Windows" ]; then
   REPROBUILD_TEST_ADAPTERS_REF="$(sibling_rev reprobuild-test-adapters "" dev)" || exit 1
   REPROBUILD_CT_TEST_RUNNER_REF="$(sibling_rev reprobuild-ct-test-runner "" dev)" || exit 1
   REPROBUILD_LLM_AGENT_PACKAGES_REF="$(sibling_rev reprobuild-llm-agent-packages "" dev)" || exit 1
+  # The sibling-first Nim packages reprobuild's `config.nims` registers with
+  # `addSiblingFirstPackagePath` (and its engine lists in
+  # `SiblingFirstPackageEnvNames`) beyond the two shm libraries above:
+  # `../nim-cli-spec/src`, `../nim-entrypoints/src` and `../nim-confutils`.
+  # env.ps1 exports no variable for them, so without these checkouts the
+  # engine compile stops at `cannot open file: clispec`, and an engine built
+  # from this git checkout refuses `repro exec` with "no acceptable source for
+  # CLI_SPEC_SRC". They are cloned only when the lock pins them: a reprobuild
+  # older than these inputs does not read them, and `nim-confutils` has no
+  # `dev` branch for the mainline fallback to name.
+  LOCKED_ONLY_SIBLINGS=""
+  for _name in nim-cli-spec nim-entrypoints nim-confutils; do
+    if [ -n "$(locked_revs_of "${_name}")" ]; then
+      _rev="$(sibling_rev "${_name}" "" "")" || exit 1
+      LOCKED_ONLY_SIBLINGS+="${_name}:${_rev} "
+    else
+      echo "reprobuild-provision: ${_name} not cloned (the reprobuild being built does not lock it)" >&2
+    fi
+  done
 fi
 
 # A directory that is NOT inside the consumer's checkout, for the repo-aware git
@@ -561,6 +580,11 @@ else
   clone "${CLONE_OWNER}/reprobuild-test-adapters" "${REPROBUILD_TEST_ADAPTERS_REF}"
   clone "${CLONE_OWNER}/reprobuild-ct-test-runner" "${REPROBUILD_CT_TEST_RUNNER_REF}"
   clone "${CLONE_OWNER}/reprobuild-llm-agent-packages" "${REPROBUILD_LLM_AGENT_PACKAGES_REF}"
+  # Locked SHAs only (see LOCKED_ONLY_SIBLINGS), so `preflight` has no branch
+  # to ask about and they are not listed in `check_pins` above.
+  for _entry in ${LOCKED_ONLY_SIBLINGS}; do
+    clone "${CLONE_OWNER}/${_entry%%:*}" "${_entry##*:}"
+  done
   # The engine links the `test_certificates` package (store, note framing,
   # two-note merge) from this sibling: without `../test-certificates-tools/src`
   # the engine compile stops at `certificate_store.nim: cannot open file:
