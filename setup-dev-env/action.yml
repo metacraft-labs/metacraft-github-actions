@@ -726,6 +726,10 @@ runs:
         # Snapshot env BEFORE sourcing.
         $before = @{}
         Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+        # ...and the aliases: env.ps1 aliases each tool it provisions to the
+        # executable it chose, and that choice is what later steps must see.
+        $aliasesBefore = @{}
+        Get-Alias | ForEach-Object { $aliasesBefore[$_.Name] = $_.Definition }
 
         # Source the env script in this shell.
         . $env:ENV_PS1_PATH
@@ -735,17 +739,92 @@ runs:
           $name  = $_.Name
           $value = $_.Value
           if ((-not $before.ContainsKey($name)) -or ($before[$name] -ne $value)) {
-            # PATH gets special handling: append to GITHUB_PATH
-            # entry-by-entry so the actions runner aggregates
-            # correctly across steps.
+            # PATH gets special handling: the entries env.ps1 added go to
+            # GITHUB_PATH, one per line. Two rules decide their order:
+            #
+            # - env.ps1's precedence is kept. The runner prepends each
+            #   GITHUB_PATH line ahead of the earlier ones, so the lines
+            #   are written last first. Written in env.ps1's order they
+            #   came out reversed, and on a runner holding an old GNAT
+            #   install GNAT's gcc (no static pthread) shadowed the WinLibs
+            #   gcc env.ps1 puts ahead of it.
+            # - env.ps1's shims directory ($env:WINDOWS_DIY_SHIMS_DIR) goes
+            #   behind every other entry. Its shims are extensionless bash
+            #   scripts for Git Bash and WSL callers. A local session reaches
+            #   the real tools through the Set-Alias entries env.ps1 also
+            #   makes, but later steps never receive aliases, so with the
+            #   shims first pwsh resolved `nim` to the shim and could not
+            #   start it.
+            # - each tool env.ps1 aliases resolves to the alias's target (see
+            #   below), which is what a local session gets.
             if ($name -eq "PATH" -or $name -eq "Path") {
               $beforePath = if ($before.ContainsKey($name)) { $before[$name] } else { "" }
               $oldEntries = $beforePath.Split([IO.Path]::PathSeparator)
-              $newEntries = $value.Split([IO.Path]::PathSeparator)
-              foreach ($e in $newEntries) {
-                if ($e -and ($oldEntries -notcontains $e)) {
-                  Add-Content -Path $env:GITHUB_PATH -Value $e
+              $shimsDir = $env:WINDOWS_DIY_SHIMS_DIR
+              $added = [System.Collections.Generic.List[string]]::new()
+              $shims = $null
+              foreach ($e in $value.Split([IO.Path]::PathSeparator)) {
+                if (-not $e -or ($oldEntries -contains $e) -or $added.Contains($e) -or ($e -eq $shims)) {
+                  continue
                 }
+                if ($shimsDir -and ($e.TrimEnd('\', '/') -ieq $shimsDir.TrimEnd('\', '/'))) {
+                  $shims = $e
+                  continue
+                }
+                $added.Add($e)
+              }
+              # env.ps1 resolves each tool it aliases to the alias's target;
+              # its PATH order alone does not (tup's MSYS2 mingw64 bin, with a
+              # gcc.exe of its own, comes before the WinLibs gcc env.ps1
+              # aliases). Move each alias target's directory ahead of every
+              # added directory that holds an executable of the same name.
+              $targets = @()
+              foreach ($a in Get-Alias) {
+                if ($aliasesBefore.ContainsKey($a.Name) -and $aliasesBefore[$a.Name] -eq $a.Definition) { continue }
+                $def = $a.Definition
+                if ($def -and [IO.Path]::IsPathRooted($def) -and (Test-Path -LiteralPath $def -PathType Leaf)) {
+                  $targets += [pscustomobject]@{ File = [IO.Path]::GetFileName($def); Dir = (Split-Path -Parent $def) }
+                }
+              }
+              function Test-SameDir([string]$a, [string]$b) { $a.TrimEnd('\', '/') -ieq $b.TrimEnd('\', '/') }
+              function Find-Dir($list, [string]$dir) {
+                for ($k = 0; $k -lt $list.Count; $k++) { if (Test-SameDir $list[$k] $dir) { return $k } }
+                return -1
+              }
+              function Find-Shadow($list, $t, [int]$limit) {
+                for ($k = 0; $k -lt $limit; $k++) {
+                  if (Test-Path -LiteralPath (Join-Path $list[$k] $t.File) -PathType Leaf -ErrorAction SilentlyContinue) { return $k }
+                }
+                return -1
+              }
+              # Each pass moves at least one directory forward; a cycle of
+              # contradictory aliases ends after as many passes as there are
+              # entries and is reported below.
+              for ($pass = 0; $pass -le $added.Count; $pass++) {
+                $moved = $false
+                foreach ($t in $targets) {
+                  $at = Find-Dir $added $t.Dir
+                  if ($at -lt 0) { continue }
+                  $shadow = Find-Shadow $added $t $at
+                  if ($shadow -ge 0) {
+                    $dir = $added[$at]
+                    $added.RemoveAt($at)
+                    $added.Insert($shadow, $dir)
+                    $moved = $true
+                  }
+                }
+                if (-not $moved) { break }
+              }
+              foreach ($t in $targets) {
+                $at = Find-Dir $added $t.Dir
+                if ($at -ge 0 -and (Find-Shadow $added $t $at) -ge 0) {
+                  Write-Host "::warning::setup-dev-env: env.ps1 aliases $($t.File) to $($t.Dir), but an earlier PATH entry still provides one"
+                }
+              }
+              if ($shims) { $added.Add($shims) }
+              $added.Reverse()
+              foreach ($e in $added) {
+                Add-Content -Path $env:GITHUB_PATH -Value $e
               }
             } else {
               # Escape multi-line values via heredoc syntax.
