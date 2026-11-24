@@ -724,17 +724,27 @@ runs:
           $name  = $_.Name
           $value = $_.Value
           if ((-not $before.ContainsKey($name)) -or ($before[$name] -ne $value)) {
-            # PATH gets special handling: append to GITHUB_PATH
-            # entry-by-entry so the actions runner aggregates
-            # correctly across steps.
+            # PATH gets special handling: write the entries env.ps1
+            # added to GITHUB_PATH, one per line, LAST FIRST. The
+            # runner prepends each GITHUB_PATH line ahead of the ones
+            # before it, so the file's last line ends up first on
+            # PATH. Written in env.ps1's order, the precedence came out
+            # reversed: on a runner holding an old GNAT install,
+            # GNAT's gcc (no static pthread) shadowed the WinLibs gcc
+            # env.ps1 puts ahead of it, and every Nim link failed with
+            # "cannot find -lpthread".
             if ($name -eq "PATH" -or $name -eq "Path") {
               $beforePath = if ($before.ContainsKey($name)) { $before[$name] } else { "" }
               $oldEntries = $beforePath.Split([IO.Path]::PathSeparator)
-              $newEntries = $value.Split([IO.Path]::PathSeparator)
-              foreach ($e in $newEntries) {
-                if ($e -and ($oldEntries -notcontains $e)) {
-                  Add-Content -Path $env:GITHUB_PATH -Value $e
+              $added = [System.Collections.Generic.List[string]]::new()
+              foreach ($e in $value.Split([IO.Path]::PathSeparator)) {
+                if ($e -and ($oldEntries -notcontains $e) -and -not $added.Contains($e)) {
+                  $added.Add($e)
                 }
+              }
+              $added.Reverse()
+              foreach ($e in $added) {
+                Add-Content -Path $env:GITHUB_PATH -Value $e
               }
             } else {
               # Escape multi-line values via heredoc syntax.
