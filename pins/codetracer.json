@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "tool": "codetracer",
+  "owner": "metacraft-labs",
+  "repo": "codetracer",
+  "rev": "a7cddd8bce554f5d73a7636e2bad15605b71963c",
+  "narHash": "sha256-TU0cfIz86U9HGCdoUkekyxX5wVy2fAtiDwgPlRg0QCo=",
+  "version": "26.10.1",
+  "kind": "dev-commit",
+  "flake": true,
+  "systems": ["x86_64-linux", "aarch64-darwin"]
+}

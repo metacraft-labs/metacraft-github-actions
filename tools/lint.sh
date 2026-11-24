@@ -49,6 +49,7 @@ python3 setup-dev-env/test-frozen-sibling-source.py
 shellcheck -S warning prepare-repro-envs/prepare.sh prepare-repro-envs/enter-shell.sh
 python3 prepare-repro-envs/test.py
 python3 refresh-build-auth/test.py
+python3 -I tools/test-codetracer-mac-lock.py
 node --check refresh-build-auth/nix-auth.cjs
 node --check assert-workflow-triggers/index.cjs
 node --check .github/enumerate-workflows.cjs
