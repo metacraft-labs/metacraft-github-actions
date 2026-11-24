@@ -261,6 +261,26 @@ class ReleaseSelection(unittest.TestCase):
         for name in forwarded:
             self.assertIn(name, declared, f'setup-reprobuild@{sha} has no input {name}')
 
+        # The named commit must also run the setup-reprobuild of this
+        # checkout. A fix to the leaf reaches setup-dev-env's callers only
+        # through this pin, and the leaf's own jobs here run `./setup-reprobuild`,
+        # so a stale pin passes every other check while callers keep the old
+        # behaviour. Compare what the leaf executes: its own directory and the
+        # sibling directories it reaches through `../`, without their tests.
+        dirs = {'setup-reprobuild'}
+        dirs.update(re.findall(r'(?:GITHUB_ACTION_PATH\}|github\.action_path \}\})/\.\./([A-Za-z0-9_-]+)/',
+                               (HERE / 'action.yml').read_text()))
+        pathspec = sorted(dirs) + [':(exclude,glob)**/test-*',
+                                   ':(exclude,glob)**/*-test.sh',
+                                   ':(exclude,glob)**/__pycache__/**']
+        drift = git('diff', '--name-only', sha, 'HEAD', '--', *pathspec)
+        self.assertEqual(drift.returncode, 0, drift.stderr)
+        self.assertEqual(
+            drift.stdout, '',
+            f'setup-dev-env runs setup-reprobuild@{sha}, which differs from this '
+            f'checkout in:\n{drift.stdout}Move the pin in setup-dev-env/action.yml '
+            f'to the newest commit that changes these files.')
+
     def test_sdk_dependency_provisioner_chooses_no_reprobuild_revision(self):
         # reprobuild-provision follows the checkout setup-reprobuild selected;
         # an input of its own would be a second default beside the pin.
