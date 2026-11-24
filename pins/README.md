@@ -148,10 +148,26 @@ least it needs:
   metacraft-labs, `agent-harbor` for agent-harbor. Every other flake input the
   pinned revisions evaluate is public.
 
-**The App is installed on the agent-harbor organization, limited to the
-repository `agent-harbor/agent-harbor`** (operator decision, 2026-11-24). The
-installation exists so this workflow can verify the revisions in
-`pins/agent-harbor.json` and `pins/agent-harbor-llm-proxy.json`; the workflow
-requests `contents: read` only. A pin naming another agent-harbor repository
-needs that repository added to the installation first, and
-`tools/test-check-pins.py` fails until it is.
+An empty `repositories:` input would mint a token for every repository the
+owner's installation covers, so the step that lists the repositories fails
+rather than hand the minting step an empty list.
+
+**The App is public and installed on the agent-harbor organization** as
+installation 185313720, with repository selection **all** (verified
+2026-11-24 with `gh api orgs/agent-harbor/installations`). The installation
+exists so this workflow can verify the revisions in `pins/agent-harbor.json`
+and `pins/agent-harbor-llm-proxy.json`. The first three attempts to install
+it produced no installation the workflow could see (`GET
+/repos/agent-harbor/agent-harbor/installation` answered 404): the App was
+then private ("Only on this account") and could not be installed on another
+organization. The operator made it public and then installed it.
+
+Because the installation covers every agent-harbor repository, it no longer
+limits which repositories this workflow's token can reach. The narrowing on
+the minting step is now the only limit: `repositories:` keeps the
+agent-harbor token to the pinned repository, and `permission-contents: read`
+keeps it from the App's write permissions. A pin naming another agent-harbor
+repository needs no change to the installation; the workflow adds that
+repository to the owner's token. `tools/test-check-pins.py` checks that the
+minting step keeps both inputs and that the listing step fails rather than
+hand it an empty list.

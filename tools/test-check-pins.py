@@ -25,6 +25,42 @@ GOOD = {
 }
 
 
+def workflow_step(workflow, name):
+    """The text of the pins.yml step called `name`, up to the next step."""
+    start = workflow.index(f"      - name: {name}\n")
+    end = workflow.find("\n      - ", start + 1)
+    return workflow[start:] if end < 0 else workflow[start:end]
+
+
+def owner_token_narrowing_defects(workflow):
+    """What lets the `remote` job's owner token reach beyond contents:read on
+    the owner's pinned repositories (pins/README.md, "Tokens"); empty when
+    nothing does."""
+    defects = []
+    repos = workflow_step(workflow, "The owner's pinned repositories")
+    mint = workflow_step(workflow, "Mint a read token for the owner")
+    if workflow.index(repos) > workflow.index(mint):
+        defects.append("the repositories are listed after the token is minted")
+    if "        id: repos\n" not in repos:
+        defects.append("the listing step is not `repos`")
+    # An assignment fails the step under `bash -e` when the listing fails or
+    # prints nothing; an empty `repositories:` input would widen the token.
+    if ('          repos="$(python3 -I tools/check-pins.py --list-repos --owner "$OWNER")"\n'
+            '          echo "repos=$repos" | tee -a "$GITHUB_OUTPUT"') not in repos:
+        defects.append("the listing does not fail the step when check-pins.py fails")
+    if "continue-on-error" in repos or "continue-on-error" in mint:
+        defects.append("a failure of the listing or the minting is tolerated")
+    if "          owner: ${{ matrix.owner }}\n" not in mint:
+        defects.append("the token is not minted for the leg's owner")
+    if "          repositories: ${{ steps.repos.outputs.repos }}\n" not in mint:
+        defects.append("the token is not limited to the listed repositories")
+    permissions = [
+        line.strip() for line in mint.splitlines() if line.strip().startswith("permission-")]
+    if permissions != ["permission-contents: read"]:
+        defects.append(f"the token's permissions are {permissions}, not contents:read alone")
+    return defects
+
+
 class CheckPins(unittest.TestCase):
     def run_with(self, **files):
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,14 +195,36 @@ class CheckPins(unittest.TestCase):
             self.assertEqual(list_repos().returncode, 2)
             self.assertEqual(list_repos("--owner", "a-owner", "--remote").returncode, 2)
 
-    def test_the_real_pins_name_their_repositories(self):
-        # The agent-harbor installation of the CI token provider App covers
-        # agent-harbor/agent-harbor only (pins/README.md); a pin naming another
-        # agent-harbor repository must fail here, not as a 404 in the workflow.
-        done = subprocess.run(
-            [sys.executable, "-I", str(ROOT / "tools" / "check-pins.py"),
-              "--list-repos", "--owner", "agent-harbor"], capture_output=True, text=True)
-        self.assertEqual((done.returncode, done.stdout), (0, "agent-harbor\n"), done.stderr)
+    def test_the_owner_token_is_narrowed_to_contents_read_on_the_pinned_repositories(self):
+        # The CI token provider App's agent-harbor installation covers every
+        # repository of the organization (pins/README.md, "Tokens"), so the
+        # minting step's inputs are the only limit on the owner's token: the
+        # repositories --list-repos prints, and contents:read and no other
+        # permission. A text check, because the steps run only in Actions.
+        workflow = (ROOT / ".github" / "workflows" / "pins.yml").read_text()
+        self.assertEqual(owner_token_narrowing_defects(workflow), [])
+        # Negative controls: each way of widening the token is reported.
+        widened = {
+            "no repositories": ("          repositories: ${{ steps.repos.outputs.repos }}\n", ""),
+            "a second permission": ("          permission-contents: read\n",
+                                    "          permission-contents: read\n"
+                                    "          permission-pull-requests: write\n"),
+            "no permission": ("          permission-contents: read\n", ""),
+            "write access": ("permission-contents: read", "permission-contents: write"),
+            "another owner": ("          owner: ${{ matrix.owner }}\n          repositories",
+                              "          owner: metacraft-labs\n          repositories"),
+            "an echo that hides a failed listing": (
+                '          repos="$(python3 -I tools/check-pins.py --list-repos --owner "$OWNER")"\n'
+                '          echo "repos=$repos"',
+                '          echo "repos=$(python3 -I tools/check-pins.py --list-repos --owner "$OWNER")"'),
+            "a listing that may fail": ("        id: repos\n",
+                                        "        id: repos\n        continue-on-error: true\n"),
+        }
+        for why, (old, new) in widened.items():
+            with self.subTest(why):
+                self.assertEqual(workflow.count(old), 1, old)
+                self.assertNotEqual(
+                    owner_token_narrowing_defects(workflow.replace(old, new)), [], why)
 
     def test_each_owner_gets_its_own_token(self):
         # The workflow mints one token per owner; a pin is checked with its
