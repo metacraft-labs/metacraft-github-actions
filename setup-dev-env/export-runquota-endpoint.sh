@@ -33,6 +33,18 @@
 # "Answers" means `runquota status` succeeds on that socket. A socket file alone
 # is not an answer: it outlives a daemon that was killed.
 #
+# HOST IDENTITY. A CI job record is joined to RunQuota's observation rows by the
+# host id and the session id (reprobuild-pm spec/Build-Engine-And-Scheduler.md,
+# "Naming the host and the session in a CI job log"). When the endpoint chosen
+# (caller, input, host, or the Windows default pipe) answers
+# `runquota status --json` with a `host_id`, the endpoint line ends in
+# ` host_id=<id>` and the id is written to the `runquota-host-id` output. An
+# unknown id prints nothing, and an id with any character outside
+# [A-Za-z0-9._-] is treated as unknown, because the line and the output are
+# parsed downstream. The step also exports REPRO_ANNOUNCE_RUNQUOTA_SESSION=1 on
+# every path, so `repro` prints `runquota: session_id=<id>` on stderr for each
+# RunQuota session it registers in the later steps.
+#
 # PORTABILITY. bash 3.2 (GitHub's macOS images) and Git Bash on Windows; no
 # awk/sed/grep.
 #
@@ -43,9 +55,10 @@
 #                               /var/run/runquota/runquotad.sock (macOS). Set by
 #                               the contract suite, which must not use /run.
 #   MCL_RUNQUOTA_BIN            the `runquota` client; default the one on PATH.
-# Outputs: `runquota-endpoint` and `runquota-endpoint-source` (the DECISION) to
-# $GITHUB_OUTPUT, RUNQUOTA_SOCKET to $GITHUB_ENV when exported, and one line to
-# the log and $GITHUB_STEP_SUMMARY on every path.
+# Outputs: `runquota-endpoint`, `runquota-endpoint-source` (the DECISION) and
+# `runquota-host-id` (empty when unknown) to $GITHUB_OUTPUT, RUNQUOTA_SOCKET to
+# $GITHUB_ENV when exported, REPRO_ANNOUNCE_RUNQUOTA_SESSION=1 to $GITHUB_ENV
+# always, and one line to the log and $GITHUB_STEP_SUMMARY on every path.
 set -euo pipefail
 
 INPUT="${MCL_RUNQUOTA_SOCKET_INPUT-}"
@@ -73,6 +86,47 @@ fi
 answers() {
   [ -n "$CLI" ] && [ -x "$CLI" ] || return 1
   RUNQUOTA_SOCKET="$1" "$CLI" status >/dev/null 2>&1
+}
+
+# host_id_of [SOCKET]: print the `host_id` the daemon reports, or nothing when
+# it reports none (`null`, an older daemon with no such member, no answer) or
+# one that is not a safe token. Empty SOCKET asks the client's default endpoint
+# (the Windows named pipe).
+#
+# `runquota status --json` prints one JSON object whose members are the
+# daemon's, with `host_id` the first member after the wire counters, so the
+# first `"host_id":` in the text is the daemon's own. Parsed with parameter
+# expansion only (no awk/sed/grep, no jq on a stock runner).
+host_id_of() {
+  [ -n "$CLI" ] && [ -x "$CLI" ] || return 0
+  local json rest id
+  if [ -n "$1" ]; then
+    json="$(RUNQUOTA_SOCKET="$1" "$CLI" status --json 2>/dev/null)" || return 0
+  else
+    # Only on the `windows` path, where RUNQUOTA_SOCKET is not set (it would
+    # have been the `caller` decision).
+    json="$("$CLI" status --json 2>/dev/null)" || return 0
+  fi
+  rest="${json#*\"host_id\":}"
+  [ "$rest" != "$json" ] || return 0
+  # Tolerate whitespace after the colon, from a pretty-printing client.
+  rest="${rest#"${rest%%[! ]*}"}"
+  case "$rest" in
+  \"*) rest="${rest#\"}" ;;
+  *) return 0 ;; # null, or not a string
+  esac
+  case "$rest" in
+  *\"*) id="${rest%%\"*}" ;;
+  *) return 0 ;; # unterminated
+  esac
+  # An escaped quote (\") leaves a backslash in `id`, which the set refuses.
+  # The set is spelled out rather than as ranges, whose meaning depends on
+  # the locale.
+  case "$id" in
+  "" | *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) return 0 ;;
+  esac
+  [ "${#id}" -le 128 ] || return 0
+  printf '%s' "$id"
 }
 
 DECISION=""
@@ -111,7 +165,17 @@ else
   done
 fi
 
-echo "setup-dev-env: runquota endpoint: ${DECISION}: ${REASON}"
+HOST_ID=""
+case "$DECISION" in
+caller | input | host) HOST_ID="$(host_id_of "$ENDPOINT")" ;;
+windows) HOST_ID="$(host_id_of "")" ;;
+esac
+HOST_ID_SUFFIX=""
+if [ -n "$HOST_ID" ]; then
+  HOST_ID_SUFFIX=" host_id=${HOST_ID}"
+fi
+
+echo "setup-dev-env: runquota endpoint: ${DECISION}: ${REASON}${HOST_ID_SUFFIX}"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   echo "- RunQuota endpoint: \`${DECISION}\` — ${REASON}" >>"$GITHUB_STEP_SUMMARY"
 fi
@@ -123,10 +187,16 @@ esac
 if [ -n "$EXPORTED" ] && [ -n "${GITHUB_ENV:-}" ]; then
   echo "RUNQUOTA_SOCKET=${EXPORTED}" >>"$GITHUB_ENV"
 fi
+if [ -n "${GITHUB_ENV:-}" ]; then
+  # Every path: with no host daemon `repro` registers with the user's shared
+  # daemon, and its session ids are joined the same way.
+  echo "REPRO_ANNOUNCE_RUNQUOTA_SESSION=1" >>"$GITHUB_ENV"
+fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "runquota-endpoint=${EXPORTED}"
     echo "runquota-endpoint-source=${DECISION}"
+    echo "runquota-host-id=${HOST_ID}"
   } >>"$GITHUB_OUTPUT"
 fi
 exit 0

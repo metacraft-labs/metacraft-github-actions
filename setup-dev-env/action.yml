@@ -398,6 +398,17 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  runquota-host-id:
+    description: >
+      The `host_id` the RunQuota daemon chosen for the job reports in
+      `runquota status --json` (the id RunQuota's observation rows carry), so a
+      job record can be joined to them. Empty when no daemon was chosen, when
+      it reports none (capture off), or when the id holds a character outside
+      `[A-Za-z0-9._-]`. Also printed as ` host_id=<id>` at the end of the
+      `setup-dev-env: runquota endpoint:` log line.
+    value: ${{ steps.runquota-endpoint.outputs.runquota-host-id }}
+
 runs:
   using: "composite"
   steps:
@@ -1215,6 +1226,19 @@ runs:
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
 
+    # A `nix` that was already on PATH (decision `present` above) was not
+    # configured by setup-nix, and may run with Nix's defaults, in which
+    # `nix-command` and `flakes` are off: the fleet's ephemeral Linux runners
+    # carry such a wrapper around the host's Nix client. The consumer's flake
+    # dev shell (`nix print-dev-env`, run by `repro exec`) then failed with
+    # "experimental Nix feature 'nix-command' is disabled". Enable both in the
+    # job's NIX_CONFIG, additively, before any later step runs `nix`. The Nix
+    # authentication step below keeps the line. Rationale in the script header.
+    - name: Enable the Nix features the dev env uses (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/enable-nix-features.sh"
+
     # `repro` provisions a declared tool that is not on PATH from a tarball,
     # using the host `tar` — which runs gzip / xz / bzip2 as child processes.
     # The self-hosted runners' Nix-profile PATH carries none of them, so a job
@@ -1556,8 +1580,10 @@ runs:
         echo "::endgroup::"
 
     # The last step, so that nothing above (the source-built repro, whose
-    # bootstrap has its own daemon) is redirected by it. The rationale and the
-    # decision table live in export-runquota-endpoint.sh's header.
+    # bootstrap has its own daemon) is redirected by it, or announces its
+    # sessions (REPRO_ANNOUNCE_RUNQUOTA_SESSION reaches only later steps). The
+    # rationale and the decision table live in export-runquota-endpoint.sh's
+    # header.
     - name: Export the host RunQuota endpoint
       id: runquota-endpoint
       shell: bash
