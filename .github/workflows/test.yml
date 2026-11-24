@@ -277,10 +277,12 @@ jobs:
       # persist-credentials: false — see the note on the job below. This job
       # runs two bash scripts and shellcheck; it performs no git operation
       # after the checkout, so there is nothing for a stored credential to
-      # authenticate.
+      # authenticate. Full history: test-install-release.py reads the
+      # setup-reprobuild commit setup-dev-env names, which a shallow clone lacks.
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: no credential persisted into the checkout
         run: bash .github/assert-no-persisted-credential.sh
