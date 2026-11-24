@@ -1147,6 +1147,19 @@ runs:
         attic-cache: ${{ inputs.attic-cache }}
         attic-endpoint: ${{ inputs.attic-endpoint }}
 
+    # A `nix` that was already on PATH (decision `present` above) was not
+    # configured by setup-nix, and may run with Nix's defaults, in which
+    # `nix-command` and `flakes` are off: the fleet's ephemeral Linux runners
+    # carry such a wrapper around the host's Nix client. The consumer's flake
+    # dev shell (`nix print-dev-env`, run by `repro exec`) then failed with
+    # "experimental Nix feature 'nix-command' is disabled". Enable both in the
+    # job's NIX_CONFIG, additively, before any later step runs `nix`. The Nix
+    # authentication step below keeps the line. Rationale in the script header.
+    - name: Enable the Nix features the dev env uses (reprobuild)
+      if: ${{ inputs.env-flavor == 'reprobuild' && runner.os != 'Windows' }}
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/enable-nix-features.sh"
+
     # `repro` provisions a declared tool that is not on PATH from a tarball,
     # using the host `tar` — which runs gzip / xz / bzip2 as child processes.
     # The self-hosted runners' Nix-profile PATH carries none of them, so a job
