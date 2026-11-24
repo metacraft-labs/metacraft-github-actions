@@ -398,6 +398,17 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  runquota-host-id:
+    description: >
+      The `host_id` the RunQuota daemon chosen for the job reports in
+      `runquota status --json` (the id RunQuota's observation rows carry), so a
+      job record can be joined to them. Empty when no daemon was chosen, when
+      it reports none (capture off), or when the id holds a character outside
+      `[A-Za-z0-9._-]`. Also printed as ` host_id=<id>` at the end of the
+      `setup-dev-env: runquota endpoint:` log line.
+    value: ${{ steps.runquota-endpoint.outputs.runquota-host-id }}
+
 runs:
   using: "composite"
   steps:
@@ -1477,8 +1488,10 @@ runs:
         echo "::endgroup::"
 
     # The last step, so that nothing above (the source-built repro, whose
-    # bootstrap has its own daemon) is redirected by it. The rationale and the
-    # decision table live in export-runquota-endpoint.sh's header.
+    # bootstrap has its own daemon) is redirected by it, or announces its
+    # sessions (REPRO_ANNOUNCE_RUNQUOTA_SESSION reaches only later steps). The
+    # rationale and the decision table live in export-runquota-endpoint.sh's
+    # header.
     - name: Export the host RunQuota endpoint
       id: runquota-endpoint
       shell: bash

@@ -479,6 +479,27 @@ only steps that lose out are scripts that start their own daemon when they find
 none, and those should now do the same. The decision is printed on one line and
 added to the job summary on every run.
 
+### Naming the host and the session in the job log
+
+A CI job record is joined to RunQuota's observation rows by the host id and the
+session id. When the chosen daemon (the caller's, the input's, the host's, or
+the Windows default pipe) answers `runquota status --json` with a `host_id`,
+the endpoint line ends in ` host_id=<id>`:
+
+```text
+setup-dev-env: runquota endpoint: host: the host's RunQuota daemon answers on /run/runquota/runquotad.sock host_id=rqh-…
+```
+
+and the id is the action's `runquota-host-id` output. Nothing is printed, and
+the output is empty, when the daemon reports no id (capture is off) or one with
+a character outside `[A-Za-z0-9._-]`: the line and the output are parsed
+downstream, so an id that is not a plain token is treated as unknown.
+
+The step also exports `REPRO_ANNOUNCE_RUNQUOTA_SESSION=1` to the steps after
+it, on every path. With it, `repro` writes `runquota: session_id=<id>` on
+stderr once for every RunQuota session it registers. Outside CI the variable is
+unset and `repro` prints nothing of the kind.
+
 ## Sibling-repo overrides
 
 For workflows that pre-clone sibling repos alongside the host
