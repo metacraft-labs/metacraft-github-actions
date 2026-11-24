@@ -12,6 +12,10 @@ last line ends up first on PATH. Two rules are checked:
 - env.ps1's shims directory (`WINDOWS_DIY_SHIMS_DIR`) goes behind every other
   entry. Its shims are extensionless bash scripts; with the directory first,
   pwsh resolved `nim` to the shim and could not start it.
+- each tool env.ps1 aliases resolves to the alias's target. env.ps1's PATH
+  order alone puts tup's MSYS2 mingw64 bin, with a gcc.exe of its own, ahead
+  of the WinLibs gcc it aliases; a local session never sees that because the
+  alias wins there.
 
 The check runs the real step body under pwsh with a stand-in env.ps1,
 rebuilds PATH from the `$GITHUB_PATH` file the way the runner does, and
@@ -84,9 +88,11 @@ class WindowsDiyPathOrder(unittest.TestCase):
         self.shims = str(self.root / 'shims')
         self.tools = [str(self.root / name) for name in ('first', 'second', 'third')]
 
-    def run_step(self, body, entries, shims_dir=None):
+    def run_step(self, body, entries, shims_dir=None, aliases=()):
         env_ps1 = self.root / 'env.ps1'
         text = '$env:PATH = "' + os.pathsep.join(entries) + os.pathsep + '" + $env:PATH\n'
+        for name, target in aliases:
+            text += f"Set-Alias -Name {name} -Value '{target}' -Scope Global\n"
         if shims_dir is not None:
             text += '$env:WINDOWS_DIY_SHIMS_DIR = "' + shims_dir + '"\n'
         env_ps1.write_text(text, encoding='utf-8')
@@ -104,7 +110,8 @@ class WindowsDiyPathOrder(unittest.TestCase):
         )
         env.pop('WINDOWS_DIY_SHIMS_DIR', None)
         command = [self.pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)]
-        subprocess.run(command, env=env, check=True)
+        done = subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+        self.output = done.stdout
         original = os.environ['PATH'].split(os.pathsep)
         return runner_path(github_path.read_text(encoding='utf-8'), original), original
 
@@ -124,6 +131,38 @@ class WindowsDiyPathOrder(unittest.TestCase):
         path, _ = self.run_step(
             step_body(), [self.shims] + self.tools, shims_dir=self.shims + os.sep)
         self.assertEqual(path[:4], self.tools + [self.shims])
+
+    def tool_dir(self, name, *files):
+        path = self.root / name
+        path.mkdir()
+        for f in files:
+            (path / f).write_text('', encoding='utf-8')
+        return str(path)
+
+    def test_each_aliased_tool_comes_from_its_alias_target(self):
+        # The run that failed: tup's MSYS2 gcc and GNAT's gcc are on env.ps1's
+        # PATH ahead of the WinLibs gcc env.ps1 aliases.
+        msys = self.tool_dir('msys', 'gcc.exe', 'make.exe')
+        gnat = self.tool_dir('gnat', 'gcc.exe', 'gnatmake.exe')
+        winlibs = self.tool_dir('winlibs', 'gcc.exe', 'g++.exe')
+        path, original = self.run_step(
+            step_body(), [self.shims, msys, gnat, winlibs], shims_dir=self.shims,
+            aliases=[
+                ('gcc', os.path.join(winlibs, 'gcc.exe')),
+                ('gnatmake', os.path.join(gnat, 'gnatmake.exe')),
+            ])
+        self.assertEqual(path[:4], [winlibs, msys, gnat, self.shims])
+        self.assertEqual(path[4:], original)
+        self.assertNotIn('::warning::', self.output)
+
+    def test_contradictory_aliases_end_with_a_warning(self):
+        a = self.tool_dir('a', 'x.exe', 'y.exe')
+        b = self.tool_dir('b', 'x.exe', 'y.exe')
+        path, _ = self.run_step(
+            step_body(), [a, b],
+            aliases=[('x', os.path.join(b, 'x.exe')), ('y', os.path.join(a, 'y.exe'))])
+        self.assertEqual(sorted(path[:2]), sorted([a, b]))
+        self.assertIn('::warning::setup-dev-env: env.ps1 aliases', self.output)
 
     def test_the_old_step_reverses_the_order(self):
         # Negative control: the loop the step carried before either rule.
