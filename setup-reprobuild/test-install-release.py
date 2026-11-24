@@ -268,11 +268,14 @@ class ReleaseSelection(unittest.TestCase):
         # behaviour. Compare what the leaf executes: its own directory and the
         # sibling directories it reaches through `../`, without their tests.
         dirs = {'setup-reprobuild'}
-        dirs.update(re.findall(r'(?:GITHUB_ACTION_PATH\}|github\.action_path \}\})/\.\./([A-Za-z0-9_-]+)/',
-                               (HERE / 'action.yml').read_text()))
-        pathspec = sorted(dirs) + [':(exclude,glob)**/test-*',
-                                   ':(exclude,glob)**/*-test.sh',
-                                   ':(exclude,glob)**/__pycache__/**']
+        dirs.update(re.findall(
+            r'(?:GITHUB_ACTION_PATH\}|github\.action_path \}\})/\.\./([A-Za-z0-9_-]+)/',
+            (HERE / 'action.yml').read_text()))
+        pathspec = sorted(dirs) + [
+            ':(exclude,glob)**/test-*',
+            ':(exclude,glob)**/*-test.sh',
+            ':(exclude,glob)**/__pycache__/**',
+        ]
         drift = git('diff', '--name-only', sha, 'HEAD', '--', *pathspec)
         self.assertEqual(drift.returncode, 0, drift.stderr)
         self.assertEqual(
