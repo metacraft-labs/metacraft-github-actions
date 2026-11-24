@@ -41,8 +41,11 @@ def step_body():
     step = ACTION.read_text(encoding='utf-8').split('    - name: ' + STEP + '\n', 1)[1]
     step = step.split('\n    - name: ', 1)[0]
     body = step.split('      run: |\n', 1)[1]
-    return '\n'.join(line[8:] if line.startswith('        ') else line
-                     for line in body.splitlines()) + '\n'
+    lines = [
+        line[8:] if line.startswith('        ') else line
+        for line in body.splitlines()
+    ]
+    return '\n'.join(lines) + '\n'
 
 
 def old_step_body():
@@ -91,12 +94,14 @@ class WindowsDiyPathOrder(unittest.TestCase):
         github_env = self.root / 'github_env'
         github_path.write_text('', encoding='utf-8')
         github_env.write_text('', encoding='utf-8')
-        env = dict(os.environ,
-                   ENV_PS1_PATH=str(self.env_ps1),
-                   GITHUB_PATH=str(github_path),
-                   GITHUB_ENV=str(github_env))
-        subprocess.run([self.pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)],
-                       env=env, check=True)
+        env = dict(
+            os.environ,
+            ENV_PS1_PATH=str(self.env_ps1),
+            GITHUB_PATH=str(github_path),
+            GITHUB_ENV=str(github_env),
+        )
+        command = [self.pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)]
+        subprocess.run(command, env=env, check=True)
         original = os.environ['PATH'].split(os.pathsep)
         return runner_path(github_path.read_text(encoding='utf-8'), original), original
 
