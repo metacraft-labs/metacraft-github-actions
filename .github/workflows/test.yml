@@ -76,6 +76,11 @@ jobs:
         # bash-only shims directory behind the real tools.
         shell: bash
         run: python setup-dev-env/test-windows-diy-path-order.py -v
+      - name: The Windows source build leaves the provider-compile Nim to the engine
+        # env.ps1's stock nim.exe, exported as REPRO_NIM_COMPILER, rejects the
+        # --compilerArgsFile option the engine's provider compile passes.
+        shell: bash
+        run: python setup-reprobuild/test-windows-source-build-nim.py -v
       - name: Mint a read token for the pinned Reprobuild's sources
         id: token
         uses: actions/create-github-app-token@v2
@@ -106,6 +111,14 @@ jobs:
           test -f "$cli"
           if [ "$RUNNER_OS" = Windows ]; then cli="$(cygpath -w "$cli")"; fi
           printf 'cli=%s\n' "$cli" >> "$GITHUB_OUTPUT"
+          # The engine picks the provider-compile Nim itself. A stock Nim
+          # handed over in REPRO_NIM_COMPILER cannot take an over-limit
+          # Windows compile (--compilerArgsFile); the steps below then compile
+          # with the engine's choice.
+          if [ -n "${REPRO_NIM_COMPILER:-}" ]; then
+            echo "::error::setup-reprobuild exported REPRO_NIM_COMPILER=${REPRO_NIM_COMPILER}"
+            exit 1
+          fi
       - name: Real generated wrapper cwd, argv and status controls
         shell: bash
         env:

@@ -660,16 +660,27 @@ runs:
         if (-not ($newPaths -contains $reproBin)) {
           Add-Content -Path $env:GITHUB_PATH -Value $reproBin
         }
-        # Explicitly export compiler pins for repro's extract_runner and provider compiles
-        $nimCmd = Get-Command nim.exe -ErrorAction SilentlyContinue
-        if ($nimCmd) {
-          Add-Content -Path $env:GITHUB_ENV -Value "REPRO_NIM_COMPILER=$($nimCmd.Source)"
-        }
+        # Export the C compiler pin for repro's extract_runner and provider
+        # compiles.
+        #
+        # Do NOT export REPRO_NIM_COMPILER. The `nim.exe` env.ps1 put on PATH
+        # is the stock Nim that builds repro itself, and the build above
+        # already found it on PATH. The engine treats a caller-set
+        # REPRO_NIM_COMPILER as an explicit choice and keeps it for every
+        # provider compile. A compile whose command line exceeds the Windows
+        # cap of 32,767 characters passes its arguments through
+        # `--compilerArgsFile`, which a consumer with many SDK siblings
+        # reaches. The stock Nim rejects that option ("invalid command line option:
+        # '--compilerArgsFile'"). Left unset, the engine provisions the Nim
+        # build that accepts it, exactly as it does for a release install.
+        # test-windows-source-build-nim.py keeps it unset.
         $gccCmd = Get-Command gcc.exe -ErrorAction SilentlyContinue
         if ($gccCmd) {
           Add-Content -Path $env:GITHUB_ENV -Value "REPRO_BOOTSTRAP_CC=$($gccCmd.Source)"
         }
         # Propagate environment variables exported by env.ps1 (LIBRARY_PATH, BEARSSL_SRC, etc.)
+        # REPRO_NIM_COMPILER stays excluded so that this loop never forwards
+        # it either (see above).
         Get-ChildItem env: | ForEach-Object {
           if (-not $initialEnv.ContainsKey($_.Name) -or $initialEnv[$_.Name] -ne $_.Value) {
             if ($_.Name -notin @("PATH", "PWD", "OLDPWD", "REPRO_NIM_COMPILER", "REPRO_BOOTSTRAP_CC")) {
