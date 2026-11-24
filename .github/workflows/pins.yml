@@ -33,8 +33,10 @@ name: pins
 #   resolver-windows    the same changes: the Windows pin reader
 #                       (ConvertFrom-Json) on a real Windows runner
 #   codetracer-mac-lock the CodeTracer pin, its lock workflow or its tool
-#                       changed: solve and check CodeTracer's aarch64-darwin
-#                       lock at the pinned revision on a hosted arm64 Mac
+#                       changed (never on the schedule; on a dispatch only
+#                       when asked; see `changes`): solve and check
+#                       CodeTracer's aarch64-darwin lock at the pinned
+#                       revision on a hosted arm64 Mac
 #                       (.github/workflows/codetracer-mac-lock.yml)
 #
 # The remote, package, install and CodeTracer lock jobs mint a CI token
@@ -49,6 +51,11 @@ on:
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:
+    inputs:
+      codetracer-mac-lock:
+        description: Also solve CodeTracer's aarch64-darwin lock on a hosted arm64 Mac (codetracer-mac-lock.yml can be dispatched on its own too).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -60,11 +67,23 @@ concurrency:
 jobs:
   changes:
     # Which parts of the gate this change needs: `git diff BASE..HEAD`, where
-    # BASE is the pull request's base commit or the push's `before`. A missing
-    # or all-zero BASE, a diff that fails, a schedule and a dispatch all count
-    # as changing everything.
+    # BASE is the pull request's base commit or the push's `before`. For the
+    # pins and Reprobuild parts, a missing or all-zero BASE, a diff that
+    # fails, a schedule and a dispatch all count as changing everything.
+    #
+    # The CodeTracer part runs a hosted arm64 Mac for half an hour, so it has
+    # its own, narrower rule (pins/README.md, "When the CodeTracer lock job
+    # runs"): it runs when the CodeTracer files differ in the change under
+    # test, never on the schedule, on a dispatch only when its input asks,
+    # and on a push not when the merged branch already proved the same files
+    # on its pull request.
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reading the pull request runs that prove a merge push's CodeTracer
+      # files (below).
+      actions: read
     outputs:
       pins: ${{ steps.diff.outputs.pins }}
       reprobuild: ${{ steps.diff.outputs.reprobuild }}
@@ -75,10 +94,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - id: diff
+      - name: Which parts of the gate this change needs
+        id: diff
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          DISPATCH_CODETRACER: ${{ inputs.codetracer-mac-lock }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           files="$RUNNER_TEMP/changed-files"
@@ -101,10 +123,57 @@ jobs:
             "$all" || grep -Eq "$1" "$files"
           }
           workflow='^\.github/workflows/pins\.yml$'
+          ct_files='pins/codetracer.json .github/workflows/codetracer-mac-lock.yml tools/codetracer-mac-lock.py'
+          ct_pattern='^pins/codetracer\.json$|^\.github/workflows/codetracer-mac-lock\.yml$|^tools/codetracer-mac-lock\.py$'
+
+          # A push of a merge commit whose second parent (the merged branch)
+          # carries exactly the CodeTracer files HEAD does, where a
+          # pull_request run of this workflow on that parent passed with the
+          # lock job's `result` and `pins-gate` successful: those files were
+          # solved on a Mac already. Anything short of that, including an API
+          # error, is no proof. Only for push: a pull request's HEAD is a test
+          # merge whose second parent is the pull request itself.
+          proven_on_pull_request() {
+            local parent f runs jobs id
+            parent="$(git rev-parse -q --verify 'HEAD^2')" || return 1
+            for f in $ct_files; do
+              [ "$(git rev-parse -q --verify "HEAD:$f")" = "$(git rev-parse -q --verify "$parent:$f")" ] || {
+                echo "HEAD's $f differs from the merged branch's ($parent)"; return 1; }
+            done
+            runs="$RUNNER_TEMP/proof-runs.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pins.yml/runs?event=pull_request&status=success&head_sha=$parent&per_page=20" > "$runs" || {
+              echo "::warning::could not list the pull request runs of $parent"; return 1; }
+            for id in $(python3 -I -c 'import json, sys; [print(r["id"]) for r in json.load(open(sys.argv[1]))["workflow_runs"]]' "$runs"); do
+              jobs="$RUNNER_TEMP/proof-jobs-$id.json"
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" > "$jobs" || continue
+              if python3 -I -c '
+          import json, sys
+          done = {j["name"]: j["conclusion"] for j in json.load(open(sys.argv[1]))["jobs"]}
+          sys.exit(0 if done.get("codetracer-mac-lock / result") == "success" and done.get("pins-gate") == "success" else 1)
+          ' "$jobs"; then
+                echo "proven by pull request run $id on $parent"; return 0
+              fi
+            done
+            echo "no successful pull request run with the lock job on $parent"; return 1
+          }
+
           pins=false reprobuild=false codetracer=false
           if matches "^pins/|^flake\.nix$|^tools/check-pins\.py$|^tools/update-pin\.sh$|$workflow"; then pins=true; fi
           if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
-          if matches "^pins/codetracer\.json$|^\.github/workflows/codetracer-mac-lock\.yml$|^tools/codetracer-mac-lock\.py$"; then codetracer=true; fi
+          case "$EVENT" in
+            pull_request)
+              if matches "$ct_pattern"; then codetracer=true; fi
+              ;;
+            push)
+              if matches "$ct_pattern"; then
+                if proven_on_pull_request; then codetracer=false; else codetracer=true; fi
+              fi
+              ;;
+            workflow_dispatch)
+              if [ "$DISPATCH_CODETRACER" = true ]; then codetracer=true; fi
+              ;;
+            *) ;; # schedule: never
+          esac
           printf 'pins=%s\nreprobuild=%s\ncodetracer=%s\n' "$pins" "$reprobuild" "$codetracer" | tee -a "$GITHUB_OUTPUT"
       - id: owners
         # The owners the pins name: the remote job mints one token for each.
@@ -425,9 +494,10 @@ jobs:
   codetracer-mac-lock:
     # The reusable workflow solves and checks CodeTracer's aarch64-darwin lock
     # at pins/codetracer.json's revision on a hosted arm64 macOS runner. It
-    # runs only when `changes` reports the CodeTracer files changed (a
-    # schedule or dispatch counts as everything changing): hosted macOS
-    # minutes are scarce, and no other pin moves this lock. It waits for
+    # runs only when `changes` says so: the CodeTracer files differ in the
+    # pull request or in a push no pull request run proved, or a dispatch
+    # asks for it; never on the schedule. Hosted macOS minutes are scarce,
+    # and no other pin moves this lock. It waits for
     # `local`, so a pin the schema refuses never reaches a Mac. Called with no
     # inputs it solves the pinned revision and expects the solve to succeed;
     # its `outcome` output (`confirmed` or `produced` on success) is what

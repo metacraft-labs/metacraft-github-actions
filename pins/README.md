@@ -132,10 +132,42 @@ and passes trivially when a change touches no pin and none of the readers.
 - For the CodeTracer pin it calls `.github/workflows/codetracer-mac-lock.yml`,
   which solves and checks CodeTracer's aarch64-darwin lock at the pinned
   revision on a hosted arm64 Mac (see "The CodeTracer pin and its Apple
-  Silicon lock" in the repository README). It runs only when
-  `pins/codetracer.json`, that workflow or `tools/codetracer-mac-lock.py`
-  changed, and `pins-gate` passes it only when its `outcome` output is
+  Silicon lock" in the repository README). It runs only under the rule
+  below, and `pins-gate` passes it only when its `outcome` output is
   `confirmed` or `produced`.
+
+### When the CodeTracer lock job runs
+
+The job holds a hosted arm64 Mac for half an hour or more, so it does not
+follow the "anything unclear counts as changed" rule the other parts use. The
+CodeTracer files are `pins/codetracer.json`,
+`.github/workflows/codetracer-mac-lock.yml` and
+`tools/codetracer-mac-lock.py`. The `changes` job decides:
+
+| Event                    | The Mac job runs when                                                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `pull_request`           | the pull request's diff against its base touches a CodeTracer file, or the diff cannot be computed                         |
+| `push` (`agents`, `dev`) | the push's diff against `before` touches a CodeTracer file (or cannot be computed), **and** the push is not proven (below) |
+| `schedule`               | never                                                                                                                      |
+| `workflow_dispatch`      | only when the `codetracer-mac-lock` input is true                                                                          |
+
+A push is proven when HEAD is a merge commit, its second parent (the merged
+branch) carries byte-identical CodeTracer files, and a `pull_request` run of
+this workflow on that parent succeeded with `codetracer-mac-lock / result`
+and `pins-gate` both successful (read with the job's `actions: read` token).
+That is the normal landing: a pull request merged with a merge commit, so a
+bump runs the Mac once on its pull request into `agents` and once on the
+promotion pull request into `dev`, not again on either merge push. A direct
+push, a squash or rebase merge, a merge that changed the files itself, or an
+API error is not proven, and the Mac runs. `agents` has no ruleset requiring
+pull requests, which is why the proof is read from the run rather than
+assumed from the branch.
+
+When the job does not run, it is `skipped` and `pins-gate` accepts that
+because `codetracer` is false; the required check still reports. To solve
+the lock by hand, dispatch `pins` with `codetracer-mac-lock` set, or dispatch
+`codetracer-mac-lock.yml` on its own (it also takes an explicit revision and
+the negative control).
 
 ### Tokens
 

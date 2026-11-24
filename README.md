@@ -303,9 +303,11 @@ runs on, so the darwin lock can be produced only on an Apple Silicon host. The
 reusable workflow `.github/workflows/codetracer-mac-lock.yml` does that on a
 GitHub-hosted arm64 macOS runner (`macos-26`), never on a fleet Mac. The `pins`
 workflow calls it, with no inputs, only when `pins/codetracer.json`, the
-workflow or `tools/codetracer-mac-lock.py` changed; like the rest of the gate,
-its weekly schedule and a manual dispatch count as everything changing. It
-runs three jobs:
+workflow or `tools/codetracer-mac-lock.py` changed in a pull request, or in a
+push that no pull request run already proved; never on the weekly schedule,
+and on a manual dispatch of `pins` only when its `codetracer-mac-lock` input
+asks (pins/README.md, "When the CodeTracer lock job runs"). It runs three
+jobs:
 
 1. `plan` runs on Linux. It refuses a malformed revision, and one that does
    not exist or has no `locks/arm64-macosx.lock`. It also reads the Reprobuild
