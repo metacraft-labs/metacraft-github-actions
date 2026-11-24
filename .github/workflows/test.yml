@@ -69,6 +69,12 @@ jobs:
         # exec`; an exported PATHEXT made cmd.exe run npm's `.ps1` shims.
         shell: bash
         run: python setup-dev-env/test-github-env-exports.py -v
+      - name: windows-diy hands later steps env.ps1's PATH order
+        # The runner prepends each $GITHUB_PATH line ahead of the earlier
+        # ones; the step writes env.ps1's entries last first so they keep
+        # env.ps1's precedence.
+        shell: bash
+        run: python setup-dev-env/test-windows-diy-path-order.py -v
       - name: Install the verified released compatibility baseline
         id: sdk
         shell: bash
