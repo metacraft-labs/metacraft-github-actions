@@ -584,6 +584,12 @@ jobs:
       - name: binary-cache preflight contract suite
         run: bash setup-nix/tests/probe-substituters-test.sh
 
+      # The DNS wait and the revert-then-retry around the Nix install, shared
+      # byte-for-byte with devops-modules `.github/setup-nix`. Stubbed
+      # resolver, sleep, sudo and installer (see the suite's header).
+      - name: Nix install resilience contract suite
+        run: bash setup-nix/tests/install-nix-resilience-test.sh
+
       # Install Nix exactly as setup-nix/action.yml's `Install Nix` step does
       # (same action version, determinate: false), so the suite below and the
       # end-to-end step run against the config the installer really writes.
@@ -610,7 +616,7 @@ jobs:
           fi
 
       - name: shellcheck
-        run: shellcheck -S warning setup-nix/strip-unknown-installer-settings.sh setup-nix/tests/strip-unknown-installer-settings-test.sh setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh
+        run: shellcheck -S warning setup-nix/strip-unknown-installer-settings.sh setup-nix/tests/strip-unknown-installer-settings-test.sh setup-nix/configure-git-auth.sh setup-nix/configure-git-auth-test.sh setup-nix/write-nix-netrc.sh setup-nix/nix-netrc-test.sh setup-nix/probe-substituters.sh setup-nix/tests/probe-substituters-test.sh setup-nix/install-nix-resilience.sh setup-nix/tests/install-nix-resilience-test.sh
 
   setup-nix-alignment:
     # This setup-nix and devops-modules `.github/setup-nix` provision Nix for
