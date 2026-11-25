@@ -1294,6 +1294,22 @@ test("the broker never writes a writing job's Git token file", (t) => {
   assert.throws(() => jc.writeGitToken(dir, "has space"));
 });
 
+test("a job that declared git-access none is never given a Git token", (t) => {
+  const dir = privateDir(tempDir(t));
+  assert.equal(jc.parseGitAccess(" none "), "none");
+  jc.writeGitAccess(dir, "none");
+  assert.equal(jc.gitAccess(dir), "none");
+  jc.rotate(dir, "broker-sentinel", ["metacraft-labs"]);
+  assert.equal(
+    fs.existsSync(path.join(dir, jc.GIT_TOKEN)),
+    false,
+    "the broker wrote a Git token for a job that uses none",
+  );
+  assert.equal(jc.brokerOwnsGitToken(dir), false);
+  // Nix is still the broker's.
+  assert.equal(jc.readAccessTokens(dir)["github.com"], "broker-sentinel");
+});
+
 // The bash half: scoped-git-auth.sh's ownership test, run with a PATH that
 // holds bash and nothing else (a runner's PATH need not carry sed or cat).
 function bashBrokerOwnsGit(dir) {
@@ -1352,7 +1368,7 @@ test("only a live, unstopped broker that wrote it owns a reading job's Git token
 test("startBroker records git-access before its first rotation", async (t) => {
   const { privateKey, publicKey } = keyPair();
   const gh = await fakeGitHub(t, publicKey);
-  for (const access of ["write", ""]) {
+  for (const access of ["write", "none", ""]) {
     const dir = privateDir(tempDir(t));
     jc.writeAccessTokens(dir, { "github.com": "gh-token-sentinel" });
     fs.writeFileSync(path.join(dir, jc.GIT_TOKEN), "gh-token-sentinel\n", {
@@ -1392,11 +1408,11 @@ test("startBroker records git-access before its first rotation", async (t) => {
       /^ghs_minted_sentinel_/,
     );
     const gitToken = fs.readFileSync(path.join(dir, jc.GIT_TOKEN), "utf8");
-    if (access === "write")
+    if (access === "write" || access === "none")
       assert.equal(
         gitToken,
         "gh-token-sentinel\n",
-        "write: the broker wrote git-token",
+        access + ": the broker wrote git-token",
       );
     else assert.match(gitToken, /^ghs_minted_sentinel_\d+\n$/);
     fs.writeFileSync(path.join(dir, jc.STOP), "");
@@ -1422,7 +1438,7 @@ test("startBroker records git-access before its first rotation", async (t) => {
     },
   );
   assert.notEqual(bad.status, 0);
-  assert.match(bad.stderr, /git-access must be 'read' or 'write'/);
+  assert.match(bad.stderr, /git-access must be 'read', 'write' or 'none'/);
 });
 
 // A runner's PATH need not carry sed, tr or cat: macOS mcl-bench-001 had no

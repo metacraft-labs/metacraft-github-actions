@@ -15,7 +15,8 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $daemon = Join-Path $outputRoot 'runquotad.exe'
 # The client too: a source-built SDK has no release bundle to carry it, and
 # callers that query the daemon (the wrapper contract test) need the matching
-# one. RUNQUOTA_BIN names it, as RUNQUOTAD_BIN names the daemon.
+# one. RUNQUOTA_BIN names it, as RUNQUOTAD_BIN names the daemon. Both are set
+# in the calling step's process; that step decides where they are exported.
 $client = Join-Path $outputRoot 'runquota.exe'
 $cache = Join-Path $outputRoot 'nimcache'
 $previousLeaseSource = $env:SHM_LEASE_SRC
@@ -32,8 +33,6 @@ try {
 & $daemon --version
 if ($LASTEXITCODE -ne 0) { throw "RunQuota bootstrap executable failed: $LASTEXITCODE" }
 $env:RUNQUOTAD_BIN = (Resolve-Path -LiteralPath $daemon).Path
-Add-Content -Path $env:GITHUB_ENV -Value "RUNQUOTAD_BIN=$env:RUNQUOTAD_BIN"
 & $client --version
 if ($LASTEXITCODE -ne 0) { throw "RunQuota client bootstrap executable failed: $LASTEXITCODE" }
 $env:RUNQUOTA_BIN = (Resolve-Path -LiteralPath $client).Path
-Add-Content -Path $env:GITHUB_ENV -Value "RUNQUOTA_BIN=$env:RUNQUOTA_BIN"

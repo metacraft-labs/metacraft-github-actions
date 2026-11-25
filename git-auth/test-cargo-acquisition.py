@@ -83,7 +83,8 @@ class CargoGitAcquisition(PrivateGlobalConfig):
         marker = '    - name: Configure Git authentication (reprobuild)\n'
         if marker in action:
             step = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
-            self.assertIn("if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}", step)
+            self.assertIn("if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' "
+                          "&& inputs.git-access != 'none' }}", step)
             self.assertIn("GH_TOKEN: ${{ inputs.git-access == 'write' && inputs.gh-token || "
                           'steps.job-token.outputs.token || inputs.gh-token }}', step)
             self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', step)

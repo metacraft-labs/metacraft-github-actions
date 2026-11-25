@@ -177,12 +177,13 @@ inputs:
     default: ""
   git-access:
     description: >
-      `read` (default) or `write`: whether this job writes over Git after this
-      action -- pushes a branch, a tag or a lock record with the job's Git
-      credential (a `git push` step, or `refresh-workspace-lock`, whose push
-      uses it). It decides which token the job-scoped Git CLI credential hands
-      Git. An action that authenticates its own push with a token it is given,
-      such as `publish-workspace-lock`, is not affected.
+      `read` (default), `write` or `none`: whether this job uses Git with the
+      job's credential after this action, and whether it writes -- pushes a
+      branch, a tag or a lock record with that credential (a `git push` step,
+      or `refresh-workspace-lock`, whose push uses it). It decides which token
+      the job-scoped Git CLI credential hands Git, or that there is none. An
+      action that authenticates its own push with a token it is given, such as
+      `publish-workspace-lock`, is not affected.
 
       `read`: while the credential broker runs (`app-id`), Git is handed the
       broker's current `contents: read` token, which the broker keeps fresh
@@ -194,8 +195,30 @@ inputs:
       more than an hour after it was minted renews it with
       `refresh-build-auth` first. Declare `write` only in a job that pushes:
       every other job is better off with the broker's read-only token.
+
+      `none`: no job-scoped Git credential is installed. This action still
+      authenticates its own sibling clones, which never reach the job's
+      environment, but later steps get no `GIT_CONFIG_*` from it and no token
+      file, and a later `refresh-build-auth` installs none either. For a job
+      whose later steps refuse inherited Git runtime configuration, such as a
+      checkout that must be configured only by its own step. The action fails
+      if the job's Git configuration changed anyway.
     required: false
     default: "read"
+  export-build-env:
+    description: >
+      `true` (default) or `false`: whether a source build of the `repro` CLI
+      hands its build environment to later steps. That environment is the
+      RunQuota daemon and client, the bootstrap compiler, the source trees the
+      engine compiles recipes against, the toolchain directories, and on
+      Windows everything the reprobuild env.ps1 sets. With `false` only the
+      CLI reaches later steps (its directory on PATH, and on Linux/macOS
+      `REPROBUILD_NIX_DAEMON_BIN`). This action's own `repro exec` check still
+      runs with the build environment. Use it in a job whose later steps build
+      with a toolchain of their own and refuse an inherited one. An install
+      that builds nothing exports no build environment either way.
+    required: false
+    default: "true"
   app-private-key:
     description: >
       Optional. The PEM private key of the App named by `app-id`. Passed to the
@@ -486,12 +509,24 @@ runs:
         # Checked here as well as by the broker, so a job without one is not
         # left with a misspelt declaration that silently means `read`.
         case "$GIT_ACCESS" in
-          read|write) ;;
+          read|write|none) ;;
           *)
-            echo "::error::git-access must be 'read' or 'write' (got '$GIT_ACCESS')" >&2
+            echo "::error::git-access must be 'read', 'write' or 'none' (got '$GIT_ACCESS')" >&2
             exit 1
             ;;
         esac
+
+    # Before anything installs a Git credential: every installer (setup-nix,
+    # "Configure Git authentication (reprobuild)", refresh-build-auth) reads
+    # the declaration from the job's credential directory and installs none.
+    # The broker, when one started above, has already recorded it there.
+    - name: Record the job's Git access
+      id: git-access
+      if: ${{ inputs.git-access == 'none' }}
+      shell: bash
+      env:
+        GIT_ACCESS: ${{ inputs.git-access }}
+      run: bash "${GITHUB_ACTION_PATH}/record-git-access.sh"
 
     # ------------------------------------------------------------------
     # Which reprobuild store this job builds into (all flavors)
@@ -1120,7 +1155,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@2844a9623f0f24dd5c14c129b92a0ddd7ce93d7c
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@515be3fa95c8b9c6ff66acc59ab394eedcc92d53
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -1139,6 +1174,7 @@ runs:
         runquota-ref: ${{ inputs.repro-runquota-pin }}
         io-mon-ref: ${{ inputs.repro-io-mon-pin }}
         stackable-hooks-pin: ${{ inputs.repro-stackable-hooks-pin }}
+        export-build-env: ${{ inputs.export-build-env }}
 
     # The CLI every later step runs must be the selected one: the pin's
     # version, and for a source build a checkout at the selected commit.
@@ -1328,7 +1364,7 @@ runs:
       # writes over Git (`git-access: write`) keeps gh-token, which the broker
       # never replaces; any other job takes the broker's token while one runs
       # (and the broker then owns the file anyway), gh-token otherwise.
-      if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}
+      if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' && inputs.git-access != 'none' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.git-access == 'write' && inputs.gh-token || steps.job-token.outputs.token || inputs.gh-token }}
@@ -1350,8 +1386,38 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       working-directory: ${{ steps.roots.outputs.consumer-directory }}
       shell: bash
+      env:
+        BUILD_ENV_DIR: ${{ steps.repro-cli.outputs.build-env-dir }}
       run: |
         set -euo pipefail
+        # With `export-build-env: false` a source build wrote its environment
+        # to these files instead of the job's. The CLI is checked with it, as
+        # the job would have run it; only this step sees it.
+        if [ -n "${BUILD_ENV_DIR:-}" ]; then
+          # A Windows name bash cannot hold, such as `ProgramFiles(x86)`, is
+          # left to the inherited environment.
+          name_re='^[A-Za-z_][A-Za-z0-9_]*$'
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            if [ -n "$line" ] && [[ "${line%%=*}" =~ $name_re ]]; then
+              export "$line"
+            fi
+          done < "$BUILD_ENV_DIR/env"
+          # Highest precedence first; Windows entries are converted one by
+          # one, because their drive letters carry a colon.
+          build_path=""
+          while IFS= read -r dir || [ -n "$dir" ]; do
+            dir="${dir%$'\r'}"
+            [ -n "$dir" ] || continue
+            if command -v cygpath >/dev/null 2>&1; then
+              dir="$(cygpath -u "$dir")"
+            fi
+            build_path="${build_path:+$build_path:}$dir"
+          done < "$BUILD_ENV_DIR/path"
+          if [ -n "$build_path" ]; then
+            PATH="$build_path:$PATH"
+          fi
+        fi
         # First use of the real consumer environment, after its siblings and
         # host archive tools are ready. A version/capabilities banner cannot
         # establish that this SDK implements the exec operation we publish.
@@ -1650,7 +1716,7 @@ runs:
         cat "$BIN_DIR/dev-exec"
         echo "::endgroup::"
 
-    # The last step, so that nothing above (the source-built repro, whose
+    # After every step that runs repro, so that nothing above (the source-built repro, whose
     # bootstrap has its own daemon) is redirected by it, or announces its
     # sessions (REPRO_ANNOUNCE_RUNQUOTA_SESSION reaches only later steps). The
     # rationale and the decision table live in export-runquota-endpoint.sh's
@@ -1661,3 +1727,15 @@ runs:
       env:
         MCL_RUNQUOTA_SOCKET_INPUT: ${{ inputs.runquota-socket }}
       run: bash "${GITHUB_ACTION_PATH}/export-runquota-endpoint.sh"
+
+    # `git-access: none` promises later steps no Git configuration from this
+    # action. Every installer above honours the declaration recorded at the
+    # start; this holds the action to it, including a setup-nix revision that
+    # predates it.
+    - name: Check that the job's Git configuration is untouched
+      if: ${{ inputs.git-access == 'none' }}
+      shell: bash
+      env:
+        START_GIT_CONFIG_COUNT: ${{ steps.git-access.outputs.git-config-count }}
+        START_GIT_CONFIG_PARAMETERS: ${{ steps.git-access.outputs.git-config-parameters }}
+      run: bash "${GITHUB_ACTION_PATH}/check-git-config-untouched.sh"

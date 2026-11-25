@@ -7,7 +7,8 @@ description: >
   Selection (resolve-reprobuild-pin.sh):
     a. No override -> the pin. A pinned commit on reprobuild `dev` or `agents`
         is built from source, or on Linux substituted from the binary cache
-        that holds that commit's own build (route 0); a pinned published
+        that holds that commit's own build (route 0), or on Windows installed
+        from that commit's pin prerelease (route 0w); a pinned published
         release is installed from its prebuilt archive, with a source build of
         the pinned commit as the fallback.
     b. repro-version and/or repro-build-pin -> the caller's override, as
@@ -23,6 +24,13 @@ description: >
         override -> substitute that commit's flake package from the binary
         caches the job's Nix trusts (`nix build --max-jobs 0`, which never
         builds), and admit it as above. A cache miss falls through to 2.
+    0w. Windows, the same selection (a full commit SHA, no build-input
+        override) -> install the prerelease `pin-<commit>` of this repository,
+        which the `pins` workflow builds from source at that commit and
+        packages with reprobuild's own release packaging script
+        (install-pin-release.sh, through install-release.sh: SHA256SUMS
+        verified, a mismatch is a hard error). A missing prerelease or archive
+        falls through to 2.
     1. The selected prebuilt release archive for this OS/arch -> download,
         verify its SHA-256 against the release's SHA256SUMS, unpack, add bin/
         to PATH.
@@ -177,19 +185,46 @@ inputs:
       release repro-version resolved, and fails if none was resolved.
     required: false
     default: ""
+  export-build-env:
+    description: >
+      `true` (default) or `false`: whether a source build hands its build
+      environment to later steps of the job. That environment is the RunQuota
+      daemon and client (`RUNQUOTAD_BIN`, `RUNQUOTA_BIN`), the bootstrap
+      compiler, Python and Bash, the source trees the engine compiles recipes
+      against, the toolchain directories, and on Windows everything the
+      reprobuild env.ps1 sets. The CLI's own `build/bin` goes on PATH either
+      way, with `REPROBUILD_NIX_DAEMON_BIN` on Linux and macOS.
+
+      With `false` that environment is written to the files `build-env-dir`
+      names instead, for a later step that needs it to load explicitly. Use
+      it in a job whose later steps build with a toolchain of their own and
+      refuse an inherited one, such as a native Windows ARM64 build after an
+      x64 CLI built under emulation. Installs that build nothing export no
+      build environment either way.
+    required: false
+    default: "true"
 
 outputs:
   install-source:
     description: >
       How `repro` ended up on PATH: `release` (verified prebuilt archive),
       `package` (the caller's repro-package), `cache` (the selected commit's
-      Nix package, substituted from a binary cache) or `source` (built here).
+      Nix package, substituted from a binary cache), `pin-release` (the
+      selected commit's verified Windows bundle from its `pin-<commit>`
+      prerelease) or `source` (built here).
       Useful for asserting in CI that a given runner class is actually being
       served by a prebuilt binary.
     value: ${{ steps.decide.outputs.install-source }}
   repro-bin-dir:
     description: Directory added to PATH containing the selected `repro` CLI.
     value: ${{ steps.decide.outputs.repro-bin-dir }}
+  build-env-dir:
+    description: >
+      With `export-build-env: false`, the directory holding the source
+      build's environment: `env` (`NAME=VALUE` lines) and `path` (one
+      directory per line, highest precedence first). Both are empty or absent
+      when nothing was built. Empty with `export-build-env: true`.
+    value: ${{ steps.build-env.outputs.dir }}
   origin:
     description: >
       `pin` when the revision came from pins/reprobuild.json, `override` when
@@ -202,7 +237,7 @@ outputs:
     description: >
       The Reprobuild commit the CLI was built from: the source checkout's
       commit, or the admitted package's. Empty for a release archive.
-    value: ${{ steps.check.outputs.commit || ((steps.decide.outputs.install-source == 'package' || steps.decide.outputs.install-source == 'cache') && steps.pin.outputs.build-ref || '') }}
+    value: ${{ steps.check.outputs.commit || ((steps.decide.outputs.install-source == 'package' || steps.decide.outputs.install-source == 'cache' || steps.decide.outputs.install-source == 'pin-release') && steps.pin.outputs.build-ref || '') }}
 
 runs:
   using: composite
@@ -352,6 +387,33 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/substitute-repro-package.sh"
 
+    # ── Pin prerelease path: the selected commit's Windows bundle ────────────
+    #
+    # The Windows counterpart of the binary-cache path above. The `pins`
+    # workflow of this repository builds the pinned commit from source on a
+    # Windows runner, packages it with reprobuild's release packaging script,
+    # and publishes it as the prerelease `pin-<commit>` here. Installing it
+    # replaces a 16-19 minute (win-ci-bare-001) to six-hour (GARM and VM
+    # runners) engine compile with a verified download. The same selection
+    # rule as the cache: a full commit SHA, no release, no caller package, and
+    # none of the inputs that build a different engine (runquota-ref,
+    # io-mon-ref, stackable-hooks-pin). setup-dev-env forwards the pin as
+    # repro-build-pin, so the version comes from expected-version when this
+    # action read the pin itself and from the prerelease's SHA256SUMS
+    # otherwise; the version check after `Decide install path` still holds it
+    # to the pin. A miss is announced and takes the source route; a
+    # prerelease that fails verification fails the step.
+    - name: Install the selected commit's pin prerelease (Windows)
+      id: pin-release
+      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
+      shell: bash
+      env:
+        REPRO_BUILD_PIN: ${{ steps.pin.outputs.expected-commit }}
+        EXPECTED_VERSION: ${{ steps.pin.outputs.expected-version }}
+        REPRO_GITHUB_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/install-pin-release.sh"
+
     # Single place that decides whether the source build runs, so the condition
     # is not repeated (and mis-repeated) across five steps.
     - name: Decide install path
@@ -375,6 +437,7 @@ runs:
         REPRO_PACKAGE: ${{ inputs.repro-package }}
         PACKAGE_BIN_DIR: ${{ steps.package.outputs.bin-dir }}
         CACHE_BIN_DIR: ${{ steps.cache.outputs.bin-dir }}
+        PIN_RELEASE_BIN_DIR: ${{ steps.pin-release.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
@@ -396,6 +459,10 @@ runs:
           echo "install-source=cache"   >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${CACHE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"
+        elif [ -n "${PIN_RELEASE_BIN_DIR:-}" ]; then
+          echo "install-source=pin-release" >> "$GITHUB_OUTPUT"
+          echo "repro-bin-dir=${PIN_RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
+          echo "need-source=false"      >> "$GITHUB_OUTPUT"
         else
           # No branch default: a source build needs the selected revision, or
           # the release the override resolved.
@@ -415,6 +482,30 @@ runs:
           echo "repro-bin-dir="         >> "$GITHUB_OUTPUT"
           echo "need-source=true"       >> "$GITHUB_OUTPUT"
         fi
+
+    # A misspelt value must not silently mean either choice, so it is checked
+    # whether or not anything is built.
+    - name: Choose where the source build environment goes
+      id: build-env
+      shell: bash
+      env:
+        EXPORT_BUILD_ENV: ${{ inputs.export-build-env }}
+      run: |
+        set -euo pipefail
+        case "${EXPORT_BUILD_ENV}" in
+          true) ;;
+          false)
+            dir="${RUNNER_TEMP:?GitHub Actions did not set RUNNER_TEMP}/setup-reprobuild-build-env"
+            mkdir -p "${dir}"
+            : > "${dir}/env"
+            : > "${dir}/path"
+            echo "dir=${dir}" >> "${GITHUB_OUTPUT}"
+            ;;
+          *)
+            echo "::error::export-build-env must be 'true' or 'false' (got '${EXPORT_BUILD_ENV}')" >&2
+            exit 1
+            ;;
+        esac
 
     # ── Fallback path: build from source (unchanged behaviour) ────────────────
 
@@ -472,7 +563,7 @@ runs:
     # clones defaults to the revision repro-build-pin locks, not a mainline.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@67ad508ae540c7672d74013baf418438f64ea75d
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@f757eb7d453ec5365bd0ff18c03236fd27240571
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -507,9 +598,21 @@ runs:
         # The CLI this installs is the product, not a development build:
         # compile it as the release archive is compiled. See the Windows step.
         REPROBUILD_BUILD_MODE: release
+        BUILD_ENV_DIR: ${{ steps.build-env.outputs.dir }}
       run: |
         set -euo pipefail
         cd "${MCL_WORKSPACE_ROOT}/.reprobuild-src"
+        # Where the build environment goes: the job's, or the files
+        # `export-build-env: false` asks for. The CLI itself (build/bin and
+        # its staged Nix helper) always goes to the job's.
+        : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
+        if [ -n "${BUILD_ENV_DIR:-}" ]; then
+          export SETUP_REPROBUILD_ENV="${BUILD_ENV_DIR}/env"
+          export SETUP_REPROBUILD_PATH="${BUILD_ENV_DIR}/path"
+        else
+          export SETUP_REPROBUILD_ENV="${GITHUB_ENV}"
+          export SETUP_REPROBUILD_PATH="${GITHUB_PATH}"
+        fi
         # Bash 3.2 treats an empty array as unset under nounset. Keep the
         # command itself in the array so the default path is nonempty too.
         nix_develop_args=(develop)
@@ -536,9 +639,8 @@ runs:
             just build
             : "${NIMCRYPTO_SRC:?reprobuild dev shell did not set NIMCRYPTO_SRC}"
             : "${BEARSSL_SRC:?reprobuild dev shell did not set BEARSSL_SRC}"
-            : "${GITHUB_ENV:?GitHub Actions did not set GITHUB_ENV}"
-            echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${GITHUB_ENV}"
-            echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${GITHUB_ENV}"
+            echo "NIMCRYPTO_SRC=${NIMCRYPTO_SRC}" >> "${SETUP_REPROBUILD_ENV}"
+            echo "BEARSSL_SRC=${BEARSSL_SRC}" >> "${SETUP_REPROBUILD_ENV}"
             # The sibling-first packages (reprobuild config.nims
             # `addSiblingFirstPackagePath`; in the engine,
             # `SiblingFirstPackageEnvNames`). An engine built from a git
@@ -554,7 +656,7 @@ runs:
             for name in SHM_QUEUE_SRC SHM_GSET_SRC CLI_SPEC_SRC ENTRYPOINTS_SRC CONFUTILS_SRC; do
               value="${!name:-}"
               if [ -n "${value}" ]; then
-                echo "${name}=${value}" >> "${GITHUB_ENV}"
+                echo "${name}=${value}" >> "${SETUP_REPROBUILD_ENV}"
               fi
             done
             # Tool resolution also starts this helper outside the build shell.
@@ -571,7 +673,7 @@ runs:
             # Node runtime.
             bootstrap_python="$(command -v python3)"
             test -x "${bootstrap_python}"
-            echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${GITHUB_ENV}"
+            echo "REPROBUILD_BOOTSTRAP_PYTHON=${bootstrap_python}" >> "${SETUP_REPROBUILD_ENV}"
             # macOS provider compilation needs the source shell compiler and
             # its SDK closure and a non-SIP executable. Linux keeps its host
             # compiler: a Nix-linked helper outside that shell can mix the
@@ -583,7 +685,7 @@ runs:
                 /nix/store/*/bin/*) ;;
                 *) echo "Source bootstrap requires a Nix C compiler" >&2; exit 1 ;;
               esac
-              echo "REPRO_BOOTSTRAP_CC=${bootstrap_cc}" >> "${GITHUB_ENV}"
+              echo "REPRO_BOOTSTRAP_CC=${bootstrap_cc}" >> "${SETUP_REPROBUILD_ENV}"
             fi
             # Monitored launches on macOS cannot use SIP-protected /bin shells.
             # Keep its rooted Bash available in subsequent steps.
@@ -595,8 +697,8 @@ runs:
                 *) echo "Source bootstrap requires Nix Bash on macOS" >&2; exit 1 ;;
               esac
             fi
-            echo "${bootstrap_bash%/*}" >> "${GITHUB_PATH}"
-            echo "REPRO_FOREIGN_ENV_BASH=${bootstrap_bash}" >> "${GITHUB_ENV}"
+            echo "${bootstrap_bash%/*}" >> "${SETUP_REPROBUILD_PATH}"
+            echo "REPRO_FOREIGN_ENV_BASH=${bootstrap_bash}" >> "${SETUP_REPROBUILD_ENV}"
             # The source shell already provides its pinned RunQuota package.
             # Later repro commands run outside that shell and still need the
             # daemon for lease admission, including when building RunQuota itself.
@@ -604,7 +706,7 @@ runs:
             runquotad="$(command -v runquotad)"
             test -x "${runquotad}"
             "${runquotad}" --version
-            echo "RUNQUOTAD_BIN=${runquotad}" >> "${GITHUB_ENV}"
+            echo "RUNQUOTAD_BIN=${runquotad}" >> "${SETUP_REPROBUILD_ENV}"
             # `repro` dlopens solver/cache libraries by leaf name. On Linux
             # scripts/build_apps.sh links an rpath for each of them, gated by
             # reprobuild tests/integration/t_repro_runtime_dlopen_without_library_path.nim,
@@ -617,11 +719,11 @@ runs:
             # glibc-2.42 libdl.so.2. macOS keeps both paths as before.
             if [ "$(uname -s)" = "Darwin" ]; then
               if [ -n "${LD_LIBRARY_PATH:-}" ]; then
-                echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "${GITHUB_ENV}"
+                echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "${SETUP_REPROBUILD_ENV}"
               fi
               dyld_library_path="${DYLD_LIBRARY_PATH:-${LD_LIBRARY_PATH:-}}"
               if [ -n "${dyld_library_path}" ]; then
-                echo "DYLD_LIBRARY_PATH=${dyld_library_path}" >> "${GITHUB_ENV}"
+                echo "DYLD_LIBRARY_PATH=${dyld_library_path}" >> "${SETUP_REPROBUILD_ENV}"
               fi
             fi
           '
@@ -665,11 +767,22 @@ runs:
         # release mode (run 45228190104), the same cases took 1.3-1.7 s and
         # 41-62 s, and the fixture passed.
         REPROBUILD_BUILD_MODE: release
+        BUILD_ENV_DIR: ${{ steps.build-env.outputs.dir }}
       run: |
         # Windows-side: replay reprobuild's own DIY contract. Source its env.ps1
         # (which pulls in the toolchain managed by windows/bootstrap-toolchain.ps1)
         # and compile the apps via scripts/build_apps.sh. The build drops
         # `repro.exe` under build\bin\ which we add to GITHUB_PATH.
+        #
+        # Where the build environment goes: the job's, or the files
+        # `export-build-env: false` asks for. build\bin always goes to the
+        # job's PATH.
+        $buildEnvFile = $env:GITHUB_ENV
+        $buildPathFile = $env:GITHUB_PATH
+        if ($env:BUILD_ENV_DIR) {
+          $buildEnvFile = Join-Path $env:BUILD_ENV_DIR 'env'
+          $buildPathFile = Join-Path $env:BUILD_ENV_DIR 'path'
+        }
         Set-Location "$env:MCL_WORKSPACE_ROOT\.reprobuild-src"
         $initialEnv = @{}
         Get-ChildItem env: | ForEach-Object { $initialEnv[$_.Name] = $_.Value }
@@ -699,16 +812,14 @@ runs:
             $newPaths += $p
           }
         }
+        $reproBin = (Resolve-Path .\build\bin).Path
         foreach ($p in $newPaths) {
-          if (Test-Path -LiteralPath $p) {
-            Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path -LiteralPath $p).Path
+          if ((Test-Path -LiteralPath $p) -and ((Resolve-Path -LiteralPath $p).Path -ne $reproBin)) {
+            Add-Content -Path $buildPathFile -Value (Resolve-Path -LiteralPath $p).Path
           }
         }
-        # Also ensure reprobuild's build\bin is explicitly on PATH
-        $reproBin = (Resolve-Path .\build\bin).Path
-        if (-not ($newPaths -contains $reproBin)) {
-          Add-Content -Path $env:GITHUB_PATH -Value $reproBin
-        }
+        # reprobuild's build\bin goes on the job's PATH in every case.
+        Add-Content -Path $env:GITHUB_PATH -Value $reproBin
         # Export the C compiler pin for repro's extract_runner and provider
         # compiles.
         #
@@ -725,15 +836,17 @@ runs:
         # test-windows-source-build-nim.py keeps it unset.
         $gccCmd = Get-Command gcc.exe -ErrorAction SilentlyContinue
         if ($gccCmd) {
-          Add-Content -Path $env:GITHUB_ENV -Value "REPRO_BOOTSTRAP_CC=$($gccCmd.Source)"
+          Add-Content -Path $buildEnvFile -Value "REPRO_BOOTSTRAP_CC=$($gccCmd.Source)"
         }
-        # Propagate environment variables exported by env.ps1 (LIBRARY_PATH, BEARSSL_SRC, etc.)
+        # Propagate environment variables exported by env.ps1 (LIBRARY_PATH,
+        # BEARSSL_SRC, etc.) and by build-runquota-bootstrap.ps1
+        # (RUNQUOTAD_BIN, RUNQUOTA_BIN).
         # REPRO_NIM_COMPILER stays excluded so that this loop never forwards
         # it either (see above).
         Get-ChildItem env: | ForEach-Object {
           if (-not $initialEnv.ContainsKey($_.Name) -or $initialEnv[$_.Name] -ne $_.Value) {
             if ($_.Name -notin @("PATH", "PWD", "OLDPWD", "REPRO_NIM_COMPILER", "REPRO_BOOTSTRAP_CC")) {
-              Add-Content -Path $env:GITHUB_ENV -Value "$($_.Name)=$($_.Value)"
+              Add-Content -Path $buildEnvFile -Value "$($_.Name)=$($_.Value)"
             }
           }
         }

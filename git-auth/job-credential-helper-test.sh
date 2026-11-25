@@ -380,6 +380,23 @@ broker_case broker-dead "" 0
 check "a dead broker owns nothing" "$(<"$CASE_DIR/git-token")" "$TOKEN_A"
 
 # ---------------------------------------------------------------------------
+# 8b. A job that declared `git-access: none` gets no job-scoped Git credential:
+#     no token file and nothing in $GITHUB_ENV, whoever installs it (setup-nix,
+#     setup-dev-env, refresh-build-auth). Its later steps start with no
+#     GIT_CONFIG_* from this action at all.
+# ---------------------------------------------------------------------------
+NONE_DIR="$TMPROOT/git-access-none/runner_temp/mcl-job-credentials.declared"
+mkdir -p "$NONE_DIR"
+chmod 700 "$NONE_DIR"
+printf 'none\n' >"$NONE_DIR/git-access"
+install git-access-none MCL_JOB_CREDENTIALS_DIR="$NONE_DIR"
+check "with git-access none, the install succeeds" "$CASE_RC" "0"
+check "...and writes nothing to \$GITHUB_ENV" "$(grep -c . "$CASE_ENV" || true)" "0"
+check "...and writes no Git token file" "$([[ -e $NONE_DIR/git-token ]] && echo present || echo absent)" "absent"
+check "...and says so, on stderr" \
+  "$(grep -c "declared git-access none" "$TMPROOT/git-access-none/out")" "1"
+
+# ---------------------------------------------------------------------------
 # 9. A caller's xtrace does not print the token while the file is written.
 # ---------------------------------------------------------------------------
 mkdir -p "$TMPROOT/xtrace/runner_temp"

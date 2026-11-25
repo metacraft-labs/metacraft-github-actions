@@ -268,6 +268,73 @@ with tempfile.TemporaryDirectory(prefix="reprobuild-lock-revs-") as directory:
         assert version(workspace, name) == "dev tip\n", name + "\n" + out
     print("PASS Windows clones every sibling its reprobuild locks at that revision")
 
+    # 7b. nim-shm-lease is RunQuota's dependency, and reprobuild's lock does
+    #     not pin it: it follows the flake.lock of the RunQuota being cloned.
+    #     reprobuild's Windows release staging (stage_release_runquota.sh)
+    #     exports nim-shm-lease at exactly that revision from this clone; the
+    #     `dev` clone lacked it, and pins.yml run 45588702864 stopped at
+    #     "../nim-shm-lease does not have 08a3f50a...". Another owner's entry
+    #     for the same repository loses to the clone owner's, as in the
+    #     reprobuild lock.
+    run("git", "-C", str(source), "checkout", "-q", "-b", "runquota-locks-lease", locked, env=env)
+    (source / "flake.lock").write_text(flake_lock({
+        "nim-shm-lease": github("nim-shm-lease", other),
+        "nim-shm-lease-upstream": github("nim-shm-lease", base, owner="elsewhere"),
+        "reprobuild": github("reprobuild", base)}))
+    run("git", "-C", str(source), "add", "flake.lock", env=env)
+    runquota_locking = commit("runquota locking nim-shm-lease\n")
+    (source / "flake.lock").write_text(flake_lock({
+        "lease-a": github("nim-shm-lease", other, owner="one"),
+        "lease-b": github("nim-shm-lease", base, owner="two")}))
+    run("git", "-C", str(source), "add", "flake.lock", env=env)
+    runquota_conflicting = commit("runquota with two nim-shm-lease pins\n")
+    (source / "flake.lock").write_text("{\"nodes\": {")
+    run("git", "-C", str(source), "add", "flake.lock", env=env)
+    runquota_malformed = commit("runquota with a malformed lock\n")
+    run("git", "-C", str(source), "checkout", "-q", "dev", env=env)
+    run("git", "-C", str(source), "push", "-q", str(root / "remotes" / "runquota.git"),
+        "runquota-locks-lease", env=env)
+    windows_pins = {
+        "runquota-src": github("runquota", runquota_locking),
+        "io-mon-src": github("io-mon", locked),
+        "nim-stackable-hooks-src": github("nim-stackable-hooks", locked),
+        "test-certificates-tools-src": github("test-certificates-tools", locked)}
+    checkout = reprobuild_checkout("windows-lease", windows_pins)
+    workspace, result = provision("windows-lease", "Windows", checkout)
+    out = result.stdout + result.stderr
+    assert "updating codetracer's source-only Nim submodules failed" in out, out
+    assert version(workspace, "runquota") == "runquota locking nim-shm-lease\n", out
+    assert version(workspace, "nim-shm-lease") == "another revision\n", (
+        "nim-shm-lease was not cloned at the revision the runquota clone locks:\n" + out)
+    assert f"nim-shm-lease @ {other} (locked by the runquota being cloned)" in out, out
+    print("PASS Windows clones nim-shm-lease at the revision the runquota clone locks")
+
+    # 7c. A reprobuild lock that does pin nim-shm-lease still wins.
+    checkout = reprobuild_checkout("windows-lease-reprobuild", dict(
+        windows_pins, **{"nim-shm-lease-src": github("nim-shm-lease", locked)}))
+    workspace, result = provision("windows-lease-reprobuild", "Windows", checkout)
+    out = result.stdout + result.stderr
+    assert version(workspace, "nim-shm-lease") == "locked revision\n", out
+    assert f"nim-shm-lease @ {locked} (locked by the reprobuild being built)" in out, out
+    print("PASS a reprobuild lock that pins nim-shm-lease overrides the runquota lock")
+
+    # 7d. A runquota lock with no single answer, or one that cannot be read,
+    #     refuses before nim-shm-lease is cloned.
+    for case, rev, message in (
+        ("windows-lease-conflict", runquota_conflicting,
+          "pins nim-shm-lease at more than one revision"),
+        ("windows-lease-malformed", runquota_malformed,
+          "could not read the nim-shm-lease revision from"),
+    ):
+        checkout = reprobuild_checkout(case, dict(
+            windows_pins, **{"runquota-src": github("runquota", rev)}))
+        workspace, result = provision(case, "Windows", checkout)
+        out = result.stdout + result.stderr
+        assert result.returncode != 0, out
+        assert message in out, out
+        assert not (workspace / "nim-shm-lease").exists(), out
+    print("PASS a conflicting or unreadable runquota lock is refused before nim-shm-lease is cloned")
+
     # The PATH of the provisioning step on mcl-bench-001: bash, git and the
     # tools macOS keeps in /bin. Nothing from /usr/bin.
     bash, git = shutil.which("bash"), shutil.which("git")
