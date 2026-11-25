@@ -27,6 +27,7 @@ that turns the input into `build-env-dir` runs for real too.
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -67,12 +68,19 @@ class DecideBuildEnvironment(unittest.TestCase):
     """The step that turns `export-build-env` into `build-env-dir`."""
 
     def run_decide(self, value):
+        # Resolve bash from PATH before handing it to subprocess. On Windows a
+        # bare name goes to CreateProcess, which searches System32 before
+        # PATH and finds WSL's `bash.exe` launcher instead of the Git Bash
+        # that runs the step. On windows-latest it exits 1 without running
+        # the step and leaves stderr empty.
+        bash = shutil.which('bash')
+        self.assertIsNotNone(bash, 'the suite needs bash')
         with tempfile.TemporaryDirectory(prefix='repro-build-env-decide-') as root:
             root = Path(root)
             output = root / 'output'
             output.write_text('')
             done = subprocess.run(
-                ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
+                [bash, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
                   unix.step_body(DECIDE_STEP)],
                 env={'PATH': os.environ['PATH'], 'RUNNER_TEMP': str(root),
                   'GITHUB_OUTPUT': str(output), 'EXPORT_BUILD_ENV': value},
