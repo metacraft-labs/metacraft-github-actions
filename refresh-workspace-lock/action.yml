@@ -49,9 +49,15 @@ description: >
 inputs:
   gh-token:
     description: >
-      GitHub token with read access to the workspace's repos and WRITE access
-      to the repo whose lock is being refreshed (to push the proposal branch).
-      Only consulted when `dry-run` is `false`.
+      GitHub token, exported to the refresh step as `GH_TOKEN`. It is NOT the
+      credential the proposal branch is pushed with: the `git push` uses the
+      job's Git credential, the one `setup-dev-env` or `setup-nix` installed
+      for later steps. So the token handed to that setup step needs WRITE
+      access to the repo whose lock is being refreshed, and a job that starts
+      `setup-dev-env`'s credential broker (`app-id`) must declare
+      `git-access: write` there, or Git is handed the broker's read-only token
+      and the push is refused. A push more than an hour after that token was
+      minted needs `refresh-build-auth` first.
     required: false
     default: ""
   workspace-root:

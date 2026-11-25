@@ -12,13 +12,19 @@ description: |
   channel through that boundary.
 
   The script runs through scoped_git_auth_with_global (scoped-git-auth.sh in
-  this directory). It writes the owner-scoped extraHeader and the
+  this directory). It writes the owner-scoped Git credential helper (the one
+  the job-scoped credential uses, git-credential-job-token.sh) and the
   credential-free ssh-to-https rewrites into a 0600 file in a 0700 directory
-  under RUNNER_TEMP, points GIT_CONFIG_GLOBAL at it with GIT_CONFIG_NOSYSTEM=1,
-  clears the inherited numbered configuration, runs the script, and deletes
-  the file however the script exits. The token never reaches a URL, an argv,
-  a checkout or a persistent config. GH_TOKEN is not exported to the script,
-  because the file is its credential.
+  under RUNNER_TEMP. When gh-token is the token the job's credential
+  directory (MCL_JOB_CREDENTIALS_DIR/git-token) holds, the helper reads that
+  file, so a script that runs longer than the token's hour gets the
+  rotations the job's credential broker or refresh-build-auth make; otherwise
+  the token goes into a 0600 file beside the configuration. It points
+  GIT_CONFIG_GLOBAL at the configuration with GIT_CONFIG_NOSYSTEM=1, clears
+  the inherited numbered configuration, runs the script, and deletes its own
+  files however the script exits. The token never reaches a URL, an argv, a
+  checkout or a persistent config. GH_TOKEN is not exported to the script,
+  because a file is its credential.
 
   An empty gh-token is an error, not an anonymous run. A caller uses this
   action because the script reads a private repository, and an anonymous

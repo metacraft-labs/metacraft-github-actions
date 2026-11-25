@@ -1177,12 +1177,17 @@ stale-index:unset"
 
 # --- 10c. the emit path (setup-nix, refresh-build-auth) --------------------
 # Emitting over an inherited job configuration writes the whole merged set:
-# one header for the covered URL, carrying this call's token, and the
+# the job-scoped credential helper for the covered URL (an emptied header in
+# place of the inherited static one, a helper reset, the helper), and the
 # unrelated entries the job already had. The emitted file is then applied the
-# way the runner applies `$GITHUB_ENV`, and the clone is counted on the wire.
+# way the runner applies `$GITHUB_ENV`, and the clone is counted on the wire:
+# a challenge first, then the helper's credential, never two headers. The
+# helper's own contracts are in ./job-credential-helper-test.sh.
 EMIT_ENV="$TMPROOT/emit.github_env"
 : >"$EMIT_ENV"
+mkdir -p "$TMPROOT/emit.runner_temp"
 env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" GIT_AUTH_URL_BASE="$BASE" \
+  RUNNER_TEMP="$TMPROOT/emit.runner_temp" \
   GIT_CONFIG_COUNT=2 \
   GIT_CONFIG_KEY_0="http.${BASE}metacraft-labs/.extraHeader" \
   GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${EARLIER_B64}" \
@@ -1194,9 +1199,13 @@ env -i PATH="$PATH" HOME="$TMPROOT" GH_TOKEN="$TOKEN" GIT_AUTH_URL_BASE="$BASE" 
     scoped_git_auth_emit '$EMIT_ENV'
   " >"$TMPROOT/emit.out" 2>&1
 check "emit numbers the merged set from 0 with a matching count" \
-  "$(grep -c '^GIT_CONFIG_KEY_' "$EMIT_ENV")|$(sed -n 's/^GIT_CONFIG_COUNT=//p' "$EMIT_ENV")" "2|2"
-check "emit writes one header for the covered URL" \
-  "$(grep -ciF "=http.${BASE}metacraft-labs/.extraheader" "$EMIT_ENV")" "1"
+  "$(grep -c '^GIT_CONFIG_KEY_' "$EMIT_ENV")|$(sed -n 's/^GIT_CONFIG_COUNT=//p' "$EMIT_ENV")" "4|4"
+check "emit keeps one header key for the covered URL, where it stood..." \
+  "$(grep -ciF "=http.${BASE}metacraft-labs/.extraheader" "$EMIT_ENV")|$(grep -ciF "GIT_CONFIG_KEY_0=http.${BASE}metacraft-labs/.extraheader" "$EMIT_ENV")" "1|1"
+check "...emptied, so no header is sent before the challenge" \
+  "$(grep -cx 'GIT_CONFIG_VALUE_0=' "$EMIT_ENV")" "1"
+check "emit routes the covered URL to the job credential helper" \
+  "$(grep -cF "=credential.${BASE}metacraft-labs/.helper" "$EMIT_ENV")" "2"
 check "emit replaces the inherited credential" \
   "$(grep -cF "$EARLIER_B64" "$EMIT_ENV" || true)" "0"
 check "emit carries an unrelated inherited entry forward" \
@@ -1214,8 +1223,8 @@ env -i PATH="$PATH" HOME="$TMPROOT" GIT_CONFIG_SYSTEM=/dev/null GIT_CEILING_DIRE
   git clone --quiet "${BASE}metacraft-labs/host.git" "$TMPROOT/emit.clone" \
   >"$TMPROOT/emit.clone.out" 2>&1 || CASE_RC=$?
 check "a clone in a later step, under the emitted configuration, succeeds" "$CASE_RC" "0"
-check "...sending exactly one Authorization header per request" \
-  "$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "1"
+check "...answering the challenge with exactly one Authorization header" \
+  "$(case_counts | tr ' ' '\n' | sort -u | tr -d '\n')" "01"
 
 echo
 echo "assertions: $((PASS + FAIL))  pass: $PASS  fail: $FAIL"

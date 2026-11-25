@@ -100,12 +100,18 @@ succeeds and `repro develop` fails with `could not read Username for
 | `working-directory` | `.`              | Directory the script runs in.                                      |
 | `run`               | (required)       | The script. It runs under `bash -eo pipefail`, like a `run:` step. |
 
-The action writes an owner-scoped `http.<url>.extraHeader`, and the ssh-to-https
-`insteadOf` rewrites that carry no credential, to a `0600` file in a private
-directory under `RUNNER_TEMP`. It then sets `GIT_CONFIG_GLOBAL` and
-`GIT_CONFIG_NOSYSTEM=1`, clears the inherited numbered configuration, runs the
-script, and deletes the file however the script exits. The token is not put in
-a URL, an argument list, a checkout or a persistent configuration file.
+The action writes an owner-scoped Git credential helper (the same
+`git-credential-job-token.sh` the job-scoped credential uses), and the
+ssh-to-https `insteadOf` rewrites that carry no credential, to a `0600` file in
+a private directory under `RUNNER_TEMP`. When `gh-token` is the token the job's
+`$MCL_JOB_CREDENTIALS_DIR/git-token` holds, the helper reads that file, so a
+script that outlives the token's hour is handed the rotations the job's
+credential broker or `refresh-build-auth` make. Otherwise the token goes into a
+`0600` file beside the configuration. The action then sets `GIT_CONFIG_GLOBAL`
+and `GIT_CONFIG_NOSYSTEM=1`, clears the inherited numbered configuration, runs
+the script, and deletes its own files however the script exits. The token is
+not put in a URL, an argument list, a checkout or a persistent configuration
+file.
 `GH_TOKEN` is not exported to the script, and the derived header is printed
 only as an `::add-mask::` command. The credential logic is the same
 `scoped-git-auth.sh` that `setup-nix`, `clone-siblings` and `setup-dev-env`
@@ -226,6 +232,15 @@ fleet and still be informative.
 A per-repo caller. The workspace has to exist before this step: on a runner
 that keeps one, point `workspace-root` at it; otherwise materialise it first
 (`repro workspace init metacraft-labs`) and point at that.
+
+The proposal branch is pushed with the job's Git credential, the one
+`setup-dev-env` or `setup-nix` installed for later steps, not with this
+action's `gh-token`. A job that pushes (`dry-run: "false"`) therefore needs
+such a setup step with a token that can write to the repo, and, when that step
+is `setup-dev-env` with its credential broker (`app-id`), `git-access: write`:
+otherwise Git is handed the broker's read-only token and the push is refused.
+A push more than an hour after the token was minted needs `refresh-build-auth`
+first.
 
 ```yaml
 name: refresh workspace lock

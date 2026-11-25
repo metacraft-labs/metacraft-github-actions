@@ -642,6 +642,13 @@ jobs:
       - name: authenticated-clone contract suite
         run: bash git-auth/authenticated-clone-test.sh
 
+      # The job-scoped credential setup-nix and refresh-build-auth install: a
+      # Git credential helper reading the job's token file. Real git against
+      # the local server: 401 then retry, owner scoping, a rotation reaching a
+      # Git process started before it, store/erase, broker ownership.
+      - name: job credential helper contract suite
+        run: bash git-auth/job-credential-helper-test.sh
+
       - name: private global Git credential contract suite
         run: python3 git-auth/test-private-global-config.py
 
@@ -664,7 +671,7 @@ jobs:
         run: bash git-auth/longpaths-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh reprobuild-provision/flake-lock-revisions.sh
+        run: shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/git-credential-job-token.sh git-auth/job-credential-helper-test.sh git-auth/authenticated-clone.sh git-auth/authenticated-clone-test.sh git-auth/longpaths-test.sh reprobuild-provision/provision-reprobuild-siblings.sh reprobuild-provision/flake-lock-revisions.sh
 
   action-template-limits:
     # Every suite above EXTRACTS a composite action's `run:` body and executes

@@ -24,6 +24,28 @@ def nix_settings(env):
     ))
 
 
+def git_helper_password(environment, url, cwd):
+    """The password git's credential helpers hand over for `url`, or None.
+
+    `git credential fill` selects `credential.<url>.*` and runs the helpers the
+    way an HTTP 401 retry does; with prompting off, no helper means failure.
+    """
+    run = subprocess.run(
+        ["git", "credential", "fill"], env=dict(environment, GIT_TERMINAL_PROMPT="0"),
+        cwd=cwd, input=f"url={url}\n\n", capture_output=True, text=True)
+    for line in run.stdout.splitlines():
+        if line.startswith("password="):
+            return line[len("password="):]
+    return None
+
+
+def assert_no_preemptive_header(environment, url, cwd):
+    """The job's emptied `http.<scope>.extraHeader` is in force: no header."""
+    header = subprocess.run(["git", "config", "--get-urlmatch", "http.extraHeader", url],
+                            env=environment, cwd=cwd, capture_output=True, text=True)
+    assert header.stdout.strip() == "", "a preemptive header is configured"
+
+
 def apply_job_environment(path, environment):
     lines = iter(path.read_text().splitlines())
     for line in lines:
@@ -40,6 +62,15 @@ def apply_job_environment(path, environment):
             environment[name] = value
 
 
+# The job running this suite has a credential directory of its own (setup-nix
+# exported MCL_JOB_CREDENTIALS_DIR), and every fixture below builds its
+# environment from os.environ. Inherited, that directory is a usable one, so
+# the refresh under test would write the fixture tokens into the job's real
+# `git-token` and `nix-access-tokens.conf`: it corrupts the job's credential
+# and makes a later suite in the same job read a fixture token back. A fixture
+# that needs a credential directory names its own.
+os.environ.pop("MCL_JOB_CREDENTIALS_DIR", None)
+
 NIX = shutil.which("nix")
 assert NIX, "the owning environment must provide Nix for real parser controls"
 node = os.environ.get("GHA_NIX_AUTH_NODE", "")
@@ -55,7 +86,9 @@ def isolated_tools(directory):
     # job 131538166833).
     tools = directory / "tools"
     tools.mkdir()
-    for name in ["bash", "dirname", "base64", "tr", "git", "nix"]:
+    # mktemp and mv (coreutils, like dirname, base64 and tr) create the job
+    # credential directory and replace the Git token file atomically.
+    for name in ["bash", "dirname", "base64", "tr", "git", "nix", "mktemp", "mv"]:
         executable = shutil.which(name)
         assert executable, name
         (tools / name).symlink_to(executable)
@@ -75,6 +108,8 @@ for isolated_path in [False, True]:
             GITHUB_ENV=str(environment_file),
             GH_TOKEN="fresh-fixture-token",
             TOKEN_OWNERS="metacraft-labs",
+            # Where the job credential directory goes when RUNNER_TEMP is unset.
+            TMPDIR=temporary,
             NIX_CONF_DIR=temporary,
             NIX_USER_CONF_FILES=str(empty),
             GIT_CONFIG_SYSTEM=str(empty),
@@ -99,14 +134,15 @@ for isolated_path in [False, True]:
             "gitlab.com": "preserved-fixture-token",
         }
         assert effective["http-connections"]["value"] == 7
-        command = ["git", "config", "--get-urlmatch", "http.extraHeader"]
-        header = subprocess.check_output(command + ["https://github.com/metacraft-labs/runquota"],
-                                          env=environment, cwd=temporary, text=True).strip()
-        expected = base64.b64encode(b"x-access-token:fresh-fixture-token").decode()
-        assert header == "AUTHORIZATION: basic " + expected
-        third_party = subprocess.run(command + ["https://github.com/NixOS/nixpkgs"],
-                                      env=environment, cwd=temporary, capture_output=True)
-        assert third_party.returncode == 1 and not third_party.stdout
+        # Git: no preemptive header; the job credential helper hands over the
+        # fresh token when challenged, for the token's owner only.
+        assert_no_preemptive_header(environment, "https://github.com/metacraft-labs/runquota", temporary)
+        assert git_helper_password(
+            environment, "https://github.com/metacraft-labs/runquota", temporary) == "fresh-fixture-token"
+        assert git_helper_password(environment, "https://github.com/NixOS/nixpkgs", temporary) is None
+        git_token = Path(environment["MCL_JOB_CREDENTIALS_DIR"]) / "git-token"
+        assert git_token.read_text() == "fresh-fixture-token\n"
+        assert "fresh-fixture-token" not in environment_file.read_text()
         assert empty.read_text() == ""
 print("Real Git and Nix use fresh credentials; other settings and scopes survive")
 
@@ -128,13 +164,15 @@ with tempfile.TemporaryDirectory() as temporary:
         environment = dict(
             os.environ, PATH=tools, GITHUB_ENV=str(environment_file),
             GH_TOKEN="fresh-fixture-token", TOKEN_OWNERS="metacraft-labs",
+            # The Git refresh runs first and creates the job credential
+            # directory; keep it in this fixture's directory.
+            TMPDIR=temporary,
             NIX_CONF_DIR=temporary, NIX_USER_CONF_FILES=str(empty),
             GIT_CONFIG_SYSTEM=str(empty), GIT_CONFIG_GLOBAL=str(empty),
             GIT_CONFIG_COUNT="0",
             NIX_CONFIG="access-tokens = github.com=old-fixture-token\n",
         )
         environment.pop("REPROBUILD_BOOTSTRAP_PYTHON", None)
-        environment.pop("MCL_JOB_CREDENTIALS_DIR", None)
         environment.pop("RUNNER_TEMP", None)
         if binding is None:
             environment.pop("GHA_NIX_AUTH_NODE", None)
@@ -296,15 +334,18 @@ print("Actual setup auth respects fresh/anonymous/refusal cases, scope, masks an
 # refresh-build-auth in a job whose credential broker is running. The broker
 # owns the job's Nix GitHub credential (job-credentials.cjs brokerGithubToken):
 # the refresh must keep the broker's token in the job's files and must not
-# install the token it was handed over it, while the Git CLI channel, which the
-# broker does not serve, still takes the refreshed token. The broker is stood
-# in for by an idle process whose argv ends like the real broker's
+# install the token it was handed over it. For Git it depends on the job's
+# declared `git-access`: a reading job's Git token file is the broker's too
+# (brokerOwnsGitToken) and is kept; a writing job's is renewed with the
+# refreshed token, which is what refresh-build-auth is for. The broker is
+# stood in for by an idle process whose argv ends like the real broker's
 # (`<...>/job-credentials.cjs daemon`); a real broker is exercised in
 # job-credentials-test.cjs.
 stand_in_broker = subprocess.Popen(
     [sys.executable, "-c", "import time; time.sleep(600)", "/stand-in/job-credentials.cjs", "daemon"])
 atexit.register(stand_in_broker.kill)
-with tempfile.TemporaryDirectory() as temporary:
+def refresh_under_broker(git_access):
+  with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     empty = directory / "empty"
     empty.write_text("")
@@ -320,6 +361,11 @@ with tempfile.TemporaryDirectory() as temporary:
         "access-tokens = github.com=broker-fixture-token gitlab.com=preserved-fixture-token\n"
         "netrc-file = " + str(netrc) + "\n")
     tokens_file.chmod(0o600)
+    git_token = credentials / "git-token"
+    # A reading job's broker wrote git-token; a writing job's holds gh-token.
+    git_token.write_text("broker-fixture-token\n" if git_access == "read" else "gh-fixture-token\n")
+    git_token.chmod(0o600)
+    (credentials / "git-access").write_text(git_access + "\n")
     (credentials / "broker.pid").write_text(f"{stand_in_broker.pid}\n")
     environment = dict(os.environ)
     environment.update(
@@ -343,11 +389,17 @@ with tempfile.TemporaryDirectory() as temporary:
         "gitlab.com": "preserved-fixture-token",
     }, "refresh-build-auth installed its token over the running broker's"
     assert "refreshed-fixture-token" not in tokens_file.read_text() + netrc.read_text()
-    header = subprocess.check_output(
-        ["git", "config", "--get-urlmatch", "http.extraHeader", "https://github.com/metacraft-labs/runquota"],
-        env=environment, cwd=temporary, text=True).strip()
-    assert header == "AUTHORIZATION: basic " + base64.b64encode(b"x-access-token:refreshed-fixture-token").decode()
+    url = "https://github.com/metacraft-labs/runquota"
+    assert_no_preemptive_header(environment, url, temporary)
+    expected = "broker-fixture-token" if git_access == "read" else "refreshed-fixture-token"
+    assert git_token.read_text() == expected + "\n", git_access
+    assert git_helper_password(environment, url, temporary) == expected, git_access
     public = "\n".join(line for line in run.stdout.splitlines() if not line.startswith("::add-mask::"))
     for secret in ["refreshed-fixture-token", "broker-fixture-token"]:
         assert secret not in public + run.stderr
-print("refresh-build-auth keeps a running broker's Nix token and still refreshes Git")
+        assert secret not in environment_file.read_text()
+
+
+refresh_under_broker("read")
+refresh_under_broker("write")
+print("refresh-build-auth keeps a running broker's Nix token, and its Git token unless the job writes over Git")

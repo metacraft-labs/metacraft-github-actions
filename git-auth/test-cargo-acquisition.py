@@ -84,18 +84,24 @@ class CargoGitAcquisition(PrivateGlobalConfig):
         if marker in action:
             step = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
             self.assertIn("if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}", step)
-            self.assertIn('GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}', step)
+            self.assertIn("GH_TOKEN: ${{ inputs.git-access == 'write' && inputs.gh-token || "
+                          'steps.job-token.outputs.token || inputs.gh-token }}', step)
             self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', step)
         else:
             # Exact pre-fix source performs no such setup. Its positive arm
             # must consequently fail at the real authenticated Git boundary.
             step = None
         if step is not None and authenticated and flavor == 'reprobuild':
+            # The job's credential directory, under the runner's temp root:
+            # Cargo's `git fetch` reaches the token through the helper the
+            # step configures, which reads it from there when challenged.
+            runner_temp = consumer / 'runner-temp'
+            runner_temp.mkdir()
             body = step.split('      run: ', 1)[1].strip()
             self.assertNotEqual(body, '|', 'use the existing block extractor if this step grows')
             configured = subprocess.run(
                 [self.bash, '-euo', 'pipefail', '-c', body],
-                env=dict(env, GH_TOKEN=TOKEN, TOKEN_OWNERS='owned',
+                env=dict(env, GH_TOKEN=TOKEN, TOKEN_OWNERS='owned', RUNNER_TEMP=str(runner_temp),
                           GIT_AUTH_URL_BASE=self.url, GITHUB_ENV=str(assignments),
                           GITHUB_ACTION_PATH=str(ROOT / 'setup-dev-env')),
                 capture_output=True, text=True, timeout=30)
@@ -141,6 +147,9 @@ class CargoGitAcquisition(PrivateGlobalConfig):
             self.assertEqual(witnesses[0].read_text(), 'actual committed source\n')
             self.assertEqual(self.git('-C', str(witnesses[0].parent), 'rev-parse', 'HEAD').stdout.strip(), self.rev)
             self.assertIn('ok /owned/', self.journal.read_text())
+            # Through a challenge: Cargo's Git sent the first request bare and
+            # the job credential helper answered the 401.
+            self.assertIn('none /owned/', self.journal.read_text())
         return result
 
     def test_cargo_requires_and_inherits_job_credential(self):

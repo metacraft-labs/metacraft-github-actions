@@ -31,6 +31,17 @@
 // before the current one expires. It is optional: without App credentials the
 // files hold the caller's `gh-token` for its natural lifetime, as before.
 //
+// GIT. The same directory holds `git-token`, the token the job's Git
+// credential helper (git-auth/git-credential-job-token.sh) hands Git whenever
+// GitHub challenges a request; git-auth/scoped-git-auth.sh configures it as
+// `credential.<scope>.helper` in the job's environment. The broker rewrites it
+// with every rotation, so Git is kept fresh exactly as Nix is -- unless the job
+// declared `git-access: write` (recorded in `git-access`), because the
+// broker's `contents: read` tokens cannot push. That job's `git-token` holds
+// the workflow's `gh-token` and is renewed by refresh-build-auth; the broker
+// never writes it (brokerOwnsGitToken). Git's helper protocol:
+// https://git-scm.com/docs/gitcredentials#_custom_helpers.
+//
 // SECRETS
 // -------
 // Nothing here prints a token, a key or a JWT. A token the broker mints after
@@ -47,6 +58,8 @@ const { spawn } = require("node:child_process");
 
 const NIX_TOKENS = "nix-access-tokens.conf";
 const NETRC = "netrc";
+const GIT_TOKEN = "git-token";
+const GIT_ACCESS = "git-access";
 const BROKER_LOG = "broker.log";
 const BROKER_PID = "broker.pid";
 const STOP = "broker.stop";
@@ -204,12 +217,57 @@ function rotateNetrc(dir, token) {
   return true;
 }
 
-/** Install `token` as the job's GitHub credential for Nix. */
+/**
+ * The job's declared Git access: "write" when `git-access` in `dir` says so
+ * (setup-dev-env `git-access: write`), "read" otherwise. A missing or
+ * unreadable marker is "read": the default, and the one that lets the broker
+ * keep Git fresh.
+ */
+function gitAccess(dir) {
+  try {
+    return fs.readFileSync(path.join(dir, GIT_ACCESS), "utf8").trim() ===
+      "write"
+      ? "write"
+      : "read";
+  } catch {
+    return "read";
+  }
+}
+
+/** Validate a `git-access` input value; empty means the default, "read". */
+function parseGitAccess(value) {
+  const access = (value || "read").trim();
+  if (access !== "read" && access !== "write")
+    throw new Error("git-access must be 'read' or 'write'");
+  return access;
+}
+
+/** Record the job's declared Git access in `dir`. */
+function writeGitAccess(dir, access) {
+  writeAtomic(path.join(dir, GIT_ACCESS), parseGitAccess(access) + "\n");
+}
+
+/**
+ * Replace the job's Git token file atomically, so the credential helper reads
+ * the old token or the new one and never part of either.
+ */
+function writeGitToken(dir, token) {
+  if (!token || /\s/.test(token))
+    throw new Error("refusing an empty or malformed token");
+  writeAtomic(path.join(dir, GIT_TOKEN), token + "\n");
+}
+
+/**
+ * Install `token` as the job's GitHub credential: for Nix always, and for Git
+ * unless the job writes over Git (gitAccess), whose Git token is not the
+ * broker's to replace.
+ */
 function rotate(dir, token, owners) {
   if (!token || /\s/.test(token))
     throw new Error("refusing an empty or malformed token");
   writeAccessTokens(dir, withGithubToken(readAccessTokens(dir), token, owners));
   rotateNetrc(dir, token);
+  if (gitAccess(dir) !== "write") writeGitToken(dir, token);
 }
 
 function base64url(data) {
@@ -420,6 +478,24 @@ function publishJobGithubToken(core, env = process.env) {
   return token;
 }
 
+/**
+ * Whether a running broker owns the job's Git token file, so no other writer
+ * may replace it: brokerGithubToken says a broker owns the job's GitHub
+ * credential, the broker has written `git-token`, and the job did not declare
+ * `git-access: write`. A broker that has not written the file (one from an
+ * older revision of these actions) owns nothing, so another writer installs
+ * its token rather than leave the job with none. git-auth/scoped-git-auth.sh
+ * applies the same test in bash (scoped_git_auth_broker_owns_git_token);
+ * keep the two in step.
+ */
+function brokerOwnsGitToken(dir) {
+  return (
+    gitAccess(dir) !== "write" &&
+    fs.existsSync(path.join(dir, GIT_TOKEN)) &&
+    brokerGithubToken(dir) !== ""
+  );
+}
+
 function brokerShouldStop(dir) {
   return (
     !fs.existsSync(path.join(dir, NIX_TOKENS)) ||
@@ -462,7 +538,7 @@ async function runBroker({
       failures = 0;
       wait = nextRefreshDelay(expiresAt, now());
       log(
-        `rotated the job's Nix GitHub credential; next refresh in ${Math.round(wait / 1000)}s`,
+        `rotated the job's GitHub credential; next refresh in ${Math.round(wait / 1000)}s`,
       );
     } catch (error) {
       failures += 1;
@@ -560,6 +636,9 @@ async function startBroker(env = process.env) {
   const owners = ownersFrom(env);
   const owner = (env.APP_OWNER || owners[0] || "").trim();
   if (!owner) throw new Error("no owner to mint the installation token for");
+  // Before the first rotation, so a writing job's Git token file is never
+  // written with a `contents: read` token, not even once.
+  writeGitAccess(dir, env.GIT_ACCESS);
   const minted = await mintInstallationToken({
     apiUrl: env.GITHUB_API_URL,
     appId,
@@ -590,13 +669,15 @@ async function startBroker(env = process.env) {
   writeAtomic(path.join(dir, BROKER_PID), String(child.pid) + "\n");
   child.unref();
   console.log(
-    `Job credential broker started (pid ${child.pid}); it re-mints the Nix GitHub credential before it expires. Log: ${path.join(dir, BROKER_LOG)}`,
+    `Job credential broker started (pid ${child.pid}); it re-mints the Nix ${gitAccess(dir) === "write" ? "" : "and Git "}GitHub credential before it expires. Log: ${path.join(dir, BROKER_LOG)}`,
   );
 }
 
 module.exports = {
   NIX_TOKENS,
   NETRC,
+  GIT_TOKEN,
+  GIT_ACCESS,
   STOP,
   DIR_PREFIX,
   credentialsDir,
@@ -610,6 +691,11 @@ module.exports = {
   withGithubToken,
   rotateNetrc,
   rotate,
+  gitAccess,
+  parseGitAccess,
+  writeGitAccess,
+  writeGitToken,
+  brokerOwnsGitToken,
   appJwt,
   mintInstallationToken,
   nextRefreshDelay,

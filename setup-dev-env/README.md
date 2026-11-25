@@ -227,12 +227,13 @@ success or failure. It uses `GIT_CONFIG_GLOBAL`, the supported Repro channel;
 numbered invocation configuration is intentionally scrubbed by Repro's VCS operations. No token
 is placed in clone URLs, process arguments or persistent checkout configuration.
 The helper retains its credential-free GitHub SSH-to-HTTPS rewrites, so SSH
-coordinates use the same owner-scoped headers rather than an ambient SSH key.
+coordinates use the same owner-scoped credential rather than an ambient SSH key.
 
 The `reprobuild` flavor also configures later Git CLI commands through the
-same job-scoped helper as the `nix` flavor. With a nonempty `gh-token`, scoped
-HTTP headers are exported through `GITHUB_ENV` as numbered Git configuration,
-which ordinary commands retain through `repro exec` activation. This covers
+same job-scoped helper as the `nix` flavor. With a nonempty `gh-token`, an
+owner-scoped Git credential helper is exported through `GITHUB_ENV` as numbered
+Git configuration, which ordinary commands retain through `repro exec`
+activation (see "How long the job's Nix credential lives"). This covers
 Git CLI acquisition after sibling setup without retaining the temporary
 sibling credential file or writing credentials to the runner's home. An empty
 token installs no new credential; other authentication remains the caller's
@@ -276,6 +277,37 @@ The Nix credential now lives in files, not in the environment:
 - A refresh (`refresh-build-auth`, or the broker below) rewrites those files
   in place. Every `nix` process started afterwards reads the new token,
   including the ones a daemon started earlier spawns.
+- Git's token lives in the same directory, in `git-token`, and reaches Git the
+  same way. The job-scoped Git configuration in `GIT_CONFIG_*` holds no
+  token: for each owner in `token-owner` (and each `extra-token-url-prefixes`
+  entry) it configures a Git credential helper,
+  `credential.https://github.com/<owner>/.helper`, preceded by an empty
+  `helper` and an empty `http.<url>.extraHeader` so that neither a runner's
+  own helper nor a header persisted by `actions/checkout` answers for those
+  URLs. Git sends a request without credentials, GitHub challenges a private
+  repository with 401, and Git calls the helper and retries; a public
+  repository is fetched anonymously. The helper
+  (`git-auth/git-credential-job-token.sh`) reads `git-token` each time it is
+  called, answers `get` with `username=x-access-token` and the token, ignores
+  `store` and `erase` (so a 401 never deletes the job's credential), and
+  answers nothing once the directory is gone. Every writer replaces the file
+  atomically, so a Git process started after a rotation, including one a
+  daemon or a Nix `git+https` fetch spawns, gets the new token. See
+  [gitcredentials](https://git-scm.com/docs/gitcredentials) and
+  [git-credential](https://git-scm.com/docs/git-credential) for the helper
+  protocol.
+- **Windows is not yet measured, and needs evidence from a Windows CI run
+  before it is relied on.** The contract suites run on Linux. On Windows the Git is Git for Windows (the
+  self-hosted runners' `C:\PortableGit`, and the GitHub-hosted images' own
+  install). It should run a `!`-prefixed helper through its bundled MSYS
+  `sh`, which resolves `/bin/sh` inside its own root, and the helper and the
+  credential directory are written in the `D:/a/...` form that `sh` accepts.
+  No run has shown it yet. The
+  job configuration also carries two empty values per scope
+  (`GIT_CONFIG_VALUE_n=`, the resets). Git refuses every command with
+  `missing config value` if a layer between `$GITHUB_ENV` and `git.exe` drops
+  an empty variable, so a Windows job that installs this credential must be
+  seen to run Git at all.
 
 **The broker.** Pass `app-id` and `app-private-key` (the same App secrets
 `actions/create-github-app-token` takes) and the action starts a detached
@@ -302,7 +334,8 @@ the step runs, is masked. Its log is `broker.log` in the credential directory.
 
 **Once the broker runs, it owns the job's GitHub credential.** It is then the
 only writer of the GitHub entries in the credential directory
-(`access-tokens` and the job netrc's `machine github.com`). Every later step
+(`access-tokens`, the job netrc's `machine github.com` and, unless the job
+declared `git-access: write`, `git-token`). Every later step
 that would install a token there (`setup-nix`, including the copy
 `setup-reprobuild` runs to build repro, this action's Nix-auth selection, and
 `refresh-build-auth`) keeps the broker's current token, not the one it was
@@ -314,9 +347,12 @@ minute 60, 18 minutes before the broker's next refresh. The broker owns the
 credential while `broker.pid` names its live process (where `/proc` exists,
 one whose command line is the broker's, so a reused pid does not count) and
 `broker.stop` is absent.
+For `git-token` it must also have written the file, so a broker from an older
+revision of these actions does not leave a job with no Git token.
 If the broker has exited, the caller's token is installed as before. An empty
 `gh-token` still refuses every inherited GitHub credential. See
-`brokerGithubToken` in `refresh-build-auth/job-credentials.cjs`.
+`brokerGithubToken` and `brokerOwnsGitToken` in
+`refresh-build-auth/job-credentials.cjs`.
 
 **Which token each step is handed.** The broker mints from the App key, not
 from `gh-token`, so it starts even when `gh-token` has already expired. From
@@ -328,26 +364,43 @@ read again just before the work starts, in place of `gh-token`:
 | Sibling clones (`clone-siblings`)                                                                           | broker's, selected just before the clones                    |
 | repro CLI install (`setup-reprobuild`)                                                                      | broker's, selected just before it (`reprobuild` flavor only) |
 | Sibling provisioning from `repro.lock` and the late clone; Git and Nix authentication (`reprobuild` flavor) | broker's, selected again after the install                   |
-| `setup-nix` (`nix` flavor)                                                                                  | `gh-token` (its Nix credential is the broker's)              |
+| `setup-nix` (`nix` flavor)                                                                                  | `gh-token` (its Nix and Git credentials are the broker's)    |
 
 Each selection step reads the token while it runs and masks it, so a token the
 broker rotated in after its own step had ended is masked before any step sees
 it. All of these steps are reads, which `contents: read` covers. Without a
 broker (no `app-id`, a broker that has stopped, Windows) or with an empty
-`gh-token`, every step is handed `gh-token` as before. The `nix` flavor's
-`setup-nix`, and the copy `setup-reprobuild` runs for a source build under the
-`nix` flavor, keep `gh-token` because `setup-nix` installs the token it is
-handed as the job's Git CLI credential, and `gh-token` may carry wider
-permissions than `contents: read`.
+`gh-token`, every step is handed `gh-token` as before.
 
-The broker covers Nix. The Git CLI credential setup installs for later steps
-is frozen into numbered `GIT_CONFIG_*` variables: `gh-token` under the `nix`
-flavor, and the broker's token selected after the install under the
-`reprobuild` flavor. The broker cannot rotate those variables, because they are
-copied into each step's environment when it starts. So a Git operation more
-than an hour after that token was minted fails, broker or not. Refresh it
-between phases with `refresh-build-auth`, which re-mints Git's token and
-leaves Nix to a running broker.
+**The broker covers Git as well.** The Git CLI credential later steps use is
+the helper above, reading `git-token`, so a Git operation hours into the job
+gets the broker's current token, with no step split into phases. Which token
+`git-token` holds is decided by `git-access`:
+
+| `git-access`     | Broker running                                                         | No broker (no `app-id`, stopped, Windows) |
+| ---------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| `read` (default) | the broker's `contents: read` token, rotated by the broker             | `gh-token`                                |
+| `write`          | `gh-token`; the broker never writes it, `refresh-build-auth` renews it | `gh-token`                                |
+
+A job that pushes a branch, a tag or a lock record with the job's Git
+credential after this action (a `git push` step, or `refresh-workspace-lock`,
+whose push uses that credential) must declare `git-access: write`; an action
+that authenticates its own push with a token it is handed, such as
+`publish-workspace-lock`, is not affected. Under `read` with a broker running, such a push is refused,
+because the broker's token cannot write. A writing job's Git token still lives one hour, so a push
+more than an hour after `gh-token` was minted needs `refresh-build-auth`
+first. `setup-dev-env` records the declaration in `git-access` in the
+credential directory before the broker's first rotation, and every writer of
+`git-token` (`setup-nix`, `refresh-build-auth`, the broker) honours it. A tool
+that runs Git through its own scrubbed environment, such as Repro's sibling
+materialization, is given the same helper through a private
+`GIT_CONFIG_GLOBAL` (`scoped_git_auth_with_global` in
+`git-auth/scoped-git-auth.sh`). When the token it is handed is the one
+`git-token` holds, that helper reads `git-token` itself, so a long
+`repro develop` is handed the broker's rotations too; any other token goes
+into a private file that lives as long as the command. A tool that cannot call a Git credential helper
+at all keeps a credential of its own; Nix's own HTTP fetcher (`github:` inputs,
+tarballs) is one, and reads `access-tokens` and the netrc above.
 
 ## Which reprobuild store a job builds into
 
