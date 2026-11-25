@@ -62,6 +62,15 @@ def apply_job_environment(path, environment):
             environment[name] = value
 
 
+# The job running this suite has a credential directory of its own (setup-nix
+# exported MCL_JOB_CREDENTIALS_DIR), and every fixture below builds its
+# environment from os.environ. Inherited, that directory is a usable one, so
+# the refresh under test would write the fixture tokens into the job's real
+# `git-token` and `nix-access-tokens.conf`: it corrupts the job's credential
+# and makes a later suite in the same job read a fixture token back. A fixture
+# that needs a credential directory names its own.
+os.environ.pop("MCL_JOB_CREDENTIALS_DIR", None)
+
 NIX = shutil.which("nix")
 assert NIX, "the owning environment must provide Nix for real parser controls"
 node = os.environ.get("GHA_NIX_AUTH_NODE", "")
@@ -164,7 +173,6 @@ with tempfile.TemporaryDirectory() as temporary:
             NIX_CONFIG="access-tokens = github.com=old-fixture-token\n",
         )
         environment.pop("REPROBUILD_BOOTSTRAP_PYTHON", None)
-        environment.pop("MCL_JOB_CREDENTIALS_DIR", None)
         environment.pop("RUNNER_TEMP", None)
         if binding is None:
             environment.pop("GHA_NIX_AUTH_NODE", None)
