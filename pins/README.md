@@ -41,10 +41,11 @@ be pinned": `rev` must be immutable and published, which means one of
   exists and is not a draft.
 
 The Reprobuild pin must carry both `version` and `kind`, because
-`setup-reprobuild` installs by them. The first one is v0.2.34, commit
-`d1bf1f065aca01b90c3bbdddc57d14e977f49e1a`: a commit on reprobuild `agents`
-(the tag `v0.2.34` has no GitHub release, so it is `agents-commit`, not
-`release`).
+`setup-reprobuild` installs by them. The first one was v0.2.34, commit
+`d1bf1f065aca01b90c3bbdddc57d14e977f49e1a`. The current one is v0.2.36,
+commit `37a109c4e1cf650e6eb79b11d9fadf6e49e64614`: a commit on reprobuild
+`agents` (the tag `v0.2.36` has no GitHub release, so it is `agents-commit`,
+not `release`).
 
 ## Reading a pin
 
