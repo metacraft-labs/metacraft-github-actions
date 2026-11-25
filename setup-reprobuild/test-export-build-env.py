@@ -48,20 +48,44 @@ unix = load('test-source-build-env')
 windows = load('test-windows-source-build-nim')
 
 
-def read_env(path):
+def read_assignments(path, fold_case):
+    """`NAME=VALUE` lines as name -> value, names upper-cased if `fold_case`."""
     result = {}
     if path.exists():
         for line in path.read_text(encoding='utf-8').splitlines():
             if line:
                 name, _, value = line.partition('=')
-                result[name.upper() if os.name == 'nt' else name] = value
+                result[name.upper() if fold_case else name] = value
     return result
+
+
+def read_env(path):
+    # Environment variable names are case-insensitive on Windows, so fold
+    # them there to compare with the names the suite expects.
+    return read_assignments(path, fold_case=os.name == 'nt')
+
+
+def read_outputs(path):
+    # Step output names are case-sensitive on every runner: the step writes
+    # `dir=...` and a workflow reads `steps.<id>.outputs.dir`. Folding them
+    # turned `dir` into `DIR` on Windows and hid the output.
+    return read_assignments(path, fold_case=False)
 
 
 def read_lines(path):
     if not path.exists():
         return []
     return [line for line in path.read_text(encoding='utf-8').splitlines() if line]
+
+
+class ReadOutputs(unittest.TestCase):
+    """The `$GITHUB_OUTPUT` reader keeps name case on every platform."""
+
+    def test_output_names_keep_their_case(self):
+        with tempfile.TemporaryDirectory(prefix='repro-build-env-outputs-') as root:
+            output = Path(root) / 'output'
+            output.write_text('dir=lower\nDir=mixed\n', encoding='utf-8')
+            self.assertEqual(read_outputs(output), {'dir': 'lower', 'Dir': 'mixed'})
 
 
 class DecideBuildEnvironment(unittest.TestCase):
@@ -85,7 +109,7 @@ class DecideBuildEnvironment(unittest.TestCase):
                 env={'PATH': os.environ['PATH'], 'RUNNER_TEMP': str(root),
                   'GITHUB_OUTPUT': str(output), 'EXPORT_BUILD_ENV': value},
                 capture_output=True, text=True, timeout=60)
-            outputs = read_env(output)
+            outputs = read_outputs(output)
             directory = outputs.get('dir', '')
             made = bool(directory) and Path(directory).is_dir()
             return done, directory, made
