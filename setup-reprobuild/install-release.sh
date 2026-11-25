@@ -71,6 +71,15 @@ REPO="${REPRO_REPO:-metacraft-labs/reprobuild}"
 # The caller names the release; there is no `latest` default. setup-reprobuild
 # installs the pin (pins/reprobuild.json) unless its caller overrides it.
 VERSION="${REPRO_VERSION:-}"
+# A release whose tag is not `v<version>`: the per-pin prerelease
+# `pin-<commit>` that this repository's `pins` workflow publishes for a pinned
+# Reprobuild commit (install-pin-release.sh). Its archives are still named by
+# the version that commit's reprobuild.nimble declares, so the tag no longer
+# says which version to look for. REPRO_VERSION then names it when the caller
+# knows it; when it is empty, the version is read from the release's own
+# SHA256SUMS, which must list exactly one archive for this platform, and the
+# installed CLI must still report that version.
+RELEASE_TAG="${REPRO_RELEASE_TAG:-}"
 INSTALL_DIR="${REPRO_INSTALL_DIR:?REPRO_INSTALL_DIR must be set}"
 CHECKSUM_FILE_NAME="SHA256SUMS"
 
@@ -201,6 +210,24 @@ http_get() {
 }
 
 resolve_tag() {
+  # A named non-version tag (REPRO_RELEASE_TAG) is used verbatim. It reaches a
+  # URL and a file name exactly as a version does, so it gets the same
+  # character and `..` checks (see the next block for why they matter).
+  if [ -n "${RELEASE_TAG}" ]; then
+    case "${RELEASE_TAG}" in
+      *[!A-Za-z0-9._-]*|*..*|.*|-*)
+        die "invalid release tag '${RELEASE_TAG}': only letters, digits and . _ - are allowed, without '..'." ;;
+    esac
+    TAG="${RELEASE_TAG}"
+    if [ -n "${VERSION}" ]; then
+      case "${VERSION}" in
+        *[!A-Za-z0-9.+_-]*|*..*)
+          die "invalid repro-version '${VERSION}' for release ${TAG}: only letters, digits and . + _ - are allowed." ;;
+      esac
+    fi
+    return
+  fi
+
   # An explicit pin is used verbatim (accepting both `v0.1.3` and `0.1.3`).
   if [ -n "${VERSION}" ] && [ "${VERSION}" != "latest" ]; then
     # ── Validate before it reaches a URL or a filesystem path ────────────────
@@ -255,6 +282,42 @@ resolve_tag() {
     *[!A-Za-z0-9.+_-]*|*..*)
       die "refusing tag_name '${TAG}' from ${API_ORIGIN}: not a plausible release tag." ;;
   esac
+}
+
+# ── The version a named release's SHA256SUMS lists for this platform ─────────
+#
+# version_from_sums <sums-file>  sets SUMS_VERSION.
+#
+# For a release whose tag is not `v<version>` and whose caller named no
+# version. Each manifest line is `<digest>  <name>` (or `<digest> *<name>`);
+# the names of this platform's archives are
+# `reprobuild-<version>-<platform>-<arch>.<ext>`. Exactly one must be listed:
+# none means the release has no archive for this platform (exit 3, the
+# routine fallback), and more than one means the release is not the one-commit
+# bundle a pin prerelease is, so nothing is guessed (exit 1). The version is
+# then held to the same character rules as a requested one, because it lands
+# in a URL and a file name the same way.
+version_from_sums() {
+  local sums="$1" prefix suffix found
+  prefix="reprobuild-"
+  suffix="-${PLATFORM}-${ARCH}.${ARCHIVE_EXT}"
+  found="$(awk -v p="${prefix}" -v s="${suffix}" '
+    { n=$2; sub(/^\*/,"",n)
+      if (length(n) > length(p) + length(s) &&
+          substr(n, 1, length(p)) == p &&
+          substr(n, length(n) - length(s) + 1) == s)
+        print substr(n, length(p) + 1, length(n) - length(p) - length(s)) }' "${sums}")"
+  if [ -z "${found}" ]; then
+    skip "release ${TAG} lists no ${prefix}<version>${suffix} in its ${CHECKSUM_FILE_NAME} (no prebuilt binary for ${PLATFORM}-${ARCH})"
+  fi
+  case "${found}" in
+    *$'\n'*) die "${CHECKSUM_FILE_NAME} of ${TAG} lists more than one ${prefix}<version>${suffix}; refusing to choose" ;;
+  esac
+  case "${found}" in
+    *[!A-Za-z0-9.+_-]*|*..*)
+      die "${CHECKSUM_FILE_NAME} of ${TAG} names an archive with an implausible version '${found}'" ;;
+  esac
+  SUMS_VERSION="${found}"
 }
 
 # ── Symlink containment ──────────────────────────────────────────────────────
@@ -319,18 +382,24 @@ links_leaving_package() {
 }
 
 main() {
-  [ -n "${VERSION}" ] || die "REPRO_VERSION names no release; pass a release tag"
+  [ -n "${VERSION}" ] || [ -n "${RELEASE_TAG}" ] \
+    || die "REPRO_VERSION names no release; pass a release tag"
   detect_platform
   resolve_tag
 
   # Archive names embed the *nimble* version, which is the tag without its
-  # leading `v` (release.yml derives both from reprobuild.nimble).
+  # leading `v` (release.yml derives both from reprobuild.nimble). A named
+  # non-version tag carries no version: REPRO_VERSION gives it, or the
+  # release's SHA256SUMS does, below.
   local version asset_name base_url
-  version="${TAG#v}"
-  asset_name="reprobuild-${version}-${PLATFORM}-${ARCH}.${ARCHIVE_EXT}"
+  if [ -n "${RELEASE_TAG}" ]; then
+    version="${VERSION#v}"
+  else
+    version="${TAG#v}"
+  fi
   base_url="${DOWNLOAD_ORIGIN}/${REPO}/releases/download/${TAG}"
 
-  log "resolved release ${TAG}; want ${asset_name}"
+  log "resolved release ${TAG} of ${REPO}"
   # The resolved tag goes to stdout even when this platform has no asset (the
   # exit-3 skip below), so the action's source fallback can build that same
   # release instead of a moving branch. REPRO_BIN_DIR stays the last line.
@@ -357,6 +426,12 @@ main() {
   sums_code="$(http_get "${sums_path}" "${base_url}/${CHECKSUM_FILE_NAME}")"
 
   if [ "${sums_code}" = "404" ]; then
+    if [ -z "${version}" ]; then
+      # Nothing else can say which archive to look for. This is also what a
+      # release that does not exist (yet) answers, which is the routine case
+      # for a pin whose prerelease has not been published.
+      skip "release ${TAG} of ${REPO} publishes no ${CHECKSUM_FILE_NAME} (or does not exist), so no archive can be selected"
+    fi
     if [ "${REQUIRE_CHECKSUM}" = "true" ]; then
       # Releases v0.1.0 .. v0.1.3 predate checksum publication, so this is the
       # expected outcome for them. Refusing to install unverified is the safe
@@ -371,6 +446,16 @@ installing WITHOUT integrity verification."
   elif [ "${sums_code}" != "200" ]; then
     die "fetching ${CHECKSUM_FILE_NAME} from ${TAG} failed with HTTP ${sums_code}"
   fi
+
+  if [ -z "${version}" ]; then
+    # Called directly, not in `$(...)`: a skip() inside a command substitution
+    # would exit only the subshell, and the ERR trap here would then turn the
+    # routine "no archive for this platform" into a hard error.
+    version_from_sums "${sums_path}"
+    version="${SUMS_VERSION}"
+  fi
+  asset_name="reprobuild-${version}-${PLATFORM}-${ARCH}.${ARCHIVE_EXT}"
+  log "want ${asset_name} from ${TAG}"
 
   # ── Fetch the archive ──────────────────────────────────────────────────────
   local archive_path archive_code

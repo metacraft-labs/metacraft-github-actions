@@ -96,7 +96,14 @@ binary caches the job's Nix trusts: when one holds the package
 `github:<owner>/<repo>/<rev>#reprobuild`, it is downloaded instead of built
 (`nix build --max-jobs 0`, which never compiles), and a miss builds from source
 as before. The `pins` workflow pushes that package for each pinned `rev` (see
-"The gate"). Afterwards the installed `repro --version` must report `version`, and
+"The gate"). On Windows, where there is no Nix, such a pin is first installed
+from the prerelease `pin-<rev>` of this repository when it is published: a
+release-style bundle, `reprobuild-<version>-windows-x86_64.zip` with its
+`SHA256SUMS`, that the `pins` workflow builds from source at `rev` and packages
+with that commit's own `scripts/release/package_windows_release.ps1`. It is
+installed through the same verified path as a release (`install-pin-release.sh`
+and `install-release.sh`); a missing prerelease builds from source as before,
+and one that fails verification fails the job. Afterwards the installed `repro --version` must report `version`, and
 a source build must be at `rev`. `repro-build-pin` and `repro-version` remain
 as explicit overrides only.
 
@@ -137,6 +144,19 @@ and passes trivially when a change touches no pin and none of the readers.
   `setup-reprobuild` on Linux downloads the pin instead of compiling it. The
   push is not part of the gate: missing credentials or a failed push are
   annotated and leave `pins-gate` green.
+- On a push to `agents` or `dev`, on the schedule, and on a dispatch from one
+  of them, the `windows-pin-release-*` jobs publish the Windows bundle of a
+  `dev-commit` or `agents-commit` pin as the prerelease `pin-<rev>` of this
+  repository when it is missing or incomplete: build `rev` from source on a
+  self-hosted Windows runner through `setup-reprobuild`, package it with the
+  commit's `scripts/release/package_windows_release.ps1`, run the commit's
+  release checks on the archive (`scripts/verify_release.sh`,
+  `check_release_source_closure.sh`, `smoke_release_dev_exec.sh`), write
+  `SHA256SUMS`, and publish from a separate job that holds the only
+  `contents: write` permission (its `GITHUB_TOKEN`). The prerelease is never
+  "Latest", and its tag, title and notes say it is a pin-scoped build, not a
+  Reprobuild release. It is not published from pull requests and is not part
+  of the gate.
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
   and with a release and a source-revision override.
 - For the CodeTracer pin it calls `.github/workflows/codetracer-mac-lock.yml`,
@@ -210,6 +230,19 @@ The CodeTracer lock job (`codetracer-mac-lock.yml`) mints its own tokens from
 the same secrets, with `permission-contents: read` but no `repositories:`
 input: it reads and clones every sibling CodeTracer's locks name, some of them
 private, and that set moves with CodeTracer rather than with the pins.
+
+The Windows pin prerelease jobs use two credentials. `windows-pin-release-build`
+mints an App token with `permission-contents: read` and no `repositories:`
+input, as the lock job does: it clones the pinned reprobuild commit and the
+siblings its Windows build reads, which move with reprobuild's lock. It holds
+no write permission. `windows-pin-release-publish` uses no App token: its
+`GITHUB_TOKEN` with `contents: write` creates the release in this repository,
+which is the only write the workflow makes. Publishing the prerelease in
+`metacraft-labs/reprobuild` instead would need a token that can create a tag
+there; the App is not registered with the `workflows` permission, which a
+tag on a commit whose workflow files differ from the default branch may need
+(reprobuild's own clingo producer workflow notes that its `GITHUB_TOKEN` may
+not create a tag there).
 
 **The App is public and installed on the agent-harbor organization** as
 installation 185313720, with repository selection **all** (verified

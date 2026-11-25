@@ -34,6 +34,14 @@ name: pins
 #                       explicit override installs the override
 #   resolver-windows    the same changes: the Windows pin reader
 #                       (ConvertFrom-Json) on a real Windows runner
+#   windows-pin-release a push to agents or dev, the schedule, or a dispatch
+#                       on one of them, when the prerelease `pin-<rev>` for
+#                       the pinned Reprobuild commit is missing or incomplete:
+#                       build that commit from source on a self-hosted Windows
+#                       runner, package it with reprobuild's release packaging
+#                       script, verify it, and publish it here as a
+#                       prerelease that setup-reprobuild installs on Windows
+#                       (not a gate; three jobs: plan, build, publish)
 #   codetracer-mac-lock the CodeTracer pin, its lock workflow or its tool
 #                       changed (never on the schedule; on a dispatch only
 #                       when asked; see `changes`): solve and check
@@ -518,10 +526,12 @@ jobs:
               test "$VERSION" = "$pin_version"
               test "$COMMIT" = "$pin_rev"
               # On Linux the pinned commit's package comes from the binary
-              # cache when a cache this job trusts holds it; otherwise, and
-              # always on macOS and Windows, it is built from source.
+              # cache when a cache this job trusts holds it, and on Windows
+              # from the commit's pin prerelease when one is published
+              # (windows-pin-release); otherwise, and always on macOS, it is
+              # built from source.
               case "$RUNNER_OS:$INSTALL_SOURCE" in
-                Linux:cache | *:source) ;;
+                Linux:cache | Windows:pin-release | *:source) ;;
                 *) echo "unexpected install-source $INSTALL_SOURCE on $RUNNER_OS"; exit 1 ;;
               esac
               ;;
@@ -539,6 +549,297 @@ jobs:
             *) exit 1 ;;
           esac
           test "$(repro --version | tr -d '\r')" = "repro $VERSION"
+
+  # ── The Windows pin prerelease ────────────────────────────────────────────
+  #
+  # Build once, reuse: the Windows counterpart of the Attic push above. On
+  # Windows setup-reprobuild has no Nix to substitute from, so before this
+  # every Windows job compiled the pinned commit from source: 16-19 minutes
+  # on win-ci-bare-001, and past the six-hour job limit on the GARM and VM
+  # runners (move and js recorder runs, 2026-11-24/25). These three jobs build
+  # the pinned commit ONCE, as a release-style bundle, and publish it as the
+  # prerelease `pin-<rev>` of this repository; setup-reprobuild installs it on
+  # Windows (install-pin-release.sh) and builds from source only on a miss.
+  #
+  # Why this repository and not reprobuild: the publish job's own
+  # GITHUB_TOKEN can create a release here, install-release.sh already takes
+  # the repository as a parameter, and nothing in reprobuild's release
+  # listing changes. A pin prerelease is not a Reprobuild release: it is a
+  # source build of one pinned commit, so it is a prerelease (never
+  # "Latest"), its tag and title name the commit, and its notes say so.
+  #
+  # Why not on pull requests: the prerelease is shared state every Windows
+  # job installs, so it is published only from the branches the pin is
+  # declared on (agents, dev) after the change landed there, never from an
+  # unmerged change. A pull request that moves the pin is still gated by
+  # `setup-reprobuild (pin, windows-2025)`, which builds it from source.
+  #
+  # Not a gate: none of these jobs is in pins-gate's `needs`. A failed build
+  # or publish leaves consumers on the source route, which is announced.
+  windows-pin-release-plan:
+    needs: local
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/agents' || github.ref == 'refs/heads/dev') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      rev: ${{ steps.plan.outputs.rev }}
+      version: ${{ steps.plan.outputs.version }}
+      kind: ${{ steps.plan.outputs.kind }}
+      tag: ${{ steps.plan.outputs.tag }}
+      asset: ${{ steps.plan.outputs.asset }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Is the pin prerelease missing or incomplete
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          read -r rev version kind < <(python3 -I -c 'import json; p = json.load(open("pins/reprobuild.json")); print(p["rev"], p["version"], p["kind"])')
+          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::pins/reprobuild.json rev '$rev' is not a full SHA"; exit 1; }
+          [[ "$version" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo "::error::pins/reprobuild.json version '$version' is implausible"; exit 1; }
+          tag="pin-$rev"
+          asset="reprobuild-$version-windows-x86_64.zip"
+          needed=false
+          if [ "$kind" = release ]; then
+            # A release pin is installed from the release itself.
+            echo "the pin is the release v$version; no pin prerelease is needed"
+          elif names="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2> "$RUNNER_TEMP/view.err")"; then
+            if grep -qxF "$asset" <<< "$names" && grep -qxF SHA256SUMS <<< "$names"; then
+              echo "$tag already carries $asset and SHA256SUMS"
+            else
+              echo "$tag exists without $asset and SHA256SUMS (has: $(tr '\n' ' ' <<< "$names")); completing it"
+              needed=true
+            fi
+          elif grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+            echo "$tag does not exist yet"
+            needed=true
+          else
+            cat "$RUNNER_TEMP/view.err"
+            echo "::error::could not ask whether $tag exists"
+            exit 1
+          fi
+          printf 'needed=%s\nrev=%s\nversion=%s\nkind=%s\ntag=%s\nasset=%s\n' \
+            "$needed" "$rev" "$version" "$kind" "$tag" "$asset" | tee -a "$GITHUB_OUTPUT"
+
+  windows-pin-release-build:
+    # Publishes nothing and holds no write permission: the bundle leaves this
+    # self-hosted runner only as a workflow artifact, which the publish job
+    # re-verifies before it uploads anything.
+    needs: windows-pin-release-plan
+    if: ${{ needs.windows-pin-release-plan.outputs.needed == 'true' }}
+    # The label set reprobuild's own Windows release leg runs on
+    # (.github/release-platforms.json) and this repository's other
+    # self-hosted Windows jobs use.
+    runs-on: [self-hosted, windows, x64, dev-env-ready]
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      REV: ${{ needs.windows-pin-release-plan.outputs.rev }}
+      VERSION: ${{ needs.windows-pin-release-plan.outputs.version }}
+      ASSET: ${{ needs.windows-pin-release-plan.outputs.asset }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # contents:read on the owner's repositories: the reprobuild source and
+      # the siblings its Windows build reads, some of them private.
+      - name: Mint a read token for metacraft-labs
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+          permission-contents: read
+
+      # The consumers' own Windows source build, from this checkout: the
+      # pinned commit cloned to .reprobuild-src, its siblings provisioned at
+      # the revisions it locks, env.ps1's toolchains, `just build` in release
+      # mode. The prerelease is missing (the plan said so), so the action
+      # takes its source route; the next step refuses anything else.
+      - name: Build the pinned commit from source
+        id: repro
+        uses: ./setup-reprobuild
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+
+      - name: The build is the pinned commit, from source
+        shell: bash
+        env:
+          INSTALL_SOURCE: ${{ steps.repro.outputs.install-source }}
+          COMMIT: ${{ steps.repro.outputs.commit }}
+          INSTALLED_VERSION: ${{ steps.repro.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "install-source=$INSTALL_SOURCE commit=$COMMIT version=$INSTALLED_VERSION"
+          test "$INSTALL_SOURCE" = source
+          test "$COMMIT" = "$REV"
+          test "$INSTALLED_VERSION" = "$VERSION"
+
+      # stage_release_catalog.sh (called by the packaging script) ships the
+      # reprobuild-packages catalog at the revision the commit's repro.lock
+      # pins, from a checkout beside it. The consumers' source build does not
+      # read the catalog, so reprobuild-provision does not clone it.
+      - name: Clone the reprobuild-packages catalog the pinned commit locks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          lock="$GITHUB_WORKSPACE/.reprobuild-src/repro.lock"
+          rev="$(tr -d '\r' < "$lock" | grep -o '{ name = "reprobuild-packages",[^}]*}' |
+            sed -n 's/.*[{ ,]revision = "\([0-9a-f]\{40\}\)".*/\1/p')"
+          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$lock pins no single reprobuild-packages revision (read '$rev')"; exit 1; }
+          . ./git-auth/scoped-git-auth.sh
+          export TOKEN_OWNERS=metacraft-labs SCOPED_GIT_AUTH_MASK=1
+          scoped_git_auth_build
+          scoped_git_auth_export
+          bash ./git-auth/authenticated-clone.sh --repo metacraft-labs/reprobuild-packages \
+            --dest "$GITHUB_WORKSPACE/reprobuild-packages" --rev "$rev" --shallow
+
+      # Reprobuild's own packaging script, the one its Windows release leg and
+      # its bundle gate run, from the pinned commit's tree: nothing about the
+      # archive layout is restated here.
+      - name: Package the bundle (reprobuild scripts/release/package_windows_release.ps1)
+        id: package
+        shell: pwsh
+        working-directory: .reprobuild-src
+        run: |
+          . .\env.ps1
+          $out = @(./scripts/release/package_windows_release.ps1 -Zip -Platform windows -Arch x86_64)
+          $pkgName = Split-Path -Leaf $out[0]
+          $zip = Split-Path -Leaf $out[1]
+          if ($zip -ne $env:ASSET) {
+            throw "the packaging script produced $zip, not $env:ASSET (does reprobuild.nimble at $env:REV declare $env:VERSION?)"
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "pkg-name=$pkgName"
+
+      # The release leg's checks of the packaged archive, run on this one:
+      # verify_release.sh (the runtime-DLL manifest and a PATH-scrubbed run),
+      # then the source closure and a real `repro exec` from the archive's
+      # own sources.
+      - name: Verify the bundle (reprobuild's release checks)
+        shell: bash
+        working-directory: .reprobuild-src
+        timeout-minutes: 60
+        env:
+          PKG_NAME: ${{ steps.package.outputs.pkg-name }}
+        run: |
+          set -euo pipefail
+          bash scripts/verify_release.sh "$ASSET"
+          bash scripts/release/check_release_source_closure.sh "$PKG_NAME"
+          gcc_exe="$(command -v gcc.exe || command -v gcc || true)"
+          [ -n "$gcc_exe" ] || { echo "::error::no gcc on PATH for the smoke test (env.ps1 should have provisioned it)"; exit 1; }
+          REPRO_BOOTSTRAP_CC="$(cygpath -w "$gcc_exe")"
+          export REPRO_BOOTSTRAP_CC
+          bash scripts/release/smoke_release_dev_exec.sh "$PKG_NAME"
+
+      # The manifest install-release.sh verifies against: GNU sha256sum's
+      # text form, `<digest>  <name>`, the digest read in binary mode, as
+      # reprobuild's release legs write it.
+      - name: Write SHA256SUMS
+        shell: bash
+        working-directory: .reprobuild-src
+        run: |
+          set -euo pipefail
+          digest="$(sha256sum -b < "$ASSET")"
+          digest="${digest%% *}"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no sha256 digest for $ASSET: $digest"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/pin-release"
+          mv "$ASSET" "$RUNNER_TEMP/pin-release/"
+          printf '%s  %s\n' "$digest" "$ASSET" > "$RUNNER_TEMP/pin-release/SHA256SUMS"
+          cat "$RUNNER_TEMP/pin-release/SHA256SUMS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reprobuild-pin-release-windows-x86_64
+          path: ${{ runner.temp }}/pin-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-pin-release-publish:
+    needs: [windows-pin-release-plan, windows-pin-release-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job in this workflow that writes, and it writes one release.
+    permissions:
+      contents: write
+    # Two runs that both found the prerelease missing publish one after the
+    # other; the second finds it complete and stops.
+    concurrency:
+      group: pins-windows-pin-release-${{ needs.windows-pin-release-plan.outputs.tag }}
+      cancel-in-progress: false
+    env:
+      REV: ${{ needs.windows-pin-release-plan.outputs.rev }}
+      VERSION: ${{ needs.windows-pin-release-plan.outputs.version }}
+      KIND: ${{ needs.windows-pin-release-plan.outputs.kind }}
+      TAG: ${{ needs.windows-pin-release-plan.outputs.tag }}
+      ASSET: ${{ needs.windows-pin-release-plan.outputs.asset }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: reprobuild-pin-release-windows-x86_64
+          path: dist
+
+      # The artifact round trip is verified, not assumed: exactly the two
+      # files, and the archive matches the digest the build job wrote.
+      - name: Re-verify the downloaded bundle
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -la
+          test "$(find . -type f -printf '%P\n' | sort)" = "$(printf '%s\n' "$ASSET" SHA256SUMS | sort)"
+          test "$(wc -l < SHA256SUMS)" -eq 1
+          grep -qE "^[0-9a-f]{64}  ${ASSET//./\\.}\$" SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Publish the pin prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Not every event payload is documented to carry the repository
+          # object (schedule); never pass an empty target.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'dev' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if names="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2> view.err)"; then
+            if grep -qxF "$ASSET" <<< "$names" && grep -qxF SHA256SUMS <<< "$names"; then
+              echo "$TAG is already complete; nothing to publish"
+              exit 0
+            fi
+            echo "completing $TAG"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "dist/$ASSET" dist/SHA256SUMS
+          elif grep -q 'release not found' view.err; then
+            # The tag is created at the default branch's tip: a tag on a
+            # commit whose workflow files differ from it may need the
+            # `workflows` permission, which GITHUB_TOKEN never holds. The tag's
+            # commit in THIS repository carries no meaning; the Reprobuild
+            # commit is in the tag's name.
+            notes="$(printf '%s\n' \
+              "**Pin-scoped build, not a Reprobuild release.** A source build of metacraft-labs/reprobuild commit \`$REV\` (version $VERSION, pinned as \`$KIND\` in \`pins/reprobuild.json\`), packaged for Windows x86_64 with that commit's \`scripts/release/package_windows_release.ps1\` and checked with its release checks." \
+              "" \
+              "\`setup-reprobuild\` installs it on Windows when the job selects this commit, verifying \`$ASSET\` against \`SHA256SUMS\`, instead of compiling the commit from source. Built by $RUN_URL from ${GITHUB_REPOSITORY}@${GITHUB_SHA}." \
+              "" \
+              "Reprobuild's releases are published at https://github.com/metacraft-labs/reprobuild/releases.")"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+              --target "$DEFAULT_BRANCH" \
+              --title "Reprobuild pin $REV (Windows x86_64 build of a pinned commit, not a release)" \
+              --notes "$notes" \
+              "dist/$ASSET" dist/SHA256SUMS
+          else
+            cat view.err
+            echo "::error::could not ask whether $TAG exists"
+            exit 1
+          fi
+          echo "Published the Windows pin prerelease \`$TAG\` (\`$ASSET\`)." >> "$GITHUB_STEP_SUMMARY"
 
   codetracer-mac-lock:
     # The reusable workflow solves and checks CodeTracer's aarch64-darwin lock

@@ -221,11 +221,16 @@ class CheckPins(unittest.TestCase):
             "a listing that may fail": ("        id: repos\n",
                                         "        id: repos\n        continue-on-error: true\n"),
         }
+        # Each mutation is applied inside the `remote` job only: other jobs
+        # mint tokens of their own (the Windows pin prerelease build narrows
+        # its token to contents:read too), and the lines must be unique
+        # where they are changed, not across the workflow.
+        remote = workflow_job(workflow, "remote")
         for why, (old, new) in widened.items():
             with self.subTest(why):
-                self.assertEqual(workflow.count(old), 1, old)
-                self.assertNotEqual(
-                    owner_token_narrowing_defects(workflow.replace(old, new)), [], why)
+                self.assertEqual(remote.count(old), 1, old)
+                mutated = workflow.replace(remote, remote.replace(old, new))
+                self.assertNotEqual(owner_token_narrowing_defects(mutated), [], why)
 
     def test_each_owner_gets_its_own_token(self):
         # The workflow mints one token per owner; a pin is checked with its

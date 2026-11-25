@@ -7,7 +7,8 @@ description: >
   Selection (resolve-reprobuild-pin.sh):
     a. No override -> the pin. A pinned commit on reprobuild `dev` or `agents`
         is built from source, or on Linux substituted from the binary cache
-        that holds that commit's own build (route 0); a pinned published
+        that holds that commit's own build (route 0), or on Windows installed
+        from that commit's pin prerelease (route 0w); a pinned published
         release is installed from its prebuilt archive, with a source build of
         the pinned commit as the fallback.
     b. repro-version and/or repro-build-pin -> the caller's override, as
@@ -23,6 +24,13 @@ description: >
         override -> substitute that commit's flake package from the binary
         caches the job's Nix trusts (`nix build --max-jobs 0`, which never
         builds), and admit it as above. A cache miss falls through to 2.
+    0w. Windows, the same selection (a full commit SHA, no build-input
+        override) -> install the prerelease `pin-<commit>` of this repository,
+        which the `pins` workflow builds from source at that commit and
+        packages with reprobuild's own release packaging script
+        (install-pin-release.sh, through install-release.sh: SHA256SUMS
+        verified, a mismatch is a hard error). A missing prerelease or archive
+        falls through to 2.
     1. The selected prebuilt release archive for this OS/arch -> download,
         verify its SHA-256 against the release's SHA256SUMS, unpack, add bin/
         to PATH.
@@ -183,7 +191,9 @@ outputs:
     description: >
       How `repro` ended up on PATH: `release` (verified prebuilt archive),
       `package` (the caller's repro-package), `cache` (the selected commit's
-      Nix package, substituted from a binary cache) or `source` (built here).
+      Nix package, substituted from a binary cache), `pin-release` (the
+      selected commit's verified Windows bundle from its `pin-<commit>`
+      prerelease) or `source` (built here).
       Useful for asserting in CI that a given runner class is actually being
       served by a prebuilt binary.
     value: ${{ steps.decide.outputs.install-source }}
@@ -202,7 +212,7 @@ outputs:
     description: >
       The Reprobuild commit the CLI was built from: the source checkout's
       commit, or the admitted package's. Empty for a release archive.
-    value: ${{ steps.check.outputs.commit || ((steps.decide.outputs.install-source == 'package' || steps.decide.outputs.install-source == 'cache') && steps.pin.outputs.build-ref || '') }}
+    value: ${{ steps.check.outputs.commit || ((steps.decide.outputs.install-source == 'package' || steps.decide.outputs.install-source == 'cache' || steps.decide.outputs.install-source == 'pin-release') && steps.pin.outputs.build-ref || '') }}
 
 runs:
   using: composite
@@ -352,6 +362,33 @@ runs:
       run: |
         bash "${GITHUB_ACTION_PATH}/substitute-repro-package.sh"
 
+    # ── Pin prerelease path: the selected commit's Windows bundle ────────────
+    #
+    # The Windows counterpart of the binary-cache path above. The `pins`
+    # workflow of this repository builds the pinned commit from source on a
+    # Windows runner, packages it with reprobuild's release packaging script,
+    # and publishes it as the prerelease `pin-<commit>` here. Installing it
+    # replaces a 16-19 minute (win-ci-bare-001) to six-hour (GARM and VM
+    # runners) engine compile with a verified download. The same selection
+    # rule as the cache: a full commit SHA, no release, no caller package, and
+    # none of the inputs that build a different engine (runquota-ref,
+    # io-mon-ref, stackable-hooks-pin). setup-dev-env forwards the pin as
+    # repro-build-pin, so the version comes from expected-version when this
+    # action read the pin itself and from the prerelease's SHA256SUMS
+    # otherwise; the version check after `Decide install path` still holds it
+    # to the pin. A miss is announced and takes the source route; a
+    # prerelease that fails verification fails the step.
+    - name: Install the selected commit's pin prerelease (Windows)
+      id: pin-release
+      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
+      shell: bash
+      env:
+        REPRO_BUILD_PIN: ${{ steps.pin.outputs.expected-commit }}
+        EXPECTED_VERSION: ${{ steps.pin.outputs.expected-version }}
+        REPRO_GITHUB_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/install-pin-release.sh"
+
     # Single place that decides whether the source build runs, so the condition
     # is not repeated (and mis-repeated) across five steps.
     - name: Decide install path
@@ -375,6 +412,7 @@ runs:
         REPRO_PACKAGE: ${{ inputs.repro-package }}
         PACKAGE_BIN_DIR: ${{ steps.package.outputs.bin-dir }}
         CACHE_BIN_DIR: ${{ steps.cache.outputs.bin-dir }}
+        PIN_RELEASE_BIN_DIR: ${{ steps.pin-release.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
@@ -395,6 +433,10 @@ runs:
         elif [ -n "${CACHE_BIN_DIR:-}" ]; then
           echo "install-source=cache"   >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${CACHE_BIN_DIR}" >> "$GITHUB_OUTPUT"
+          echo "need-source=false"      >> "$GITHUB_OUTPUT"
+        elif [ -n "${PIN_RELEASE_BIN_DIR:-}" ]; then
+          echo "install-source=pin-release" >> "$GITHUB_OUTPUT"
+          echo "repro-bin-dir=${PIN_RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"
         else
           # No branch default: a source build needs the selected revision, or

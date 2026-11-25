@@ -340,6 +340,12 @@ jobs:
       - name: Binary-cache substitution of the selected Reprobuild package
         run: python3 setup-reprobuild/test-cache-substitution.py
 
+      # On Windows the selected commit's bundle comes from its pin prerelease
+      # when one is published: verified like a release, a miss leaves the
+      # source route as it was, and a wrong prerelease fails the step.
+      - name: Windows pin prerelease installation of the selected commit
+        run: python3 setup-reprobuild/test-pin-release.py
+
       # A source-built engine refuses its compiled-in sibling trees, so the
       # build step must hand later steps the pinned trees the dev shell names.
       - name: Source build forwards the sibling-first source variables
