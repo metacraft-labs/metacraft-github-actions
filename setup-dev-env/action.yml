@@ -1089,7 +1089,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@2844a9623f0f24dd5c14c129b92a0ddd7ce93d7c
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@363b4351516ee7f62fa57e055cd1cd2bb4898096
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
