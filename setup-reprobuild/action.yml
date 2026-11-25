@@ -514,7 +514,7 @@ runs:
     # clones defaults to the revision repro-build-pin locks, not a mainline.
     - name: Provision selected Reprobuild source dependencies
       if: ${{ steps.decide.outputs.need-source == 'true' }}
-      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@67ad508ae540c7672d74013baf418438f64ea75d
+      uses: metacraft-labs/metacraft-github-actions/reprobuild-provision@f757eb7d453ec5365bd0ff18c03236fd27240571
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
