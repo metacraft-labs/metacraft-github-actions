@@ -105,6 +105,18 @@ environment path, including the existing lock-schema checks for `repro-lock`.
 
 ### Source-built Reprobuild inputs
 
+`export-build-env` (default `true`) decides whether a source build of the
+`repro` CLI hands its build environment to later steps. That environment is
+the RunQuota daemon and client, the bootstrap compiler, the source trees the
+engine compiles recipes against, the toolchain directories, and on Windows
+everything the reprobuild `env.ps1` sets. With `false`, only the CLI reaches
+later steps: its directory on PATH and, on Linux/macOS,
+`REPROBUILD_NIX_DAEMON_BIN`. The rest goes to the files `setup-reprobuild`'s
+`build-env-dir` output names, and this action's own `repro exec` check loads
+them from there. Use it in a job whose later steps build with a toolchain of
+their own and refuse an inherited one. One example is a native Windows ARM64
+build after an x64 CLI built under emulation.
+
 `repro-build-pin` overrides the Reprobuild source revision. Empty (the default) builds the pinned commit; with only `repro-version` given, a platform without its archive builds the release it resolved.
 Its source dependencies follow it: RunQuota (including the Windows bootstrap
 lease daemon) and, on Windows, io-mon, nim-stackable-hooks and the other
@@ -381,6 +393,7 @@ gets the broker's current token, with no step split into phases. Which token
 | ---------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
 | `read` (default) | the broker's `contents: read` token, rotated by the broker             | `gh-token`                                |
 | `write`          | `gh-token`; the broker never writes it, `refresh-build-auth` renews it | `gh-token`                                |
+| `none`           | no `git-token` and no job-scoped Git configuration                     | the same                                  |
 
 A job that pushes a branch, a tag or a lock record with the job's Git
 credential after this action (a `git push` step, or `refresh-workspace-lock`,
@@ -391,7 +404,19 @@ because the broker's token cannot write. A writing job's Git token still lives o
 more than an hour after `gh-token` was minted needs `refresh-build-auth`
 first. `setup-dev-env` records the declaration in `git-access` in the
 credential directory before the broker's first rotation, and every writer of
-`git-token` (`setup-nix`, `refresh-build-auth`, the broker) honours it. A tool
+`git-token` (`setup-nix`, `refresh-build-auth`, the broker) honours it.
+
+A job whose later steps must start with no Git runtime configuration from this
+action declares `git-access: none`. One example is a checkout configured only by
+its own step, such as nim-libvterm's native Windows ARM64 leg. This action
+still authenticates its own sibling clones, which never reach the job's
+environment, but it installs no job-scoped credential: no `git-token` and no
+`GIT_CONFIG_*` for later steps. A later `refresh-build-auth` installs none
+either. The declaration is recorded in the credential directory before any
+installer runs, on every platform. The action's last step fails if the job's
+Git configuration changed anyway.
+
+A tool
 that runs Git through its own scrubbed environment, such as Repro's sibling
 materialization, is given the same helper through a private
 `GIT_CONFIG_GLOBAL` (`scoped_git_auth_with_global` in
