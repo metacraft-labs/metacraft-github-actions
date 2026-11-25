@@ -26,7 +26,9 @@ name: pins
 #                       (`nix build` of the pinned package, Linux and macOS)
 #                       and section 0b (the binary reads the real workspace
 #                       manifests and answers the managed-hook contract) of
-#                       metacraft-pm how-to-distribute-new-reprobuild-versions-internally.md
+#                       metacraft-pm how-to-distribute-new-reprobuild-versions-internally.md;
+#                       it also pushes the built package to the Attic cache
+#                       (not a gate)
 #   setup-reprobuild    the same changes: the action installs the pin with no
 #                       repro-build-pin on Linux, macOS and Windows, and an
 #                       explicit override installs the override
@@ -337,6 +339,47 @@ jobs:
           version="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.version)"
           test "$("$out/bin/repro" --version)" = "repro $version"
           echo "repro=$out/bin/repro" >> "$GITHUB_OUTPUT"
+          echo "package=$out" >> "$GITHUB_OUTPUT"
+
+      # Build once, reuse from the cache. setup-reprobuild substitutes the
+      # pinned commit's package from the organisation's Attic cache before it
+      # compiles the engine, and this job has just built exactly that package
+      # (`#default` and `#reprobuild` are the same output; the setup action
+      # asks for `#reprobuild`). So the job that builds the pin pushes it, and
+      # every consumer job after it downloads it. Reprobuild's own release
+      # pipeline pushes only revisions that go through a release run, and only
+      # for x86_64-linux; an `agents-commit` pin may have no such run at all.
+      #
+      # Not a gate: the cache entry is a convenience, and a cache-service
+      # failure must not block a pin whose package built and passed 0b. It is
+      # not silent either: missing credentials and a failed push are
+      # annotated, and the job summary says how to repeat the push. A re-run
+      # of this job rebuilds the package; `attic push` sends only what the
+      # cache does not hold yet.
+      - name: Push the pinned package to the organisation cache
+        continue-on-error: true
+        env:
+          PACKAGE: ${{ steps.build.outputs.package }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
+          ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ATTIC_TOKEN}" || -z "${ATTIC_CACHE}" || -z "${ATTIC_ENDPOINT}" ]]; then
+            echo "::warning::secrets.ATTIC_TOKEN, vars.ATTIC_CACHE and vars.ATTIC_ENDPOINT are not all set for this repository, so the pinned package $PACKAGE was not pushed to the organisation cache; every consumer job builds the engine from source until it is"
+            echo "The pinned Reprobuild package \`$PACKAGE\` was **not** pushed to the organisation cache: this repository has no Attic credentials." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "::add-mask::$ATTIC_TOKEN"
+          attic="$(nix build --no-link --print-out-paths --accept-flake-config nixpkgs#attic-client)/bin/attic"
+          "$attic" login --set-default pins "$ATTIC_ENDPOINT" "$ATTIC_TOKEN"
+          if ! "$attic" push "$ATTIC_CACHE" "$PACKAGE"; then
+            echo "::warning::pushing $PACKAGE to the Attic cache $ATTIC_CACHE failed; re-run this job to push it again"
+            echo "Pushing the pinned Reprobuild package \`$PACKAGE\` to \`$ATTIC_CACHE\` **failed**. Re-run this job to push it again." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Pushed $PACKAGE to $ATTIC_CACHE"
+          echo "Pushed the pinned Reprobuild package \`$PACKAGE\` to \`$ATTIC_CACHE\`." >> "$GITHUB_STEP_SUMMARY"
 
       # Section 0b reads the manifests on every repro-workspace branch people
       # use. The workspace root is migrating from `dev`/`agents` to a single
@@ -474,7 +517,13 @@ jobs:
               test "$ORIGIN" = pin
               test "$VERSION" = "$pin_version"
               test "$COMMIT" = "$pin_rev"
-              test "$INSTALL_SOURCE" = source
+              # On Linux the pinned commit's package comes from the binary
+              # cache when a cache this job trusts holds it; otherwise, and
+              # always on macOS and Windows, it is built from source.
+              case "$RUNNER_OS:$INSTALL_SOURCE" in
+                Linux:cache | *:source) ;;
+                *) echo "unexpected install-source $INSTALL_SOURCE on $RUNNER_OS"; exit 1 ;;
+              esac
               ;;
             release-override)
               test "$ORIGIN" = override
@@ -485,7 +534,7 @@ jobs:
               test "$ORIGIN" = override
               test "$VERSION" = 0.2.31
               test "$COMMIT" = 7618e3cb21ce17f5c86fbd290f501d60d52e9be1
-              test "$INSTALL_SOURCE" = source
+              case "$INSTALL_SOURCE" in source | cache) ;; *) exit 1 ;; esac
               ;;
             *) exit 1 ;;
           esac

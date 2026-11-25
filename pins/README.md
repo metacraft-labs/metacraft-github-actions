@@ -91,7 +91,12 @@ checkout (`setup-reprobuild/resolve-reprobuild-pin.sh`; on Windows through
 `read-pin.ps1` and `ConvertFrom-Json`). With no `repro-build-pin` and no
 `repro-version`, they install the pin: a `dev-commit` or `agents-commit` pin is
 built from source at `rev`, a `release` pin is installed from its prebuilt
-archive. Afterwards the installed `repro --version` must report `version`, and
+archive. On Linux a `dev-commit` or `agents-commit` pin is first asked of the
+binary caches the job's Nix trusts: when one holds the package
+`github:<owner>/<repo>/<rev>#reprobuild`, it is downloaded instead of built
+(`nix build --max-jobs 0`, which never compiles), and a miss builds from source
+as before. The `pins` workflow pushes that package for each pinned `rev` (see
+"The gate"). Afterwards the installed `repro --version` must report `version`, and
 a source build must be at `rev`. `repro-build-pin` and `repro-version` remain
 as explicit overrides only.
 
@@ -127,6 +132,11 @@ and passes trivially when a change touches no pin and none of the readers.
   `tools/workspace-manifest-branches.py`) and
   answers the managed-hook contract of the hooks it generates
   (`tools/check-reprobuild-fits-workspace.sh`).
+- The same job pushes the package it built to the organisation's Attic cache
+  (`secrets.ATTIC_TOKEN`, `vars.ATTIC_CACHE`, `vars.ATTIC_ENDPOINT`), so that
+  `setup-reprobuild` on Linux downloads the pin instead of compiling it. The
+  push is not part of the gate: missing credentials or a failed push are
+  annotated and leave `pins-gate` green.
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
   and with a release and a source-revision override.
 - For the CodeTracer pin it calls `.github/workflows/codetracer-mac-lock.yml`,
