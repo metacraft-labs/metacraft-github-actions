@@ -36,10 +36,11 @@
 // GitHub challenges a request; git-auth/scoped-git-auth.sh configures it as
 // `credential.<scope>.helper` in the job's environment. The broker rewrites it
 // with every rotation, so Git is kept fresh exactly as Nix is -- unless the job
-// declared `git-access: write` (recorded in `git-access`), because the
-// broker's `contents: read` tokens cannot push. That job's `git-token` holds
-// the workflow's `gh-token` and is renewed by refresh-build-auth; the broker
-// never writes it (brokerOwnsGitToken). Git's helper protocol:
+// declared `git-access: write` or `none` (recorded in `git-access`). The
+// broker's `contents: read` tokens cannot push, so a writing job's `git-token`
+// holds the workflow's `gh-token` and is renewed by refresh-build-auth. A job
+// that declared `none` has no job-scoped Git credential and no `git-token` at
+// all. The broker never writes either (brokerOwnsGitToken). Git's helper protocol:
 // https://git-scm.com/docs/gitcredentials#_custom_helpers.
 //
 // SECRETS
@@ -218,17 +219,15 @@ function rotateNetrc(dir, token) {
 }
 
 /**
- * The job's declared Git access: "write" when `git-access` in `dir` says so
- * (setup-dev-env `git-access: write`), "read" otherwise. A missing or
+ * The job's declared Git access: "write" or "none" when `git-access` in `dir`
+ * says so (setup-dev-env `git-access`), "read" otherwise. A missing or
  * unreadable marker is "read": the default, and the one that lets the broker
  * keep Git fresh.
  */
 function gitAccess(dir) {
   try {
-    return fs.readFileSync(path.join(dir, GIT_ACCESS), "utf8").trim() ===
-      "write"
-      ? "write"
-      : "read";
+    const access = fs.readFileSync(path.join(dir, GIT_ACCESS), "utf8").trim();
+    return access === "write" || access === "none" ? access : "read";
   } catch {
     return "read";
   }
@@ -237,8 +236,8 @@ function gitAccess(dir) {
 /** Validate a `git-access` input value; empty means the default, "read". */
 function parseGitAccess(value) {
   const access = (value || "read").trim();
-  if (access !== "read" && access !== "write")
-    throw new Error("git-access must be 'read' or 'write'");
+  if (access !== "read" && access !== "write" && access !== "none")
+    throw new Error("git-access must be 'read', 'write' or 'none'");
   return access;
 }
 
@@ -259,15 +258,15 @@ function writeGitToken(dir, token) {
 
 /**
  * Install `token` as the job's GitHub credential: for Nix always, and for Git
- * unless the job writes over Git (gitAccess), whose Git token is not the
- * broker's to replace.
+ * only when the job reads over Git (gitAccess). A writing job's Git token is
+ * not the broker's to replace, and a job that declared `none` has none.
  */
 function rotate(dir, token, owners) {
   if (!token || /\s/.test(token))
     throw new Error("refusing an empty or malformed token");
   writeAccessTokens(dir, withGithubToken(readAccessTokens(dir), token, owners));
   rotateNetrc(dir, token);
-  if (gitAccess(dir) !== "write") writeGitToken(dir, token);
+  if (gitAccess(dir) === "read") writeGitToken(dir, token);
 }
 
 function base64url(data) {
@@ -490,7 +489,7 @@ function publishJobGithubToken(core, env = process.env) {
  */
 function brokerOwnsGitToken(dir) {
   return (
-    gitAccess(dir) !== "write" &&
+    gitAccess(dir) === "read" &&
     fs.existsSync(path.join(dir, GIT_TOKEN)) &&
     brokerGithubToken(dir) !== ""
   );
@@ -669,7 +668,7 @@ async function startBroker(env = process.env) {
   writeAtomic(path.join(dir, BROKER_PID), String(child.pid) + "\n");
   child.unref();
   console.log(
-    `Job credential broker started (pid ${child.pid}); it re-mints the Nix ${gitAccess(dir) === "write" ? "" : "and Git "}GitHub credential before it expires. Log: ${path.join(dir, BROKER_LOG)}`,
+    `Job credential broker started (pid ${child.pid}); it re-mints the Nix ${gitAccess(dir) === "read" ? "and Git " : ""}GitHub credential before it expires. Log: ${path.join(dir, BROKER_LOG)}`,
   );
 }
 

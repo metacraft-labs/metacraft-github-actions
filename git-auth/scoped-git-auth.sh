@@ -124,7 +124,10 @@
 # brokerOwnsGitToken there -- keep the two in step). A job that writes over Git
 # declares `git-access: write` on setup-dev-env, which records `write` in
 # `<credential dir>/git-access`; the broker, whose tokens are `contents: read`,
-# then never writes the Git token file, and refresh-build-auth renews it.
+# then never writes the Git token file, and refresh-build-auth renews it. A job
+# that takes no job-scoped Git credential at all declares `git-access: none`,
+# which setup-dev-env records at its start; scoped_git_auth_emit then installs
+# nothing, and the broker writes no Git token.
 #
 # Environment read by scoped_git_auth_build:
 #   GH_TOKEN                  The token. Empty/unset => no credential is derived
@@ -552,16 +555,20 @@ scoped_git_auth_job_dir() {
   return 0
 }
 
-# `scoped_git_auth_git_access <dir>` -- `write` when the job declared that it
-# writes over Git (`<dir>/git-access` holds `write`, recorded by setup-dev-env's
-# broker start for `git-access: write`), `read` otherwise.
+# `scoped_git_auth_git_access <dir>` -- the job's declared Git access, as
+# setup-dev-env recorded it in `<dir>/git-access`: `write` when the job writes
+# over Git, `none` when it takes no job-scoped Git credential at all, `read`
+# otherwise (including when nothing was recorded).
 scoped_git_auth_git_access() {
   local access=""
   if [[ -f $1/git-access ]]; then
     { IFS= read -r access <"$1/git-access"; } 2>/dev/null || :
   fi
   access="${access//[[:space:]]/}"
-  if [[ $access == write ]]; then printf 'write'; else printf 'read'; fi
+  case "$access" in
+  write | none) printf '%s' "$access" ;;
+  *) printf 'read' ;;
+  esac
 }
 
 # `scoped_git_auth_broker_owns_git_token <dir>` -- true while the job's
@@ -1017,6 +1024,14 @@ scoped_git_auth_emit() {
 _scoped_git_auth_emit() {
   local sink="${1:-}"
   local j out=()
+
+  # A job that declared `git-access: none` gets no job-scoped configuration
+  # from any installer: no token file and no GIT_CONFIG_* for later steps.
+  if _scoped_git_auth_existing_job_dir &&
+    [[ "$(scoped_git_auth_git_access "$_SGA_EXISTING_JOB_DIR")" == none ]]; then
+    echo "scoped-git-auth: this job declared git-access none; no job-scoped Git credential is installed" >&2
+    return 0
+  fi
 
   if [[ -n ${SCOPED_GIT_AUTH_SCOPES[*]+set} && ${#SCOPED_GIT_AUTH_SCOPES[@]} -gt 0 ]]; then
     scoped_git_auth_job_dir || return

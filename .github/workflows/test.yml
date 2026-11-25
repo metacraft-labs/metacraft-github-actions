@@ -81,6 +81,11 @@ jobs:
         # --compilerArgsFile option the engine's provider compile passes.
         shell: bash
         run: python setup-reprobuild/test-windows-source-build-nim.py -v
+      - name: A source build exports its build environment only when asked
+        # export-build-env false keeps RunQuota, the toolchain and env.ps1's
+        # variables out of later steps that build with toolchains of their own.
+        shell: bash
+        run: python setup-reprobuild/test-export-build-env.py -v
       - name: Mint a read token for the pinned Reprobuild's sources
         id: token
         uses: actions/create-github-app-token@v2
@@ -351,8 +356,18 @@ jobs:
       - name: Source build forwards the sibling-first source variables
         run: python3 setup-reprobuild/test-source-build-env.py
 
+      # With export-build-env false, a source build's environment goes to the
+      # build-env-dir files instead of the job's environment.
+      - name: Source build exports its build environment only when asked
+        run: python3 setup-reprobuild/test-export-build-env.py
+
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
+
+      # git-access none and export-build-env false keep this action's Git
+      # credential and a source build's environment out of later steps.
+      - name: Opting out of the job-scoped Git credential and build environment
+        run: python3 setup-dev-env/test-job-env-opt-outs.py
 
       - name: Windows hook source stays pinned as mainline advances
         run: python3 reprobuild-provision/test-windows-hooks-pin.py
@@ -457,7 +472,7 @@ jobs:
         run: bash mirror-artifacts-s3/mirror-step-test.sh
 
       - name: shellcheck
-        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/export-runquota-endpoint.sh setup-dev-env/export-runquota-endpoint-step-test.sh setup-dev-env/decide-tool-provisioning.sh setup-dev-env/tool-provisioning-step-test.sh setup-dev-env/decide-nix-install.sh setup-dev-env/nix-install-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh setup-dev-env/enable-nix-features.sh setup-dev-env/enable-nix-features-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
+        run: shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/export-runquota-endpoint.sh setup-dev-env/export-runquota-endpoint-step-test.sh setup-dev-env/decide-tool-provisioning.sh setup-dev-env/tool-provisioning-step-test.sh setup-dev-env/decide-nix-install.sh setup-dev-env/nix-install-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh setup-dev-env/enable-nix-features.sh setup-dev-env/enable-nix-features-step-test.sh setup-dev-env/record-git-access.sh setup-dev-env/check-git-config-untouched.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
 
   publish-workspace-lock:
     # The write half of the same mechanism. `clone-siblings` READS a per-commit

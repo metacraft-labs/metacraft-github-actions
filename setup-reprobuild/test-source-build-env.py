@@ -92,7 +92,7 @@ class SourceBuildEnvironment(unittest.TestCase):
         self.github_env = self.root / 'github-env'
         self.github_path = self.root / 'github-path'
 
-    def run_step(self, dev_shell):
+    def run_step(self, dev_shell, extra_env=None):
         dev_shell_env = self.root / 'dev-shell.env'
         dev_shell_env.write_text(''.join(
             "{}='{}'\n".format(name, value) for name, value in dev_shell.items()))
@@ -107,6 +107,7 @@ class SourceBuildEnvironment(unittest.TestCase):
             'IO_MON_PIN': '',
             'DEV_SHELL_ENV': str(dev_shell_env),
         }
+        env.update(extra_env or {})
         result = subprocess.run(['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail',
                                   '-c', step_body(STEP)],
                                 cwd=self.root, env=env, text=True,

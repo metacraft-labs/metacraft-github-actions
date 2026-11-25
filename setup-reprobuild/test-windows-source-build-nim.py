@@ -123,7 +123,7 @@ class WindowsSourceBuildNim(unittest.TestCase):
         self.github_env = self.root / 'github_env'
         self.github_path = self.root / 'github_path'
 
-    def run_step(self, body, env_ps1_sets_nim=False):
+    def run_step(self, body, env_ps1_sets_nim=False, extra_env=None):
         text = ('$env:PATH = "' + str(self.toolchain) + '" + '
                 '[IO.Path]::PathSeparator + $env:PATH\n'
                 '$env:BEARSSL_SRC = "' + str(self.root / 'bearssl') + '"\n')
@@ -143,6 +143,7 @@ class WindowsSourceBuildNim(unittest.TestCase):
             MCL_LEGACY_LAYOUT='false',
             REPROBUILD_BUILD_MODE='release',
         )
+        env.update(extra_env or {})
         for name in [n for n in env if n.upper() in ('REPRO_NIM_COMPILER', 'REPRO_BOOTSTRAP_CC')]:
             del env[name]
         command = [self.pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)]
