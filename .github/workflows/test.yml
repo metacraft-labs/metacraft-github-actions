@@ -334,6 +334,12 @@ jobs:
       - name: Caller-built Reprobuild package admission contract
         run: python3 setup-reprobuild/test-prebuilt-package.py
 
+      # The selected commit's package comes from the binary cache when a cache
+      # holds it: asked without building, admitted like a caller's package,
+      # and a miss leaves the source route as it was.
+      - name: Binary-cache substitution of the selected Reprobuild package
+        run: python3 setup-reprobuild/test-cache-substitution.py
+
       # A source-built engine refuses its compiled-in sibling trees, so the
       # build step must hand later steps the pinned trees the dev shell names.
       - name: Source build forwards the sibling-first source variables
