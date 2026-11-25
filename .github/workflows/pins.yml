@@ -605,7 +605,9 @@ jobs:
           # 7 is the probe's success code: a monitor that reports its own
           # status instead of the child's fails here.
           & repro internal io monitor --depfile "$dir/execute.iomon" -- "$dir/probe.exe" "$dir/input.txt" "$dir/output.txt"
-          if ($LASTEXITCODE -ne 7) { throw "The monitored program's exit code was not preserved (got $LASTEXITCODE, not 7)" }
+          $status = $LASTEXITCODE
+          Write-Host "monitored program exit code: $status"
+          if ($status -ne 7) { throw "The monitored program's exit code was not preserved (got $status, not 7)" }
           if ([IO.File]::ReadAllText("$dir/output.txt") -cne "observed input`n") {
             throw 'The monitored program did not read and write its real files'
           }
@@ -613,8 +615,12 @@ jobs:
             if (-not (Test-Path "$dir/$trace") -or (Get-Item "$dir/$trace").Length -eq 0) {
               throw "The monitor wrote no trace: $trace"
             }
+            Write-Host "${trace}: $((Get-Item "$dir/$trace").Length) bytes"
           }
           Write-Host 'The pinned engine monitors a real compiler and its program.'
+          # The runner's pwsh wrapper turns a leftover non-zero $LASTEXITCODE
+          # (still the probe's 7 here) into a failed step.
+          exit 0
 
   # ── The Windows pin prerelease ────────────────────────────────────────────
   #
