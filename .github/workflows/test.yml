@@ -81,6 +81,11 @@ jobs:
         # --compilerArgsFile option the engine's provider compile passes.
         shell: bash
         run: python setup-reprobuild/test-windows-source-build-nim.py -v
+      - name: A source build exports its build environment only when asked
+        # export-build-env false keeps RunQuota, the toolchain and env.ps1's
+        # variables out of later steps that build with toolchains of their own.
+        shell: bash
+        run: python setup-reprobuild/test-export-build-env.py -v
       - name: Mint a read token for the pinned Reprobuild's sources
         id: token
         uses: actions/create-github-app-token@v2
@@ -350,6 +355,11 @@ jobs:
       # build step must hand later steps the pinned trees the dev shell names.
       - name: Source build forwards the sibling-first source variables
         run: python3 setup-reprobuild/test-source-build-env.py
+
+      # With export-build-env false, a source build's environment goes to the
+      # build-env-dir files instead of the job's environment.
+      - name: Source build exports its build environment only when asked
+        run: python3 setup-reprobuild/test-export-build-env.py
 
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
