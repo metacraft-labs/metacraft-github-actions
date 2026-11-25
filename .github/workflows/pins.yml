@@ -35,7 +35,8 @@ name: pins
 #                       the pinned engine also monitors a real compiler and
 #                       the program it built
 #   resolver-windows    the same changes: the Windows pin reader
-#                       (ConvertFrom-Json) on a real Windows runner
+#                       (ConvertFrom-Json) and setup-dev-env's
+#                       installed-Reprobuild report, on a real Windows runner
 #   windows-pin-release a push to agents or dev, the schedule, or a dispatch
 #                       on one of them, when the prerelease `pin-<rev>` for
 #                       the pinned Reprobuild commit is missing or incomplete:
@@ -171,7 +172,7 @@ jobs:
 
           pins=false reprobuild=false codetracer=false
           if matches "^pins/|^flake\.nix$|^tools/check-pins\.py$|^tools/update-pin\.sh$|$workflow"; then pins=true; fi
-          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
+          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^setup-dev-env/report-installed-repro\.sh$|^setup-dev-env/test-repro-commit-output\.py$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
           case "$EVENT" in
             pull_request)
               if matches "$ct_pattern"; then codetracer=true; fi
@@ -222,6 +223,11 @@ jobs:
       - name: The pin resolver through Git Bash and the native PowerShell reader
         shell: bash
         run: REQUIRE_PWSH=1 python setup-reprobuild/test-resolve-reprobuild-pin.py
+      - name: setup-dev-env's installed-Reprobuild report through Git Bash
+        # report-installed-repro.sh runs under Git Bash on Windows jobs, and
+        # resolves a release override's tag with Git for Windows.
+        shell: bash
+        run: python setup-dev-env/test-repro-commit-output.py -v
 
   remote:
     # One leg per owner the pins name, each with a CI token provider app
