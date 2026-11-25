@@ -7,6 +7,12 @@ auth_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../git-auth/scoped-git-auth.sh
 . "$auth_dir/../git-auth/scoped-git-auth.sh"
 TOKEN_OWNERS="${TOKEN_OWNERS:-metacraft-labs}"
+# Git: write the fresh token to the job's Git token file, which the job's
+# credential helper reads whenever Git asks, so steps and daemons that started
+# before this refresh get it too. While the credential broker owns that file
+# (a job that did not declare `git-access: write`) the broker's token is kept;
+# a writing job's file is renewed here, which is what this action is for.
+# See git-auth/scoped-git-auth.sh, "THE JOB-SCOPED CREDENTIAL".
 SCOPED_GIT_AUTH_MASK=1 scoped_git_auth_build
 scoped_git_auth_emit "$GITHUB_ENV"
 scoped_git_auth_report

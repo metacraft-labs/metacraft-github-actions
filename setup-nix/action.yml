@@ -11,10 +11,14 @@ inputs:
   token-owner:
     description: >
       Whitespace-separated GitHub owner(s) whose repositories `gh-token` is
-      allowed to authenticate. The Git CLI credential is installed as an
-      `http.https://github.com/<owner>/.extraHeader`, so it covers those owners'
-      repositories and nothing else — not nixpkgs, not `nim-lang/*`, not any
-      other third party a build happens to fetch from github.com.
+      allowed to authenticate. The Git CLI credential is installed as a
+      `credential.https://github.com/<owner>/.helper` that reads the job's
+      current token from `$MCL_JOB_CREDENTIALS_DIR/git-token` when GitHub
+      challenges a request, so it covers those owners' repositories and nothing
+      else — not nixpkgs, not `nim-lang/*`, not any other third party a build
+      happens to fetch from github.com. While setup-dev-env's credential broker
+      owns that file (a job that did not declare `git-access: write`), the
+      broker's token is kept rather than `gh-token`.
     required: false
     default: "metacraft-labs"
   extra-token-url-prefixes:
@@ -382,7 +386,11 @@ runs:
       # Scoped to the org's own repositories and to this job. See the long
       # rationale in configure-git-auth.sh; in short, the credential this used
       # to install was a global, URL-embedded, catch-all rewrite, and each of
-      # those three words was a separate problem. Contract suite:
+      # those three words was a separate problem. It is now a credential
+      # helper reading the job's Git token file, which this step writes
+      # (unless the broker owns it) in the credential directory the Nix step
+      # above created or reused, so the broker and refresh-build-auth can
+      # rotate it for later steps. Contract suite:
       # setup-nix/configure-git-auth-test.sh.
       shell: bash
       env:

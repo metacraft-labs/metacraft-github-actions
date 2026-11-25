@@ -40,9 +40,33 @@ even truncated, not even hashed. A test fixture that logs the secret it is
 testing is a worse leak than the one it is testing for, because fixtures get
 pasted into issues.
 
+CHALLENGES
+----------
+A protected request with no Authorization header is answered `401` with a
+`WWW-Authenticate: Basic` challenge, as github.com answers one for a private
+repository. That is what makes Git call its credential helper and retry, so
+the job-scoped helper's 401-then-retry flow is exercised on the wire: the
+journal shows `none` and then `ok` for the same path. A credential that does
+not match is answered `403` by default; `--mismatch-status 401` answers it the
+way github.com answers a bad or expired token, a challenge, which makes Git
+report the rejected credential to its helpers with `erase`.
+
+Two switches exist for the rotation contract (a Git process started before a
+token rotation must be handed the rotated token):
+
+  --reload-auth-file
+      re-read --auth-file on every request, so the suite can rotate the
+      credential the server accepts.
+  --hold-file FILE
+      hold every unauthenticated protected request until FILE exists, so the
+      suite can start a Git process, rotate the token, and only then let the
+      challenge reach it.
+
 Usage:
   git-http-auth-server.py --root DIR --journal FILE
-                          [--auth-prefix PATH --auth-file FILE]
+                          [--auth-prefix PATH ... --auth-file FILE]
+                          [--mismatch-status 401|403] [--reload-auth-file]
+                          [--hold-file FILE]
 """
 
 import argparse
@@ -52,6 +76,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ARGS = None
@@ -76,7 +101,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _protected(self, path):
-        return ARGS.auth_prefix and path.startswith(ARGS.auth_prefix)
+        return any(prefix and path.startswith(prefix) for prefix in ARGS.auth_prefix)
+
+    def _challenge(self, status):
+        self.send_response(status)
+        if status == 401:
+            self.send_header("WWW-Authenticate", 'Basic realm="git"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _check_auth(self, path):
         """Return True to proceed. Journals what arrived, never its value."""
@@ -104,11 +136,12 @@ class Handler(BaseHTTPRequestHandler):
             journal(path, "public-auth" if supplied else "public-noauth")
             return True
         if supplied is None:
+            if ARGS.hold_file:
+                deadline = time.monotonic() + 60
+                while not os.path.exists(ARGS.hold_file) and time.monotonic() < deadline:
+                    time.sleep(0.05)
             journal(path, "none")
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="git"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+            self._challenge(401)
             return False
         # The auth SCHEME is compared case-insensitively and the PAYLOAD
         # byte-exactly. Both halves matter: git spells an `http.<url>.extraHeader`
@@ -118,17 +151,16 @@ class Handler(BaseHTTPRequestHandler):
         # positive contract into a false negative -- which is how a suite ends up
         # "proving" a credential does not arrive when it does.
         scheme, _, payload = supplied.partition(" ")
+        expected = load_expected() if ARGS.reload_auth_file else EXPECTED
         if (
-            EXPECTED is not None
+            expected is not None
             and scheme.lower() == "basic"
-            and hmac.compare_digest(payload.strip().encode("utf-8"), EXPECTED)
+            and hmac.compare_digest(payload.strip().encode("utf-8"), expected)
         ):
             journal(path, "ok")
             return True
         journal(path, "mismatch")
-        self.send_response(403)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        self._challenge(ARGS.mismatch_status)
         return False
 
     def _cgi(self, method):
@@ -211,23 +243,33 @@ def find_http_backend():
     raise SystemExit("git-http-auth-server: cannot locate git-http-backend")
 
 
+def load_expected():
+    """The accepted "Basic" payload, from --auth-file, or None without one."""
+    if not ARGS.auth_file:
+        return None
+    with open(ARGS.auth_file, "rb") as fh:
+        token = fh.read().strip()
+    return base64.b64encode(b"x-access-token:" + token)
+
+
 def main():
     global ARGS, EXPECTED
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True)
     parser.add_argument("--journal", required=True)
-    parser.add_argument("--auth-prefix", default="")
+    # Repeatable: each prefix is protected by the same credential.
+    parser.add_argument("--auth-prefix", action="append", default=[])
     parser.add_argument("--header-count-journal", default="")
     # A FILE, not a value: an argv element is readable by every process on the
     # machine, and these suites run on shared self-hosted runners.
     parser.add_argument("--auth-file", default="")
+    parser.add_argument("--mismatch-status", type=int, choices=(401, 403), default=403)
+    parser.add_argument("--reload-auth-file", action="store_true")
+    parser.add_argument("--hold-file", default="")
     ARGS = parser.parse_args()
     ARGS.http_backend = find_http_backend()
 
-    if ARGS.auth_file:
-        with open(ARGS.auth_file, "rb") as fh:
-            token = fh.read().strip()
-        EXPECTED = base64.b64encode(b"x-access-token:" + token)
+    EXPECTED = load_expected()
 
     open(ARGS.journal, "a", encoding="utf-8").close()
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
