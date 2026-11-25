@@ -225,6 +225,48 @@ sibling_rev() {
   printf '%s' "${fallback}"
 }
 
+# `resolve_nim_shm_lease_from_runquota <runquota flake.lock>` -- print the
+# nim-shm-lease revision the cloned RunQuota locks, the one
+# `stage_release_runquota.sh` exports and RunQuota's own package build uses.
+# The clone owner's entry is preferred, as in `sibling_rev`; two revisions
+# with no single answer, or an unreadable lock, are refusals. A RunQuota with
+# no lock, or whose lock does not pin it (a standalone call against an old
+# RunQuota), keeps the built-in `dev` default, and says so.
+resolve_nim_shm_lease_from_runquota() {
+  local lock="$1" revs repo owner rev nl=$'\n' mine="" any=""
+  if [ ! -f "${lock}" ]; then
+    echo "reprobuild-provision: nim-shm-lease @ dev (built-in default; the runquota clone has no flake.lock)" >&2
+    printf 'dev'
+    return 0
+  fi
+  revs="$(flake_lock_revisions "${lock}")" || {
+    echo "::error::reprobuild-provision: could not read the nim-shm-lease revision from ${lock} (see the message above)." >&2
+    return 1
+  }
+  while read -r repo owner rev; do
+    [ "${repo}" = "nim-shm-lease" ] || continue
+    case "${nl}${any}" in *"${nl}${rev}${nl}"*) ;; *) any+="${rev}${nl}" ;; esac
+    if [ "${owner}" = "${CLONE_OWNER_LC}" ]; then
+      case "${nl}${mine}" in *"${nl}${rev}${nl}"*) ;; *) mine+="${rev}${nl}" ;; esac
+    fi
+  done <<<"${revs}"
+  [ -n "${mine}" ] && any="${mine}"
+  any="${any%"${nl}"}"
+  case "${any}" in
+    "")
+      echo "reprobuild-provision: nim-shm-lease @ dev (built-in default; the runquota lock does not pin it)" >&2
+      printf 'dev'
+      return 0
+      ;;
+    *[![:xdigit:]]*)
+      echo "::error::reprobuild-provision: the runquota lock ${lock} pins nim-shm-lease at more than one revision (${any//${nl}/ }); there is no single revision to clone." >&2
+      return 1
+      ;;
+  esac
+  echo "reprobuild-provision: nim-shm-lease @ ${any} (locked by the runquota being cloned)" >&2
+  printf '%s' "${any}"
+}
+
 RUNQUOTA_REF="$(sibling_rev runquota "${RUNQUOTA_REF:-}" dev)" || exit 1
 IO_MON_REF="$(sibling_rev io-mon "${IO_MON_REF:-}" dev)" || exit 1
 # The built-in `test-certificates-tools` default is a REVISION, not `dev`,
@@ -263,7 +305,22 @@ if [ "${RUNNER_OS:-Linux}" = "Windows" ]; then
   # The Windows env.ps1 build reads these as source-only siblings. They follow
   # the reprobuild lock exactly as the flake inputs above do.
   CODETRACER_REF="$(sibling_rev codetracer "" dev)" || exit 1
-  NIM_SHM_LEASE_REF="$(sibling_rev nim-shm-lease "" dev)" || exit 1
+  # nim-shm-lease is RunQuota's dependency, not reprobuild's: env.ps1 and the
+  # RunQuota bootstrap compile `../runquota` against `../nim-shm-lease`, and
+  # reprobuild's release staging (`scripts/release/stage_release_runquota.sh`)
+  # exports it with `git archive` at the revision RunQuota's own `flake.lock`
+  # pins. reprobuild's lock does not pin it, so when it does not, the revision
+  # is read from the RunQuota clone's lock once that clone exists (below,
+  # `resolve_nim_shm_lease_from_runquota`). Cloning `dev` instead built RunQuota
+  # against a library its lock never named, and a shallow `dev` clone lacks
+  # the locked commit: the Windows release packaging stopped at
+  # "../nim-shm-lease does not have <rev>".
+  NIM_SHM_LEASE_REF=""
+  if [ -n "$(locked_revs_of nim-shm-lease)" ]; then
+    NIM_SHM_LEASE_REF="$(sibling_rev nim-shm-lease "" dev)" || exit 1
+  else
+    echo "reprobuild-provision: nim-shm-lease follows the runquota clone's flake.lock (the reprobuild lock does not pin it, or none was named)" >&2
+  fi
   NIM_SHM_QUEUE_REF="$(sibling_rev nim-shm-queue "" dev)" || exit 1
   NIM_SHM_GSET_REF="$(sibling_rev nim-shm-gset "" dev)" || exit 1
   REPROBUILD_TEST_ADAPTERS_REF="$(sibling_rev reprobuild-test-adapters "" dev)" || exit 1
@@ -552,12 +609,15 @@ else
   # reprobuild/windows/bootstrap-toolchain.ps1 and no longer requires
   # the archived repo-workspaces framework.
   # -----------------------------------------------------------------------
-  check_pins \
+  # nim-shm-lease is preflighted here only when its revision is already known;
+  # otherwise right after the runquota clone that names it.
+  windows_pins=()
+  [ -z "${NIM_SHM_LEASE_REF}" ] || windows_pins+=("${CLONE_OWNER}/nim-shm-lease:${NIM_SHM_LEASE_REF}")
+  check_pins ${windows_pins[@]+"${windows_pins[@]}"} \
     "${CLONE_OWNER}/runquota:${RUNQUOTA_REF}" \
     "${CLONE_OWNER}/nim-stackable-hooks:${STACKABLE_HOOKS_REF}" \
     "${CLONE_OWNER}/io-mon:${IO_MON_REF}" \
     "${CLONE_OWNER}/codetracer:${CODETRACER_REF}" \
-    "${CLONE_OWNER}/nim-shm-lease:${NIM_SHM_LEASE_REF}" \
     "${CLONE_OWNER}/nim-shm-queue:${NIM_SHM_QUEUE_REF}" \
     "${CLONE_OWNER}/nim-shm-gset:${NIM_SHM_GSET_REF}" \
     "${CLONE_OWNER}/reprobuild-test-adapters:${REPROBUILD_TEST_ADAPTERS_REF}" \
@@ -566,6 +626,10 @@ else
     "${CLONE_OWNER}/test-certificates-tools:${TEST_CERTIFICATES_TOOLS_REF}"
 
   clone "${CLONE_OWNER}/runquota" "$RUNQUOTA_REF" --submodules
+  if [ -z "${NIM_SHM_LEASE_REF}" ]; then
+    NIM_SHM_LEASE_REF="$(resolve_nim_shm_lease_from_runquota "${WS}/runquota/flake.lock")" || exit 1
+    check_pins "${CLONE_OWNER}/nim-shm-lease:${NIM_SHM_LEASE_REF}"
+  fi
   clone "${CLONE_OWNER}/nim-stackable-hooks" "$STACKABLE_HOOKS_REF" --submodules
   hooks_sha=$(git -C "${WS}/nim-stackable-hooks" rev-parse HEAD) || exit 1
   if [[ -n "$STACKABLE_HOOKS_PIN" && "$hooks_sha" != "$STACKABLE_HOOKS_PIN" ]]; then
