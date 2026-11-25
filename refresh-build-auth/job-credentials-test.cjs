@@ -1171,6 +1171,260 @@ test("only a live, unstopped broker owns the job's GitHub credential", async (t)
   assert.equal(jc.brokerGithubToken(dir), "");
 });
 
+// ---- Git: the job's Git token file -------------------------------------
+//
+// The job-scoped Git credential is a helper (git-auth/git-credential-job-token.sh)
+// that reads `git-token` whenever Git asks. These run REAL git: the job's
+// numbered configuration is produced by the real scoped_git_auth_emit, and
+// `git credential fill` selects and runs the helper exactly as an HTTP 401
+// retry does. The wire-level flow is in git-auth/job-credential-helper-test.sh.
+
+const SCOPED_GIT_AUTH = path.join(repo, "git-auth", "scoped-git-auth.sh");
+
+// The `$GITHUB_ENV` lines scoped_git_auth_emit writes for `dir`, as an env.
+function emittedGitEnv(dir, token, home) {
+  const out = execFileSync(
+    "bash",
+    [
+      "-c",
+      'set -euo pipefail; . "$1"; scoped_git_auth_build; scoped_git_auth_emit',
+      "-",
+      SCOPED_GIT_AUTH,
+    ],
+    {
+      env: {
+        PATH: process.env.PATH,
+        HOME: home,
+        GH_TOKEN: token,
+        TOKEN_OWNERS: "metacraft-labs",
+        MCL_JOB_CREDENTIALS_DIR: dir,
+      },
+      encoding: "utf8",
+    },
+  );
+  const env = {
+    PATH: process.env.PATH,
+    HOME: home,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: path.join(home, "empty-gitconfig"),
+  };
+  fs.writeFileSync(env.GIT_CONFIG_GLOBAL, "");
+  for (const line of out.split("\n").filter(Boolean)) {
+    const at = line.indexOf("=");
+    env[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return env;
+}
+
+function gitFill(env, url) {
+  const run = spawnSync("git", ["credential", "fill"], {
+    env,
+    input: `url=${url}\n\n`,
+    encoding: "utf8",
+    cwd: env.HOME,
+  });
+  const match = /^password=(.*)$/m.exec(run.stdout || "");
+  return match ? match[1] : "";
+}
+
+test("the broker's rotation reaches a Git process started before it", async (t) => {
+  const home = tempDir(t);
+  const dir = privateDir(home);
+  jc.rotate(dir, "first-sentinel", ["metacraft-labs"]);
+  assert.equal(
+    fs.readFileSync(path.join(dir, jc.GIT_TOKEN), "utf8"),
+    "first-sentinel\n",
+  );
+  assert.equal(fs.statSync(path.join(dir, jc.GIT_TOKEN)).mode & 0o777, 0o600);
+  const env = emittedGitEnv(dir, "first-sentinel", home);
+  assert.ok(
+    !Object.values(env).some((v) => v.includes("first-sentinel")),
+    "the job environment carries no token",
+  );
+  const url = "https://github.com/metacraft-labs/private.git";
+  assert.equal(gitFill(env, url), "first-sentinel");
+  assert.equal(gitFill(env, "https://github.com/other-org/x.git"), "");
+  // A process whose environment was fixed before the rotation, and which asks
+  // Git for the credential only afterwards: what a daemon a step started is.
+  const go = path.join(home, "go");
+  const waiter = require("node:child_process").spawn(
+    "sh",
+    [
+      "-c",
+      'while [ ! -e "$1" ]; do sleep 0.05; done; printf "url=%s\\n\\n" "$2" | git credential fill',
+      "-",
+      go,
+      url,
+    ],
+    { env, cwd: home },
+  );
+  let stdout = "";
+  waiter.stdout.on("data", (c) => (stdout += c));
+  const done = new Promise((resolve) => waiter.on("close", resolve));
+  jc.rotate(dir, "rotated-sentinel", ["metacraft-labs"]);
+  fs.writeFileSync(go, "");
+  assert.equal(await done, 0);
+  assert.match(stdout, /^password=rotated-sentinel$/m);
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((f) => f.includes(".tmp.")),
+    [],
+    "no temporary file is left behind",
+  );
+});
+
+test("the broker never writes a writing job's Git token file", (t) => {
+  const dir = privateDir(tempDir(t));
+  fs.writeFileSync(path.join(dir, jc.GIT_TOKEN), "gh-token-sentinel\n", {
+    mode: 0o600,
+  });
+  assert.equal(jc.gitAccess(dir), "read");
+  jc.writeGitAccess(dir, "write");
+  assert.equal(jc.gitAccess(dir), "write");
+  jc.rotate(dir, "broker-sentinel", ["metacraft-labs"]);
+  assert.equal(
+    fs.readFileSync(path.join(dir, jc.GIT_TOKEN), "utf8"),
+    "gh-token-sentinel\n",
+    "a contents:read token replaced the token a push needs",
+  );
+  // Nix is still the broker's.
+  assert.equal(jc.readAccessTokens(dir)["github.com"], "broker-sentinel");
+  assert.equal(jc.parseGitAccess(""), "read");
+  assert.equal(jc.parseGitAccess(" write "), "write");
+  assert.throws(() => jc.parseGitAccess("push"), /git-access/);
+  assert.throws(() => jc.writeGitToken(dir, "has space"));
+});
+
+// The bash half: scoped-git-auth.sh's ownership test, run with a PATH that
+// holds bash and nothing else (a runner's PATH need not carry sed or cat).
+function bashBrokerOwnsGit(dir) {
+  const bin = path.join(path.dirname(dir), "bash-only-" + process.pid);
+  fs.mkdirSync(bin, { recursive: true });
+  const bash = spawnSync("sh", ["-c", "command -v bash"], {
+    encoding: "utf8",
+  }).stdout.trim();
+  if (!fs.existsSync(path.join(bin, "bash")))
+    fs.symlinkSync(bash, path.join(bin, "bash"));
+  const run = spawnSync(
+    path.join(bin, "bash"),
+    [
+      "-c",
+      'set -euo pipefail; . "$1"; if scoped_git_auth_broker_owns_git_token "$2"; then echo owned; else echo free; fi',
+      "-",
+      SCOPED_GIT_AUTH,
+      dir,
+    ],
+    { env: { PATH: bin }, encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout.trim() === "owned";
+}
+
+test("only a live, unstopped broker that wrote it owns a reading job's Git token", async (t) => {
+  const root = tempDir(t);
+  const dir = privateDir(root);
+  jc.writeAccessTokens(dir, { "github.com": "broker-sentinel" });
+  const pidFile = path.join(dir, "broker.pid");
+  const owns = (expected, why) => {
+    assert.equal(jc.brokerOwnsGitToken(dir), expected, "JS: " + why);
+    assert.equal(bashBrokerOwnsGit(dir), expected, "bash: " + why);
+  };
+  const broker = standInBroker(t);
+  fs.writeFileSync(pidFile, String(broker) + "\n");
+  owns(false, "a broker that has not written git-token (an older revision)");
+  jc.writeGitToken(dir, "broker-sentinel");
+  owns(true, "a live broker that wrote git-token");
+  jc.writeGitAccess(dir, "write");
+  owns(false, "a job that declared git-access: write");
+  jc.writeGitAccess(dir, "read");
+  owns(true, "git-access: read");
+  fs.writeFileSync(path.join(dir, jc.STOP), "");
+  owns(false, "a stopped broker");
+  fs.rmSync(path.join(dir, jc.STOP));
+  const exited = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
+  fs.writeFileSync(pidFile, String(exited.pid) + "\n");
+  owns(false, "an exited broker");
+  if (fs.existsSync("/proc/self")) {
+    fs.writeFileSync(pidFile, String(process.pid) + "\n");
+    owns(false, "a reused pid naming some other process");
+  }
+});
+
+test("startBroker records git-access before its first rotation", async (t) => {
+  const { privateKey, publicKey } = keyPair();
+  const gh = await fakeGitHub(t, publicKey);
+  for (const access of ["write", ""]) {
+    const dir = privateDir(tempDir(t));
+    jc.writeAccessTokens(dir, { "github.com": "gh-token-sentinel" });
+    fs.writeFileSync(path.join(dir, jc.GIT_TOKEN), "gh-token-sentinel\n", {
+      mode: 0o600,
+    });
+    const script = `require(${JSON.stringify(path.join(__dirname, "job-credentials.cjs"))}).startBroker().catch(e => { console.error(e.message); process.exit(1); })`;
+    const run = await new Promise((resolve) => {
+      const child = require("node:child_process").spawn(
+        process.execPath,
+        ["-e", script],
+        {
+          env: {
+            PATH: process.env.PATH,
+            MCL_JOB_CREDENTIALS_DIR: dir,
+            APP_ID: "12345",
+            APP_PRIVATE_KEY: privateKey,
+            TOKEN_OWNERS: "metacraft-labs",
+            GITHUB_API_URL: gh.url,
+            GIT_ACCESS: access,
+          },
+        },
+      );
+      let stderr = "";
+      child.stderr.on("data", (c) => (stderr += c));
+      child.on("close", (status) => resolve({ status, stderr }));
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const pid = Number(fs.readFileSync(path.join(dir, "broker.pid"), "utf8"));
+    t.after(() => {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    });
+    assert.equal(jc.gitAccess(dir), access || "read");
+    assert.match(
+      jc.readAccessTokens(dir)["github.com"],
+      /^ghs_minted_sentinel_/,
+    );
+    const gitToken = fs.readFileSync(path.join(dir, jc.GIT_TOKEN), "utf8");
+    if (access === "write")
+      assert.equal(
+        gitToken,
+        "gh-token-sentinel\n",
+        "write: the broker wrote git-token",
+      );
+    else assert.match(gitToken, /^ghs_minted_sentinel_\d+\n$/);
+    fs.writeFileSync(path.join(dir, jc.STOP), "");
+  }
+  // A misspelt declaration is refused before anything is minted.
+  const dir = privateDir(tempDir(t));
+  const bad = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `require(${JSON.stringify(path.join(__dirname, "job-credentials.cjs"))}).startBroker().catch(e => { console.error(e.message); process.exit(1); })`,
+    ],
+    {
+      env: {
+        PATH: process.env.PATH,
+        MCL_JOB_CREDENTIALS_DIR: dir,
+        APP_ID: "12345",
+        APP_PRIVATE_KEY: privateKey,
+        GITHUB_API_URL: "http://127.0.0.1:9/",
+        GIT_ACCESS: "push",
+      },
+      encoding: "utf8",
+    },
+  );
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /git-access must be 'read' or 'write'/);
+});
+
 // A runner's PATH need not carry sed, tr or cat: macOS mcl-bench-001 had no
 // sed, and setup-nix failed with "sed: command not found" once a broker
 // owned the credential. The ownership test and the token read must use bash
@@ -1375,12 +1629,10 @@ test("with a broker running, setup-dev-env's sibling clones and repro CLI instal
 // The steps that may still be handed the job-start gh-token after the broker
 // starts, each with the reason. Anything else is a regression.
 const GH_TOKEN_AFTER_BROKER = {
-  // setup-nix installs the token it is handed as the job's Git CLI
-  // credential, for every later step. The nix flavor keeps gh-token there:
-  // the broker's token is `contents: read`, and narrowing a job's Git
-  // credential to it is undecided (metacraft-pm issue
-  // 2026-11-12-shared-actions-git-cli-credential-expires-an-hour-after-gh-token-and-the-broker-cannot-rotate-it).
-  // Its Nix credential is the broker's anyway (setup-nix keeps it).
+  // setup-nix is handed gh-token, and keeps the broker's token wherever the
+  // broker owns the file: Nix always, and Git unless the job declared
+  // `git-access: write`, which is exactly the job whose Git token must be
+  // gh-token (the broker's is `contents: read`).
   "Setup Nix": true,
 };
 
@@ -1409,6 +1661,17 @@ test("no setup-dev-env step after the broker starts uses gh-token as its credent
       }
     }
   }
+  // The job-scoped Git credential of the reprobuild flavor takes gh-token
+  // only for a job that declared it writes over Git.
+  const git = steps.find(
+    (s) => s.name === "Configure Git authentication (reprobuild)",
+  );
+  assert.match(
+    git.text,
+    /GH_TOKEN: \$\{\{ inputs\.git-access == 'write' && inputs\.gh-token \|\| steps\.job-token\.outputs\.token \|\| inputs\.gh-token \}\}/,
+  );
+  const brokerStep = steps.find((s) => s.name === BROKER_START);
+  assert.match(brokerStep.text, /GIT_ACCESS: \$\{\{ inputs\.git-access \}\}/);
   // A step that runs after the install takes the post-install selection,
   // not one made before the install's possibly hour-long build.
   for (const step of steps.slice(install + 1)) {

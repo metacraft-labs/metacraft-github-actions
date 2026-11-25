@@ -34,16 +34,30 @@
 #
 # The replacement fixes all three:
 #
-#   * The credential is an `http.<url>.extraHeader`, so no URL anywhere carries
-#     it: not in argv, not in `.git/config`, not in error text.
-#   * `<url>` is `https://github.com/<owner>/`. Git matches `http.<url>.*` by
-#     scheme + host + port + slash-delimited path prefix, so this matches
-#     `https://github.com/<owner>/anything` and does NOT match
+#   * The credential is a Git credential helper
+#     (../git-auth/git-credential-job-token.sh) that reads the job's current
+#     token from a file in `$MCL_JOB_CREDENTIALS_DIR` whenever Git asks, so no
+#     URL anywhere carries it: not in argv, not in `.git/config`, not in error
+#     text. Git asks only when GitHub challenges a request with 401, so a
+#     public repository is fetched without it.
+#   * It is configured as `credential.<url>.helper` with `<url>` =
+#     `https://github.com/<owner>/`. Git selects `credential.<url>.*` by scheme
+#     + host + port + slash-delimited path prefix, so this answers for
+#     `https://github.com/<owner>/anything` and NOT for
 #     `https://github.com/OtherOrg/x`, `https://github.com/<owner>-evil/x`, or
 #     `https://github.com/` itself. (Contract-tested; see the suite.)
 #   * It is exported through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/
 #     `GIT_CONFIG_VALUE_n` via `$GITHUB_ENV`, which is job-scoped. Nothing is
-#     written to `$HOME/.gitconfig`, so nothing survives the job.
+#     written to `$HOME/.gitconfig`, so nothing survives the job, and the token
+#     file lives under `$RUNNER_TEMP`, which the runner empties between jobs.
+#
+# The token is read when Git needs it, not frozen when this step ran: the job
+# credential broker and refresh-build-auth replace the file in place, so a Git
+# process started after a rotation, in any later step or under a daemon a step
+# started, is handed the new token. (It used to be an `http.<url>.extraHeader`
+# in `GIT_CONFIG_*`, which a step cannot change once it has started, and Git
+# failed an hour after the token it held was minted.) The design is described
+# in ../git-auth/scoped-git-auth.sh, "THE JOB-SCOPED CREDENTIAL".
 #
 # The URL-scheme rewrites stay global, because they must apply to `.gitmodules`
 # URLs that git reads before any of this runs — but they now rewrite to a
@@ -52,7 +66,7 @@
 # CROSS-ORG PRIVATE CLONES. Anything private outside `token-owner` used to work
 # by accident, off the catch-all. That path is preserved deliberately and
 # explicitly: pass the repository (or owner) prefix in
-# `EXTRA_TOKEN_URL_PREFIXES` and the same header is installed for it. It is now
+# `EXTRA_TOKEN_URL_PREFIXES` and the same helper is installed for it. It is now
 # a declaration rather than a side effect, which is the point — a per-repo
 # minted secret should say which repo it is for.
 #
@@ -63,7 +77,13 @@
 # next person cannot fix one copy and miss two.
 #
 # Environment:
-#   GH_TOKEN                  (required) the token to install.
+#   GH_TOKEN                  (required) the token to install. While the job
+#                             credential broker owns the Git token file
+#                             (setup-dev-env `app-id`, `git-access: read`),
+#                             the broker's token is kept instead.
+#   MCL_JOB_CREDENTIALS_DIR   the job's private credential directory, which
+#                             setup-nix's Nix step or the broker created; one
+#                             is created under RUNNER_TEMP when it is unset.
 #   TOKEN_OWNERS              whitespace/newline-separated GitHub owners the
 #                             token is scoped to. Default: metacraft-labs.
 #   EXTRA_TOKEN_URL_PREFIXES  whitespace/newline-separated extra https URL
@@ -76,7 +96,8 @@
 #
 # This script NEVER prints $GH_TOKEN, and prints the derived Authorization
 # blob only inside a `::add-mask::` workflow command, whose payload the runner
-# consumes and replaces with `***` rather than echoing.
+# consumes and replaces with `***` rather than echoing. The token itself is
+# written only to `$MCL_JOB_CREDENTIALS_DIR/git-token` (mode 600).
 #
 # Contract suite: ./configure-git-auth-test.sh (pure bash + real git).
 set -euo pipefail
@@ -159,30 +180,32 @@ done < <(
 
 # --- 3. the scoped credential --------------------------------------------
 #
-# Derived by ../git-auth/scoped-git-auth.sh: basic auth with the App token as
-# the password (exactly what `x-access-token:<token>@` encoded positionally in
-# the URL — same credential, carried in a header instead of a URL), scoped to
+# Derived by ../git-auth/scoped-git-auth.sh: the scopes are
 # `https://github.com/<owner>/` per declared owner plus any explicitly declared
-# extra prefix. `SCOPED_GIT_AUTH_MASK=1` makes it print the derived blob once,
-# and only as the payload of `::add-mask::`, which the runner consumes and
-# replaces with `***`.
+# extra prefix. `SCOPED_GIT_AUTH_MASK=1` makes it print the derived Basic blob
+# once, and only as the payload of `::add-mask::`, which the runner consumes
+# and replaces with `***`: a step-local clone in a later step builds the same
+# blob from the same token.
 #
 # `SCOPED_GIT_AUTH_REWRITES` is left off: the scheme rewrites are written to
 # `--global` in section 1 above, and emitting them here as well would put a
 # second copy into every step's environment for no gain.
 SCOPED_GIT_AUTH_MASK=1 scoped_git_auth_build || exit $?
 
-# --- 4. emit as process-scoped git configuration --------------------------
+# --- 4. the token file and the process-scoped git configuration -----------
 #
-# One numbered pair per scope, and NOTHING else that constrains git.
+# scoped_git_auth_emit writes GH_TOKEN to `$MCL_JOB_CREDENTIALS_DIR/git-token`
+# (atomically, and not while the broker owns it), and appends, per scope, the
+# three entries described in scoped-git-auth.sh: an empty
+# `http.<scope>.extraHeader` (no preemptive header for the scope, including
+# the one `actions/checkout` persists for all of github.com), an empty
+# `credential.<scope>.helper` (no inherited helper answers for the scope) and
+# the helper itself. Nothing else is forced on every step.
 #
-# A `credential.helper=` reset belongs here on the merits — it would stop a
-# reused runner's leftover `~/.git-credentials` from authenticating a fetch this
-# scope deliberately left bare — and it is deliberately NOT included. Emitting
-# it through `$GITHUB_ENV` applies it to every step of every job in the org, and
-# it would silently break any consumer that authenticates git through `gh auth
-# setup-git` or a helper of its own. That is someone else's credential, not the
-# one this action installs, so disabling it is out of scope for a change whose
-# whole claim is that it regresses nothing.
-scoped_git_auth_emit "${GITHUB_ENV:-}"
+# The helper reset is scoped, and that is why it is acceptable here when a
+# global `credential.helper=` reset was not: it clears helpers only for the
+# URLs this job's own credential covers, so a consumer that authenticates
+# some other host or owner through `gh auth setup-git` or a helper of its own
+# keeps it.
+scoped_git_auth_emit "${GITHUB_ENV:-}" || exit $?
 scoped_git_auth_report

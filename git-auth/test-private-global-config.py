@@ -120,7 +120,7 @@ class PrivateGlobalConfig(unittest.TestCase):
         self.server = subprocess.Popen(
             [sys.executable, str(SERVER), '--root', str(self.web), '--journal',
               str(self.journal), '--auth-prefix', '/owned/', '--auth-file', str(tokenfile),
-              '--header-count-journal', str(self.auth_counts)],
+              '--header-count-journal', str(self.auth_counts), '--reload-auth-file'],
             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop_server)
         line = self.server.stdout.readline()
@@ -147,9 +147,11 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         return subprocess.run(['git', *args], env=self.env, capture_output=True,
                               text=True, check=True, timeout=30)
 
-    def invoke(self, args, *, token=TOKEN, owner='owned'):
+    def invoke(self, args, *, token=TOKEN, owner='owned', job_dir=None):
         env = dict(self.env, GH_TOKEN=token, TOKEN_OWNERS=owner,
                     GIT_AUTH_URL_BASE=self.url, RUNNER_TEMP=str(self.scratch))
+        if job_dir is not None:
+            env['MCL_JOB_CREDENTIALS_DIR'] = str(job_dir)
         result = subprocess.run(
             ['bash', '-euo', 'pipefail', '-c', '. "$1"; shift; scoped_git_auth_with_global "$@"',
               'private-global-test', str(LIB), sys.executable, str(self.child),
@@ -209,7 +211,132 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         counts = [int(line.split(' ', 1)[0]) for line in self.auth_counts.read_text().splitlines()
                   if '/owned/' in line]
         self.assertTrue(counts, 'the authenticated server received no request')
-        self.assertEqual(set(counts), {1})
+        # The private file carries the job credential helper, not a header:
+        # the first request goes out bare and is challenged (0), and every
+        # retry carries the helper's credential exactly once (1).
+        self.assertEqual(set(counts), {0, 1})
+
+    def test_private_file_carries_the_helper_not_a_header(self):
+        """The command sees the job credential's shape: a 401 challenge
+        answered by the helper, which reads a private token file."""
+        probe = (
+            'import os,subprocess,sys\n'
+            'f=os.environ["GIT_CONFIG_GLOBAL"]\n'
+            'helpers=subprocess.check_output(["git","config","--file",f,"--get-all",'
+            '"credential."+sys.argv[1]+"owned/.helper"],text=True).splitlines()\n'
+            'header=subprocess.check_output(["git","config","--file",f,"--get-all",'
+            '"http."+sys.argv[1]+"owned/.extraHeader"],text=True).splitlines()\n'
+            'token=open(os.path.join(os.path.dirname(f),"git-token")).read().strip()\n'
+            'print(len(helpers), repr(helpers[0]), helpers[1].startswith("!/bin/sh "), header, '
+            'token==os.environ.get("EXPECTED_TOKEN_FOR_PROBE"))\n')
+        script = self.base / 'probe.py'
+        script.write_text(probe)
+        env_token = dict(self.env)
+        self.env = dict(self.env, EXPECTED_TOKEN_FOR_PROBE=TOKEN)
+        try:
+            r = self.invoke([sys.executable, str(script), self.url])
+        finally:
+            self.env = env_token
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("2 '' True [''] True", r.stdout)
+        target = self.base / 'helper-clone'
+        before = len(self.journal.read_text().splitlines())
+        r = self.invoke(['git', 'clone', '-q', self.url + 'owned/private.git', target])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        verdicts = [line.split(' ', 1)[0] for line in self.journal.read_text().splitlines()[before:]
+                    if 'owned/private.git/info/refs' in line]
+        self.assertEqual(verdicts, ['none', 'ok'])
+
+    # ---- the job's rotated token file ---------------------------------------
+
+    def job_dir(self, token):
+        """A job credential directory as setup-nix or the broker leaves it."""
+        job = self.base / 'job-credentials'
+        job.mkdir(mode=0o700)
+        (job / 'git-token').write_text(token + '\n')
+        (job / 'git-token').chmod(0o600)
+        return job
+
+    def helper_reads(self, job):
+        """Run a probe through the channel; return the directory the private
+        configuration's helper names, as the probe saw it."""
+        probe = self.base / 'helper-dir.py'
+        probe.write_text(
+            'import os,subprocess,sys\n'
+            'f=os.environ["GIT_CONFIG_GLOBAL"]\n'
+            'h=subprocess.check_output(["git","config","--file",f,"--get-all",'
+            '"credential."+sys.argv[1]+"owned/.helper"],text=True).splitlines()[1]\n'
+            'print("HELPER-DIR", h.rsplit(" ",1)[1].strip("\x27"))\n'
+            'print("PRIVATE-TOKEN", os.path.exists(os.path.join(os.path.dirname(f),"git-token")))\n')
+        r = self.invoke([sys.executable, str(probe), self.url], job_dir=job)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_job_token_is_read_from_the_job_file(self):
+        """GH_TOKEN is the job's Git token: the helper reads the job's file,
+        and no private token file is written."""
+        job = self.job_dir(TOKEN)
+        out = self.helper_reads(job)
+        self.assertIn('HELPER-DIR ' + str(job) + '\n', out)
+        self.assertIn('PRIVATE-TOKEN False', out)
+        self.assertEqual((job / 'git-token').read_text(), TOKEN + '\n')
+
+    def test_rotation_during_the_command_reaches_its_git(self):
+        """The job's file is rotated while the command runs, and the forge now
+        accepts only the new token: a Git the command starts afterwards
+        authenticates with it. With a private copy of the old token (the
+        negative control below) the same command fails."""
+        rotated = 'ghs_NotARealToken_rotated_while_the_command_runs_98765'
+        script = self.base / 'rotate-then-clone.sh'
+        script.write_text(
+            'set -eu\n'
+            'printf "%s\\n" "$2" >"$1/git-token.new" && mv -f "$1/git-token.new" "$1/git-token"\n'
+            'printf "%s" "$2" >"$3"\n'
+            'git clone -q "$4" "$5"\n')
+        for share, destination in ((True, 'rotated-clone'), (False, 'stale-clone')):
+            with self.subTest(job_file=share):
+                self.tokenfile.write_text(TOKEN)
+                job = self.base / ('job-' + destination)
+                job.mkdir(mode=0o700)
+                (job / 'git-token').write_text((TOKEN if share else 'ghs_some_other_jobs_token') + '\n')
+                target = self.base / destination
+                command = ['bash', str(script), job, rotated, self.tokenfile]
+                command += [self.url + 'owned/private.git', target]
+                r = self.invoke(command, job_dir=job)
+                if share:
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertEqual((target / 'payload').read_text(), 'actual committed source\n')
+                else:
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertFalse((target / 'payload').exists())
+
+    def test_other_token_or_unusable_job_dir_keeps_a_private_file(self):
+        """A caller token the job file does not hold, a missing token file or
+        an unusable directory: the command gets its own private token file and
+        the job's file is left exactly as it was."""
+        other = self.job_dir('ghs_the_jobs_writing_token_not_the_callers')
+        out = self.helper_reads(other)
+        self.assertNotIn('HELPER-DIR ' + str(other) + '\n', out)
+        self.assertIn('PRIVATE-TOKEN True', out)
+        self.assertEqual(
+            (other / 'git-token').read_text(), 'ghs_the_jobs_writing_token_not_the_callers\n')
+        (other / 'git-token').unlink()
+        out = self.helper_reads(other)
+        self.assertIn('PRIVATE-TOKEN True', out)
+        self.assertFalse((other / 'git-token').exists())
+        link = self.base / 'job-link'
+        link.symlink_to(self.job_dir_for_link(), target_is_directory=True)
+        out = self.helper_reads(link)
+        self.assertIn('PRIVATE-TOKEN True', out)
+        target = self.base / 'private-file-clone'
+        r = self.invoke(['git', 'clone', '-q', self.url + 'owned/private.git', target], job_dir=other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def job_dir_for_link(self):
+        real = self.base / 'job-real'
+        real.mkdir(mode=0o700)
+        (real / 'git-token').write_text(TOKEN + '\n')
+        return real
 
     def test_failure_cleans_private_file_and_preserves_global_config(self):
         global_config = self.home / '.gitconfig'
@@ -236,7 +363,10 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
         block = action.split(marker, 1)[1].split('\n    - name:', 1)[0]
         self.assertIn("inputs.env-flavor == 'reprobuild'", block)
         self.assertIn("inputs.gh-token != ''", block)
-        self.assertIn('GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}', block)
+        # A job that writes over Git keeps gh-token; any other takes the
+        # broker's token while one runs.
+        self.assertIn("GH_TOKEN: ${{ inputs.git-access == 'write' && inputs.gh-token || "
+                      'steps.job-token.outputs.token || inputs.gh-token }}', block)
         self.assertIn('TOKEN_OWNERS: ${{ inputs.token-owner }}', block)
         self.assertIn('bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"', block)
         self.assertLess(action.index(marker), action.index('    - name: Verify Reprobuild development-environment execution'))
@@ -244,9 +374,10 @@ r=subprocess.run(sys.argv[2:]);sys.exit(r.returncode)
     # ---- git-auth/action.yml, the composite consumers call -----------------
 
     def job_numbered_credential(self):
-        """The job-wide credential setup-nix's configure-git-auth.sh exports.
+        """A job-wide numbered credential, in the static-header shape older
+        setup-nix revisions exported (current ones export a helper).
 
-        Every consuming job carries it, so the action is exercised with it in
+        A consuming job can carry one, so the action is exercised with it in
         the environment: the script must still take its credential from the
         private file, not from this.
         """

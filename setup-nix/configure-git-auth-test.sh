@@ -15,10 +15,14 @@
 #
 # NO MOCKS. Every assertion runs the real `configure-git-auth.sh` against a real
 # `git` binary in a sandbox HOME, and asks git itself which credential it would
-# present — via `git config --get-urlmatch` (the matcher git uses when building
-# a request) and `git ls-remote --get-url` (the rewriter it applies before
-# making one). Nothing here re-implements git's URL matching, because a
-# re-implementation would agree with itself while disagreeing with git.
+# present — via `git config --get-urlmatch` (the matcher git uses for a
+# preemptive header), `git credential fill` (which runs the credential helpers
+# git selects for the URL, the job credential helper among them, exactly as an
+# HTTP request answered with 401 does) and `git ls-remote --get-url` (the
+# rewriter it applies before making one). Nothing here re-implements git's URL
+# matching, because a re-implementation would agree with itself while
+# disagreeing with git. The same flow over real HTTP, 401 challenge and all, is
+# in ../git-auth/job-credential-helper-test.sh.
 #
 # Asking BOTH channels is load-bearing, not thoroughness theatre: the defect
 # being fixed carried its credential in the URL, which the header matcher cannot
@@ -92,12 +96,14 @@ run_auth() {
   CASE_HOME="$TMPROOT/$name/home"
   CASE_ENV="$TMPROOT/$name/github_env"
   CASE_OUT="$TMPROOT/$name/out"
-  mkdir -p "$CASE_HOME"
+  CASE_TEMP="$TMPROOT/$name/runner_temp"
+  mkdir -p "$CASE_HOME" "$CASE_TEMP"
   : >"$CASE_ENV"
   CASE_RC=0
   env -i \
     PATH="$PATH" \
     HOME="$CASE_HOME" \
+    RUNNER_TEMP="$CASE_TEMP" \
     GITHUB_ENV="$CASE_ENV" \
     GH_TOKEN="$TOKEN" \
     "$@" \
@@ -141,19 +147,51 @@ sent_url() {
     git -C "$NEUTRAL_CWD" ls-remote --get-url "$url" 2>/dev/null
 }
 
+# `helper_for <url>` — the credential git's helpers hand over for <url> when
+# the server challenges, as `helper: <username>:<password>`, or nothing. This
+# is `git credential fill`, which selects `credential.<url>.*` with the same
+# matcher an HTTP 401 retry uses and then runs the selected helpers. With
+# prompting disabled (the emitted GIT_TERMINAL_PROMPT=0) a URL no helper
+# answers for fails, and prints nothing here.
+helper_for() {
+  local url="$1" line user="" pass=""
+  local -a envv=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -z $line ]] && continue
+    envv+=("$line")
+  done <"$CASE_ENV"
+  while IFS= read -r line; do
+    case "$line" in
+    username=*) user="${line#username=}" ;;
+    password=*) pass="${line#password=}" ;;
+    esac
+  done < <(printf 'url=%s\n\n' "$url" |
+    env -i PATH="$PATH" HOME="$CASE_HOME" GIT_CONFIG_SYSTEM=/dev/null \
+      GIT_CEILING_DIRECTORIES="$TMPROOT" "${envv[@]}" \
+      git -C "$NEUTRAL_CWD" credential fill 2>/dev/null)
+  [[ -n $pass ]] && printf 'helper: %s:%s\n' "$user" "$pass"
+  return 0
+}
+
 # `credential_for <url>` — everything git would present as authentication when
-# fetching <url>, by BOTH available channels. Empty output means the fetch is
-# genuinely unauthenticated; that is what the negative contracts assert.
+# fetching <url>, by EVERY available channel: a credential in the URL, a
+# preemptive header, and the helpers git calls on a challenge. Empty output
+# means the fetch is genuinely unauthenticated; that is what the negative
+# contracts assert.
 credential_for() {
   local url="$1" hdr rewritten
   hdr="$(urlmatch "$url")"
   rewritten="$(sent_url "$url")"
   [[ $rewritten != "$url" ]] && printf 'url rewritten to: %s\n' "$rewritten"
   [[ -n $hdr ]] && printf '%s\n' "$hdr"
+  helper_for "$url"
   return 0
 }
 
+# What an own-org URL is authenticated with: no header, no URL credential,
+# only the job credential helper's answer to a challenge.
 EXPECT_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\r\n')"
+EXPECT_CRED="helper: x-access-token:$TOKEN"
 
 # ---------------------------------------------------------------------------
 # Default scope: the org's own repositories, and only those.
@@ -162,11 +200,11 @@ run_auth default
 check "runs clean with only GH_TOKEN set" "$CASE_RC" "0"
 
 check "own-org repo is authenticated" \
-  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_CRED"
 check "own-org repo without .git suffix is authenticated" \
-  "$(credential_for https://github.com/metacraft-labs/reprobuild)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/metacraft-labs/reprobuild)" "$EXPECT_CRED"
 check "own-org repo at a deeper path is authenticated" \
-  "$(credential_for https://github.com/metacraft-labs/codetracer.git/info/refs)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/metacraft-labs/codetracer.git/info/refs)" "$EXPECT_CRED"
 # ...by a header, with the URL left alone. A credential in the URL reaches
 # git-remote-https's argv (readable in /proc on a shared runner), the clone's
 # .git/config, and git's own failure messages.
@@ -209,6 +247,41 @@ git -C "$CONTAMINATED" config --local http."https://github.com/".extraHeader \
   [[ "$(credential_for https://github.com/NixOS/nixpkgs)" == "" ]]
 ) && ok "a checkout-local catch-all header cannot contaminate these answers" ||
   bad "a checkout-local catch-all header cannot contaminate these answers"
+
+# And inside such a checkout, which is where a job's own `git push` runs: the
+# header `actions/checkout` persisted for all of github.com must not be what
+# an own-org URL is sent. The emptied `http.<scope>.extraHeader` is the more
+# specific match and clears it, so the request is challenged and the job's
+# helper answers -- the token the job's `git-access` selected, not the
+# workflow token.
+CONTAMINATED_ENV=()
+while IFS= read -r _line || [[ -n $_line ]]; do
+  [[ -n $_line ]] && CONTAMINATED_ENV+=("$_line")
+done <"$CASE_ENV"
+check "inside a checkout, its persisted catch-all header is not sent to an own-org URL" \
+  "$(env -i PATH="$PATH" HOME="$CASE_HOME" GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CEILING_DIRECTORIES="$TMPROOT" "${CONTAMINATED_ENV[@]}" \
+    git -C "$CONTAMINATED" config --get-urlmatch http.extraHeader \
+    https://github.com/metacraft-labs/codetracer.git 2>/dev/null)" ""
+check "...while a third-party URL still gets the checkout's own header, as before" \
+  "$(env -i PATH="$PATH" HOME="$CASE_HOME" GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CEILING_DIRECTORIES="$TMPROOT" "${CONTAMINATED_ENV[@]}" \
+    git -C "$CONTAMINATED" config --get-urlmatch http.extraHeader \
+    https://github.com/NixOS/nixpkgs 2>/dev/null)" "AUTHORIZATION: basic CONTAMINANT"
+
+# ---------------------------------------------------------------------------
+# The token file the helper reads.
+# ---------------------------------------------------------------------------
+CRED_DIR="$(sed -n 's/^MCL_JOB_CREDENTIALS_DIR=//p' "$CASE_ENV")"
+check "a job credential directory is created under RUNNER_TEMP and announced" \
+  "${CRED_DIR%/mcl-job-credentials.*}" "$CASE_TEMP"
+check "the directory is private (700)" "$(stat -c %a "$CRED_DIR" 2>/dev/null || stat -f %Lp "$CRED_DIR")" "700"
+check "the token file is private (600)" \
+  "$(stat -c %a "$CRED_DIR/git-token" 2>/dev/null || stat -f %Lp "$CRED_DIR/git-token")" "600"
+check "the token file holds the token and nothing else" "$(<"$CRED_DIR/git-token")" "$TOKEN"
+check "the emitted configuration does not carry the token" \
+  "$(grep -cF "$TOKEN" "$CASE_ENV" || true)" "0"
+check "...nor the derived header" "$(grep -cF "${EXPECT_HEADER#AUTHORIZATION: basic }" "$CASE_ENV" || true)" "0"
 
 # ---------------------------------------------------------------------------
 # Nothing carrying the credential survives the job.
@@ -268,14 +341,19 @@ check "that one occurrence is an ::add-mask:: command" \
 check "GIT_CONFIG_COUNT covers every emitted pair" \
   "$(grep -c '^GIT_CONFIG_KEY_' "$CASE_ENV")" \
   "$(sed -n 's/^GIT_CONFIG_COUNT=//p' "$CASE_ENV")"
-check "the credential is emitted as an extraHeader, not a URL" \
-  "$(grep -c '^GIT_CONFIG_KEY_0=http\.https://github\.com/metacraft-labs/\.extraHeader$' "$CASE_ENV")" "1"
 # Emitting anything else through $GITHUB_ENV applies it to every step of every
 # job in the org. Pin the emitted set so a future addition has to be argued for
-# rather than slipped in — a `credential.helper` reset was proposed here and
-# rejected on exactly that ground.
-check "nothing but the scoped headers is forced on every step" \
-  "$(grep -c '^GIT_CONFIG_KEY_' "$CASE_ENV")" "1"
+# rather than slipped in. A global `credential.helper` reset was proposed here
+# once and rejected on exactly that ground; the resets below are scoped to the
+# URLs the job's own credential covers, which is the difference.
+check "the emitted set is exactly: header reset, helper reset, helper, per scope" \
+  "$(grep '^GIT_CONFIG_KEY_' "$CASE_ENV" | tr '\n' ' ')" \
+  "GIT_CONFIG_KEY_0=http.https://github.com/metacraft-labs/.extraHeader GIT_CONFIG_KEY_1=credential.https://github.com/metacraft-labs/.helper GIT_CONFIG_KEY_2=credential.https://github.com/metacraft-labs/.helper "
+check "...with both resets empty" \
+  "$(grep -c -e '^GIT_CONFIG_VALUE_0=$' -e '^GIT_CONFIG_VALUE_1=$' "$CASE_ENV")" "2"
+check "...and the helper naming only the helper script and the credential directory" \
+  "$(sed -n 's/^GIT_CONFIG_VALUE_2=//p' "$CASE_ENV")" \
+  "!/bin/sh '$(cd "$HERE/../git-auth" && pwd)/git-credential-job-token.sh' '$CRED_DIR'"
 check "git is told never to prompt" \
   "$(grep -c '^GIT_TERMINAL_PROMPT=0$' "$CASE_ENV")" "1"
 
@@ -291,7 +369,7 @@ HOME="$STALE_HOME" git config --global \
 check "precondition: the stale rewrite is installed" \
   "$(HOME="$STALE_HOME" git config --global --get-regexp '^url\.' | grep -c 'x-access-token')" "1"
 CASE_RC=0
-env -i PATH="$PATH" HOME="$STALE_HOME" GITHUB_ENV="$TMPROOT/stale/env" GH_TOKEN="$TOKEN" \
+env -i PATH="$PATH" HOME="$STALE_HOME" RUNNER_TEMP="$TMPROOT/stale" GITHUB_ENV="$TMPROOT/stale/env" GH_TOKEN="$TOKEN" \
   bash "$SCRIPT" >"$TMPROOT/stale/out" 2>&1 || CASE_RC=$?
 check "the run over a stale HOME still succeeds" "$CASE_RC" "0"
 check "a stale credential-bearing rewrite from an earlier job is evicted" \
@@ -320,7 +398,7 @@ HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" \
   http."https://gitlab.com/".extraheader "X-Not-Ours: keep"
 HOME="$XH_HOME" git config --file "$XH_HOME/.gitconfig" core.autocrlf false
 CASE_RC=0
-env -i PATH="$PATH" HOME="$XH_HOME" GITHUB_ENV="$TMPROOT/stale-xh/env" GH_TOKEN="$TOKEN" \
+env -i PATH="$PATH" HOME="$XH_HOME" RUNNER_TEMP="$TMPROOT/stale-xh" GITHUB_ENV="$TMPROOT/stale-xh/env" GH_TOKEN="$TOKEN" \
   bash "$SCRIPT" >"$TMPROOT/stale-xh/out" 2>&1 || CASE_RC=$?
 check "the run over a home with stale extraheaders succeeds" "$CASE_RC" "0"
 check "every stale github.com extraheader is evicted from ~/.gitconfig" \
@@ -334,12 +412,12 @@ check "the eviction is reported by count" \
 check "the stale value is never printed" \
   "$(grep -cF "$XH_STALE" "$TMPROOT/stale-xh/out" || true)" "0"
 # The narrower `.../codetracer.git/` key would otherwise win this URL outright.
-check "only the job's own header is now in effect for an own-org repo" \
-  "$(CASE_HOME="$XH_HOME" CASE_ENV="$TMPROOT/stale-xh/env" urlmatch \
-    https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_HEADER"
+check "no stale header is in effect for an own-org repo, only the job's helper" \
+  "$(CASE_HOME="$XH_HOME" CASE_ENV="$TMPROOT/stale-xh/env" credential_for \
+    https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_CRED"
 
 # Re-running in the same HOME must not accumulate duplicate rewrite values.
-env -i PATH="$PATH" HOME="$STALE_HOME" GITHUB_ENV="$TMPROOT/stale/env" GH_TOKEN="$TOKEN" \
+env -i PATH="$PATH" HOME="$STALE_HOME" RUNNER_TEMP="$TMPROOT/stale" GITHUB_ENV="$TMPROOT/stale/env" GH_TOKEN="$TOKEN" \
   bash "$SCRIPT" >/dev/null 2>&1
 check "re-running does not duplicate the scheme rewrites" \
   "$(HOME="$STALE_HOME" git config --global --get-all url."https://github.com/".insteadOf | wc -l | tr -d ' ')" "2"
@@ -351,19 +429,19 @@ check "re-running does not duplicate the scheme rewrites" \
 # ---------------------------------------------------------------------------
 run_auth extra EXTRA_TOKEN_URL_PREFIXES="https://github.com/some-partner/one-repo.git"
 check "a declared cross-org repo is authenticated" \
-  "$(credential_for https://github.com/some-partner/one-repo.git)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/some-partner/one-repo.git)" "$EXPECT_CRED"
 check "declaring one repo does not authenticate its owner's other repos" \
   "$(credential_for https://github.com/some-partner/another-repo.git)" ""
 check "declaring a cross-org repo keeps the own-org scope" \
-  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_CRED"
 check "declaring a cross-org repo does not widen to third parties" \
   "$(credential_for https://github.com/NixOS/nixpkgs)" ""
 
 run_auth owners TOKEN_OWNERS="metacraft-labs other-org"
 check "a second declared owner is authenticated" \
-  "$(credential_for https://github.com/other-org/x)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/other-org/x)" "$EXPECT_CRED"
 check "declaring a second owner keeps the first" \
-  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_HEADER"
+  "$(credential_for https://github.com/metacraft-labs/codetracer.git)" "$EXPECT_CRED"
 check "declaring a second owner does not widen to third parties" \
   "$(credential_for https://github.com/NixOS/nixpkgs)" ""
 

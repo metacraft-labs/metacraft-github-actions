@@ -161,19 +161,41 @@ inputs:
       longer then fails its next Nix fetch with `401 Bad credentials`. The
       broker rewrites the job's private credential files in place, so steps
       and daemons started before a refresh pick the new token up on their
-      next `nix` invocation. Tokens it mints are restricted to `contents:
-      read`. It covers Nix (its `access-tokens` and netrc). This action's own
-      sibling clones and repro CLI install are handed the broker's current
-      token rather than `gh-token`, so an already old `gh-token` cannot fail
-      them. The Git CLI credential exported to later steps is frozen when it is
-      installed, and is refreshed between phases by `refresh-build-auth`
-      (README, "Which token each step is handed"). While the broker runs it
-      owns the job's Nix GitHub credential: a later setup-nix, Nix-auth
-      selection or
-      refresh-build-auth keeps the broker's token instead of installing the
-      older one it was handed.
+      next `nix` or `git` invocation. Tokens it mints are restricted to
+      `contents: read`. It covers Nix (its `access-tokens` and netrc) and, for
+      a job with `git-access: read` (the default), the Git CLI credential later
+      steps use: Git reads the token through a credential helper whenever
+      GitHub challenges a request, so a Git process started after a rotation
+      gets the new token. This action's own sibling clones and repro CLI
+      install are handed the broker's current token rather than `gh-token`, so
+      an already old `gh-token` cannot fail them. While the broker runs it owns
+      the job's Nix GitHub credential and, unless `git-access` is `write`, its
+      Git token: a later setup-nix, Nix-auth selection or refresh-build-auth
+      keeps the broker's token instead of installing the older one it was
+      handed (README, "How long the job's Nix credential lives").
     required: false
     default: ""
+  git-access:
+    description: >
+      `read` (default) or `write`: whether this job writes over Git after this
+      action -- pushes a branch, a tag or a lock record with the job's Git
+      credential (a `git push` step, or `refresh-workspace-lock`, whose push
+      uses it). It decides which token the job-scoped Git CLI credential hands
+      Git. An action that authenticates its own push with a token it is given,
+      such as `publish-workspace-lock`, is not affected.
+
+      `read`: while the credential broker runs (`app-id`), Git is handed the
+      broker's current `contents: read` token, which the broker keeps fresh
+      for the whole job. Without a broker, Git is handed `gh-token`.
+
+      `write`: Git is handed `gh-token`, whose permissions are the App's and
+      may include `contents: write`, and the broker never replaces it. That
+      token lives one hour like any installation token; a job that pushes
+      more than an hour after it was minted renews it with
+      `refresh-build-auth` first. Declare `write` only in a job that pushes:
+      every other job is better off with the broker's read-only token.
+    required: false
+    default: "read"
   app-private-key:
     description: >
       Optional. The PEM private key of the App named by `app-id`. Passed to the
@@ -437,6 +459,9 @@ runs:
         APP_ID: ${{ inputs.app-id }}
         APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
+        # Recorded in the credential directory before the first rotation:
+        # with `write` the broker never writes the job's Git token file.
+        GIT_ACCESS: ${{ inputs.git-access }}
         GHA_NIX_AUTH_MODULE: ${{ steps.roots.outputs.nix-auth-module }}
       with:
         script: |
@@ -449,11 +474,21 @@ runs:
       shell: bash
       env:
         MCL_CONSUMER_ROOT: ${{ steps.roots.outputs.consumer-directory }}
+        GIT_ACCESS: ${{ inputs.git-access }}
       run: |
         case "${{ inputs.env-flavor }}" in
           nix|windows-diy|reprobuild) ;;
           *)
             echo "::error::env-flavor must be one of: nix, windows-diy, reprobuild (got '${{ inputs.env-flavor }}')" >&2
+            exit 1
+            ;;
+        esac
+        # Checked here as well as by the broker, so a job without one is not
+        # left with a misspelt declaration that silently means `read`.
+        case "$GIT_ACCESS" in
+          read|write) ;;
+          *)
+            echo "::error::git-access must be 'read' or 'write' (got '$GIT_ACCESS')" >&2
             exit 1
             ;;
         esac
@@ -1045,13 +1080,9 @@ runs:
       # then did, would not have reached this clone without this selection.
       #
       # Only for env-flavor reprobuild. A source build runs setup-nix again,
-      # and setup-nix installs the token it is handed as the job's Git CLI
-      # credential. The reprobuild flavor installs the broker's token there
-      # anyway ("Configure Git authentication (reprobuild)" below). The nix
-      # flavor keeps gh-token, whose permissions may be wider than `contents:
-      # read`; whether such a job should take the broker's token for Git is
-      # undecided (metacraft-pm issue
-      # 2026-11-12-shared-actions-git-cli-credential-expires-an-hour-after-gh-token-and-the-broker-cannot-rotate-it).
+      # and setup-nix writes the token it is handed to the job's Git token
+      # file unless the broker owns that file; "Configure Git authentication
+      # (reprobuild)" below then installs the token `git-access` selects.
       id: install-token
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' && inputs.app-id != '' && inputs.app-private-key != '' && runner.os != 'Windows' }}
       uses: actions/github-script@v7
@@ -1293,11 +1324,14 @@ runs:
     - name: Configure Git authentication (reprobuild)
       # Sibling materialization's private global config has already been
       # removed. Later commands need the same job-scoped Git CLI channel as
-      # the Nix flavor, including commands run through Repro exec.
+      # the Nix flavor, including commands run through Repro exec. A job that
+      # writes over Git (`git-access: write`) keeps gh-token, which the broker
+      # never replaces; any other job takes the broker's token while one runs
+      # (and the broker then owns the file anyway), gh-token otherwise.
       if: ${{ inputs.env-flavor == 'reprobuild' && inputs.gh-token != '' }}
       shell: bash
       env:
-        GH_TOKEN: ${{ steps.job-token.outputs.token || inputs.gh-token }}
+        GH_TOKEN: ${{ inputs.git-access == 'write' && inputs.gh-token || steps.job-token.outputs.token || inputs.gh-token }}
         TOKEN_OWNERS: ${{ inputs.token-owner }}
       run: bash "${GITHUB_ACTION_PATH}/../setup-nix/configure-git-auth.sh"
 
