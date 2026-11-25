@@ -95,8 +95,16 @@ class PrivateGlobalConfig(unittest.TestCase):
         self.scratch.mkdir()
         self.web = self.base / 'web'
         self.web.mkdir()
+        # The job running the suite must not hand the code under test its Git
+        # or GitHub configuration, nor MCL_JOB_CREDENTIALS_DIR, which names the
+        # job's real credential directory. Inherited, a setup step under test
+        # (the Cargo suite runs one) writes the fixture token into it, and a
+        # later scoped_git_auth_with_global finds the caller's token there and
+        # rightly reads that file instead of a private one. A test that wants
+        # a job directory passes its own.
         self.env = {k: v for k, v in os.environ.items()
-                    if not k.startswith(('GIT_', 'GH_', 'GITHUB_', 'SSH_ASKPASS'))}
+                    if not k.startswith(('GIT_', 'GH_', 'GITHUB_', 'SSH_ASKPASS'))
+                    and k != 'MCL_JOB_CREDENTIALS_DIR'}
         self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.home / '.config'),
                         GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
         seed = self.base / 'seed'
