@@ -6,9 +6,10 @@ description: >
 
   Selection (resolve-reprobuild-pin.sh):
     a. No override -> the pin. A pinned commit on reprobuild `dev` or `agents`
-        is built from source; a pinned published release is installed from
-        its prebuilt archive, with a source build of the pinned commit as the
-        fallback.
+        is built from source, or on Linux substituted from the binary cache
+        that holds that commit's own build (route 0); a pinned published
+        release is installed from its prebuilt archive, with a source build of
+        the pinned commit as the fallback.
     b. repro-version and/or repro-build-pin -> the caller's override, as
         before: the named release is installed, and the named revision is
         built when there is no release to install.
@@ -18,6 +19,10 @@ description: >
     -. A caller-built Nix package (repro-package) -> admit it if it is the
         selected commit's own flake package output, add its bin/ to PATH,
         build nothing.
+    0. Linux, a source selection of a full commit SHA with no build-input
+        override -> substitute that commit's flake package from the binary
+        caches the job's Nix trusts (`nix build --max-jobs 0`, which never
+        builds), and admit it as above. A cache miss falls through to 2.
     1. The selected prebuilt release archive for this OS/arch -> download,
         verify its SHA-256 against the release's SHA256SUMS, unpack, add bin/
         to PATH.
@@ -177,7 +182,8 @@ outputs:
   install-source:
     description: >
       How `repro` ended up on PATH: `release` (verified prebuilt archive),
-      `package` (the caller's repro-package) or `source` (built here).
+      `package` (the caller's repro-package), `cache` (the selected commit's
+      Nix package, substituted from a binary cache) or `source` (built here).
       Useful for asserting in CI that a given runner class is actually being
       served by a prebuilt binary.
     value: ${{ steps.decide.outputs.install-source }}
@@ -196,7 +202,7 @@ outputs:
     description: >
       The Reprobuild commit the CLI was built from: the source checkout's
       commit, or the admitted package's. Empty for a release archive.
-    value: ${{ steps.check.outputs.commit || (steps.decide.outputs.install-source == 'package' && steps.pin.outputs.build-ref || '') }}
+    value: ${{ steps.check.outputs.commit || ((steps.decide.outputs.install-source == 'package' || steps.decide.outputs.install-source == 'cache') && steps.pin.outputs.build-ref || '') }}
 
 runs:
   using: composite
@@ -311,6 +317,41 @@ runs:
           exit "${rc}"
         fi
 
+    # ── Binary-cache path: the selected commit's Nix package (Linux) ─────────
+    #
+    # A source selection names one commit, and that commit's flake package is
+    # built once and pushed to the organisation's Attic cache (reprobuild's
+    # `publish-nix-cache` release job; this repository's `pins` workflow for
+    # the pin). Substituting it replaces a 30-50 minute engine compile with a
+    # download. Only when no override changes the build: io-mon-pin and
+    # runquota-ref build a different engine than the flake package, so they
+    # keep the source route. macOS keeps it too: the source route exports the
+    # Nix compiler and Bash the darwin engine needs outside the dev shell
+    # (REPRO_BOOTSTRAP_CC, REPRO_FOREIGN_ENV_BASH), and the package route does
+    # not. The two steps run under one condition; `Decide install path` takes
+    # the package when the second admitted one, and the source route otherwise.
+    - name: Install Nix (Linux, to substitute the selected repro package)
+      id: cache-nix
+      if: ${{ runner.os == 'Linux' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.io-mon-pin == '' && inputs.runquota-ref == '' }}
+      uses: metacraft-labs/metacraft-github-actions/setup-nix@dev
+      with:
+        gh-token: ${{ inputs.gh-token }}
+        substituters: ${{ inputs.substituters }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        attic-token: ${{ inputs.attic-token }}
+        attic-cache: ${{ inputs.attic-cache }}
+        attic-endpoint: ${{ inputs.attic-endpoint }}
+
+    - name: Substitute the selected repro package from the binary cache
+      id: cache
+      if: ${{ runner.os == 'Linux' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.io-mon-pin == '' && inputs.runquota-ref == '' }}
+      shell: bash
+      env:
+        REPRO_BUILD_PIN: ${{ steps.pin.outputs.expected-commit }}
+        GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/substitute-repro-package.sh"
+
     # Single place that decides whether the source build runs, so the condition
     # is not repeated (and mis-repeated) across five steps.
     - name: Decide install path
@@ -333,6 +374,7 @@ runs:
         RELEASE_BIN_DIR: ${{ steps.release.outputs.bin-dir }}
         REPRO_PACKAGE: ${{ inputs.repro-package }}
         PACKAGE_BIN_DIR: ${{ steps.package.outputs.bin-dir }}
+        CACHE_BIN_DIR: ${{ steps.cache.outputs.bin-dir }}
         MCL_WORKSPACE_ROOT: ${{ steps.roots.outputs.workspace-directory }}
         MCL_LEGACY_LAYOUT: ${{ steps.roots.outputs.legacy-layout }}
       run: |
@@ -349,6 +391,10 @@ runs:
         elif [ "${RELEASE_INSTALLED}" = "true" ]; then
           echo "install-source=release" >> "$GITHUB_OUTPUT"
           echo "repro-bin-dir=${RELEASE_BIN_DIR}" >> "$GITHUB_OUTPUT"
+          echo "need-source=false"      >> "$GITHUB_OUTPUT"
+        elif [ -n "${CACHE_BIN_DIR:-}" ]; then
+          echo "install-source=cache"   >> "$GITHUB_OUTPUT"
+          echo "repro-bin-dir=${CACHE_BIN_DIR}" >> "$GITHUB_OUTPUT"
           echo "need-source=false"      >> "$GITHUB_OUTPUT"
         else
           # No branch default: a source build needs the selected revision, or
@@ -437,8 +483,11 @@ runs:
         io-mon-ref: ${{ inputs.io-mon-ref }}
         stackable-hooks-pin: ${{ inputs.stackable-hooks-pin }}
 
+    # Skipped when the binary-cache attempt above already set up Nix in this
+    # job, with the same inputs: the source build after a cache miss uses
+    # that installation rather than running the installer a second time.
     - name: Install Nix (Linux/macOS, to build repro)
-      if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' }}
+      if: ${{ steps.decide.outputs.need-source == 'true' && runner.os != 'Windows' && steps.cache-nix.outcome != 'success' }}
       uses: metacraft-labs/metacraft-github-actions/setup-nix@dev
       with:
         gh-token: ${{ inputs.gh-token }}

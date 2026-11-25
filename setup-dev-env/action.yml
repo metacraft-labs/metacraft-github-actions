@@ -257,7 +257,8 @@ inputs:
     description: >
       Build repro from source even when the selection is a release
       (reprobuild flavor or repro-lock sibling strategy only). A pinned
-      commit is always built from source.
+      commit is built from source, or on Linux substituted from a binary
+      cache (`substituters`) that holds that commit's Nix package.
     required: false
     default: "false"
   repro-build-pin:
@@ -1119,7 +1120,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@fa93d600b2a608f066ba682130574fc00f299c36
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@2844a9623f0f24dd5c14c129b92a0ddd7ce93d7c
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
