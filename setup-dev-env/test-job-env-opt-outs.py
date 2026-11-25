@@ -67,7 +67,7 @@ def step(name):
 def step_body(name, substitutions=()):
     body = step(name).split('      run: |\n', 1)[1]
     text = '\n'.join(line[8:] if line.startswith('        ') else line
-                     for line in body.splitlines()) + '\n'
+        for line in body.splitlines()) + '\n'
     for old, new in substitutions:
         text = text.replace(old, new)
     return text
@@ -94,7 +94,7 @@ def read_env(path):
 
 def clean_environment(**extra):
     env = {name: value for name, value in os.environ.items()
-           if not name.startswith('GIT_CONFIG') and name != 'MCL_JOB_CREDENTIALS_DIR'}
+        if not name.startswith('GIT_CONFIG') and name != 'MCL_JOB_CREDENTIALS_DIR'}
     env.update(extra)
     return env
 
@@ -163,7 +163,7 @@ class RecordGitAccess(Base):
 
     def test_the_starting_git_configuration_is_an_output(self):
         done = self.record(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='core.autocrlf',
-                           GIT_CONFIG_VALUE_0='false')
+            GIT_CONFIG_VALUE_0='false')
         self.assertEqual(done.returncode, 0, done.stderr)
         outputs = read_env(self.github_output)
         self.assertEqual(outputs.get('git-config-count'), '1')
@@ -180,7 +180,7 @@ class RecordGitAccess(Base):
         home = self.root / 'home'
         home.mkdir()
         done = self.bash('bash "' + str(configure) + '"', HOME=str(home),
-                         GH_TOKEN='ghs_test_sentinel_token', **job)
+            GH_TOKEN='ghs_test_sentinel_token', **job)
         self.assertEqual(done.returncode, 0, done.stderr)
         exported = read_env(self.github_env)
         self.assertFalse([n for n in exported if n.startswith('GIT_CONFIG')], exported)
@@ -190,8 +190,8 @@ class RecordGitAccess(Base):
 class CheckGitUntouched(Base):
     def check(self, start_count, start_parameters='unset', **env):
         return self.bash('bash "' + str(step_script(CHECK)) + '"',
-                         START_GIT_CONFIG_COUNT=start_count,
-                         START_GIT_CONFIG_PARAMETERS=start_parameters, **env)
+            START_GIT_CONFIG_COUNT=start_count,
+            START_GIT_CONFIG_PARAMETERS=start_parameters, **env)
 
     def test_an_unchanged_configuration_passes(self):
         self.assertEqual(self.check('unset').returncode, 0)

@@ -72,10 +72,10 @@ class DecideBuildEnvironment(unittest.TestCase):
             output = root / 'output'
             output.write_text('')
             done = subprocess.run(
-                ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail',
-                 '-c', unix.step_body(DECIDE_STEP)],
+                ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
+                  unix.step_body(DECIDE_STEP)],
                 env={'PATH': os.environ['PATH'], 'RUNNER_TEMP': str(root),
-                     'GITHUB_OUTPUT': str(output), 'EXPORT_BUILD_ENV': value},
+                  'GITHUB_OUTPUT': str(output), 'EXPORT_BUILD_ENV': value},
                 capture_output=True, text=True, timeout=60)
             outputs = read_env(output)
             directory = outputs.get('dir', '')
@@ -101,7 +101,7 @@ class DecideBuildEnvironment(unittest.TestCase):
 @unittest.skipIf(os.name == 'nt', 'the Linux/macOS step; its stand-ins are POSIX scripts')
 class UnixSourceBuild(unix.SourceBuildEnvironment):
     DEV_SHELL = dict(unix.SIBLING_FIRST, NIMCRYPTO_SRC='/nix/store/ffff-nimcrypto',
-                     BEARSSL_SRC='/nix/store/gggg-nim-bearssl')
+        BEARSSL_SRC='/nix/store/gggg-nim-bearssl')
 
     # The inherited tests are test-source-build-env.py's; run them there.
     test_every_sibling_first_source_reaches_later_steps = None
