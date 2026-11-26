@@ -29,9 +29,15 @@ name: pins
 #                       (`nix build` of the pinned package, Linux and macOS)
 #                       and section 0b (the binary reads the real workspace
 #                       manifests and answers the managed-hook contract) of
-#                       metacraft-pm how-to-distribute-new-reprobuild-versions-internally.md;
-#                       it also pushes the built package to the Attic cache
-#                       (not a gate)
+#                       metacraft-pm how-to-distribute-new-reprobuild-versions-internally.md
+#   reprobuild-cache    a push to agents or dev that changed the reprobuild
+#                       pin or its readers, the schedule, or a dispatch on one
+#                       of them: on self-hosted runners that reach the
+#                       organisation's Attic cache, build or substitute each
+#                       pinned output consumers install (x86_64-linux and
+#                       aarch64-darwin) that the cache lacks, push it, and
+#                       fail unless the cache then holds every one (not a
+#                       gate)
 #   setup-reprobuild    the same changes: the action installs the pin with no
 #                       repro-build-pin on Linux, macOS and Windows, and an
 #                       explicit override installs the override; on Windows
@@ -370,47 +376,15 @@ jobs:
           version="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.version)"
           test "$("$out/bin/repro" --version)" = "repro $version"
           echo "repro=$out/bin/repro" >> "$GITHUB_OUTPUT"
-          echo "package=$out" >> "$GITHUB_OUTPUT"
 
-      # Build once, reuse from the cache. setup-reprobuild substitutes the
-      # pinned commit's package from the organisation's Attic cache before it
-      # compiles the engine, and this job has just built exactly that package
-      # (`#default` and `#reprobuild` are the same output; the setup action
-      # asks for `#reprobuild`). So the job that builds the pin pushes it, and
-      # every consumer job after it downloads it. Reprobuild's own release
-      # pipeline pushes only revisions that go through a release run, and only
-      # for x86_64-linux; an `agents-commit` pin may have no such run at all.
-      #
-      # Not a gate: the cache entry is a convenience, and a cache-service
-      # failure must not block a pin whose package built and passed 0b. It is
-      # not silent either: missing credentials and a failed push are
-      # annotated, and the job summary says how to repeat the push. A re-run
-      # of this job rebuilds the package; `attic push` sends only what the
-      # cache does not hold yet.
-      - name: Push the pinned package to the organisation cache
-        continue-on-error: true
-        env:
-          PACKAGE: ${{ steps.build.outputs.package }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-          ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
-          ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${ATTIC_TOKEN}" || -z "${ATTIC_CACHE}" || -z "${ATTIC_ENDPOINT}" ]]; then
-            echo "::warning::secrets.ATTIC_TOKEN, vars.ATTIC_CACHE and vars.ATTIC_ENDPOINT are not all set for this repository, so the pinned package $PACKAGE was not pushed to the organisation cache; every consumer job builds the engine from source until it is"
-            echo "The pinned Reprobuild package \`$PACKAGE\` was **not** pushed to the organisation cache: this repository has no Attic credentials." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "::add-mask::$ATTIC_TOKEN"
-          attic="$(nix build --no-link --print-out-paths --accept-flake-config nixpkgs#attic-client)/bin/attic"
-          "$attic" login --set-default pins "$ATTIC_ENDPOINT" "$ATTIC_TOKEN"
-          if ! "$attic" push "$ATTIC_CACHE" "$PACKAGE"; then
-            echo "::warning::pushing $PACKAGE to the Attic cache $ATTIC_CACHE failed; re-run this job to push it again"
-            echo "Pushing the pinned Reprobuild package \`$PACKAGE\` to \`$ATTIC_CACHE\` **failed**. Re-run this job to push it again." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "Pushed $PACKAGE to $ATTIC_CACHE"
-          echo "Pushed the pinned Reprobuild package \`$PACKAGE\` to \`$ATTIC_CACHE\`." >> "$GITHUB_STEP_SUMMARY"
+      # This job does not push what it built to the organisation cache: it
+      # runs on hosted runners, and cache.metacraft-labs.com resolves to a
+      # NetBird overlay address they cannot reach. The push this job used to
+      # make timed out on every run (`Connection timed out (os error 110)` on
+      # ubuntu-24.04, `os error 60` on macos-15; runs 45667796580 and
+      # 45879841961) and, being continue-on-error, left the pin out of the
+      # cache without failing anything. The `reprobuild-cache` job publishes
+      # the pin from self-hosted runners instead.
 
       # An installation token expires one hour after it is minted, and the
       # package build above can take longer than that on its own: on
@@ -650,10 +624,206 @@ jobs:
           # (still the probe's 7 here) into a failed step.
           exit 0
 
+  # ── The pinned package in the organisation cache ─────────────────────────
+  #
+  # Build once, reuse. setup-reprobuild substitutes the pinned commit's
+  # `#reprobuild` from the binary caches the job's Nix trusts before it
+  # compiles the engine (substitute-repro-package.sh), and devops-modules'
+  # NixOS checks build `repro-binary-cache` and `reprobuild` from the same
+  # pinned flake (`builtins.getFlake pins.reprobuild.flakeRef`). When the
+  # organisation's Attic cache lacks those outputs, every one of those jobs
+  # compiles them: devops-modules #844's VM checks did so on nixos-ci-bare-003
+  # and -004 and were killed by the OOM killer and the swap guard.
+  #
+  # Why self-hosted: cache.metacraft-labs.com resolves to a NetBird overlay
+  # address (100.x) that only the organisation's own hosts reach; hosted
+  # runners time out connecting to it. These runners reach it (the NixOS and
+  # macOS self-hosted runner groups admit this public repository).
+  #
+  # Why only after the change landed, never on a pull request: the cache is
+  # shared state every consumer substitutes from, so it is filled from the
+  # branches the pin is declared on (agents, dev), as the Windows prerelease
+  # below is. A pin that is not merged is still gated by `reprobuild-package`.
+  #
+  # Idempotent: each leg asks the cache for each pinned output first and
+  # builds and pushes only what it lacks, so a re-run, the weekly schedule or a
+  # dispatch completes a publish that failed. Not a gate, and not silent
+  # either: the job fails, with no continue-on-error, unless the cache holds
+  # every pinned output when it ends.
+  reprobuild-cache:
+    needs: [changes, local]
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/agents' || github.ref == 'refs/heads/dev') && needs.changes.outputs.reprobuild == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `reprobuild` is the output setup-reprobuild substitutes (`default`
+          # and `repro` are the same derivation); devops-modules'
+          # checks/repro-*.nix use `reprobuild` and `repro-binary-cache`,
+          # Linux only.
+          - system: x86_64-linux
+            runner: [self-hosted, linux, x64]
+            attrs: reprobuild repro-binary-cache
+          - system: aarch64-darwin
+            runner: [self-hosted, macos, arm64]
+            attrs: reprobuild
+    name: reprobuild-cache (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: The organisation cache's credentials are set
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
+          ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TRUSTED_PUBLIC_KEY: ${{ vars.ATTIC_TRUSTED_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in ATTIC_TOKEN ATTIC_CACHE ATTIC_ENDPOINT ATTIC_SUBSTITUTER ATTIC_TRUSTED_PUBLIC_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::not set for this repository:$missing (ATTIC_TOKEN is a secret, the rest are variables); the pinned Reprobuild cannot be published to the organisation cache"
+            exit 1
+          fi
+
+      - name: Mint a read token for metacraft-labs
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+
+      # The read half of the cache credential only (no `attic-cache`, so no
+      # watch-store): this job pushes the pinned outputs by name and nothing
+      # else it happens to build. `fail`: an unreachable cache, or one that
+      # refuses the token, fails here with the diagnosed cause.
+      - name: Setup Nix (this checkout's action)
+        uses: ./setup-nix
+        with:
+          gh-token: ${{ steps.token.outputs.token }}
+          substituters: ${{ vars.ATTIC_SUBSTITUTER }}
+          trusted-public-keys: ${{ vars.ATTIC_TRUSTED_PUBLIC_KEY }}
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+          attic-endpoint: ${{ vars.ATTIC_ENDPOINT }}
+          substituter-preflight: fail
+
+      - name: Which pinned outputs the cache lacks
+        id: plan
+        env:
+          SYSTEM: ${{ matrix.system }}
+          ATTRS: ${{ matrix.attrs }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+        run: |
+          set -euo pipefail
+          # The leg must run on the system it publishes for: it builds there.
+          host="$(nix eval --raw --impure --expr builtins.currentSystem)"
+          if [ "$host" != "$SYSTEM" ]; then
+            echo "::error::this leg publishes $SYSTEM but its runner is $host"
+            exit 1
+          fi
+          # Through the flake output `pins`, the way devops-modules reads it,
+          # checked against the JSON file the setup actions read.
+          ref="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.flakeRef)"
+          rev="$(python3 -I -c 'import json; print(json.load(open("pins/reprobuild.json"))["rev"])')"
+          case "$ref" in "github:metacraft-labs/reprobuild/$rev?narHash="*) ;; *) echo "::error::unexpected flakeRef $ref for rev $rev"; exit 1 ;; esac
+          outs="$RUNNER_TEMP/pin-cache-outs"
+          : > "$outs"
+          missing=""
+          for attr in $ATTRS; do
+            out="$(nix eval --raw "$ref#packages.$SYSTEM.$attr.outPath")"
+            echo "$attr $out" >> "$outs"
+            if nix path-info --store "$ATTIC_SUBSTITUTER" "$out" > /dev/null 2>&1; then
+              echo "$attr: the cache holds $out"
+            else
+              echo "$attr: the cache lacks $out"
+              missing="$missing $attr"
+            fi
+          done
+          printf 'ref=%s\nmissing=%s\n' "$ref" "${missing# }" | tee -a "$GITHUB_OUTPUT"
+
+      # Memory-safe on a shared self-hosted runner: one derivation at a time
+      # on four cores. Most of the closure substitutes from cache.nixos.org;
+      # what is left is the Nim compile of the engine itself.
+      - name: Build or substitute the missing outputs
+        if: ${{ steps.plan.outputs.missing != '' }}
+        env:
+          REF: ${{ steps.plan.outputs.ref }}
+          SYSTEM: ${{ matrix.system }}
+          MISSING: ${{ steps.plan.outputs.missing }}
+        run: |
+          set -euo pipefail
+          installables=()
+          for attr in $MISSING; do installables+=("$REF#packages.$SYSTEM.$attr"); done
+          nix build --no-link --print-out-paths --max-jobs 1 --cores 4 "${installables[@]}"
+
+      # attic's configuration, which holds the token, goes to the job's
+      # temporary directory and not to the persistent runner's HOME, and is
+      # deleted when the step ends. Only attic sees that XDG_CONFIG_HOME: nix
+      # reads its user nix.conf from $XDG_CONFIG_HOME/nix, and the one
+      # setup-nix wrote (flakes, the cache credential) is under HOME.
+      - name: Push the missing outputs to the organisation cache
+        if: ${{ steps.plan.outputs.missing != '' }}
+        env:
+          MISSING: ${{ steps.plan.outputs.missing }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
+          ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ATTIC_TOKEN"
+          paths=()
+          while read -r attr out; do
+            case " $MISSING " in *" $attr "*) paths+=("$out") ;; esac
+          done < "$RUNNER_TEMP/pin-cache-outs"
+          attic="$(nix build --no-link --print-out-paths --max-jobs 1 --cores 4 nixpkgs#attic-client)/bin/attic"
+          config="$RUNNER_TEMP/attic-config"
+          trap 'rm -rf "$config"' EXIT
+          mkdir -p "$config"
+          XDG_CONFIG_HOME="$config" "$attic" login --set-default pins "$ATTIC_ENDPOINT" "$ATTIC_TOKEN"
+          XDG_CONFIG_HOME="$config" "$attic" push "$ATTIC_CACHE" "${paths[@]}"
+
+      - name: The cache holds every pinned output
+        env:
+          SYSTEM: ${{ matrix.system }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+        run: |
+          set -euo pipefail
+          outs="$RUNNER_TEMP/pin-cache-outs"
+          if [ ! -s "$outs" ]; then
+            echo "::error::no pinned outputs were planned for $SYSTEM"
+            exit 1
+          fi
+          failed=0
+          {
+            echo "### Pinned Reprobuild outputs in the organisation cache ($SYSTEM)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r attr out; do
+            if nix path-info --store "$ATTIC_SUBSTITUTER" "$out" > /dev/null; then
+              echo "ok   $attr $out"
+              echo "- \`$attr\`: \`$out\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::the organisation cache does not hold $attr ($out) for $SYSTEM"
+              echo "- \`$attr\`: \`$out\` **missing**" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+            fi
+          done < "$outs"
+          exit "$failed"
+
   # ── The Windows pin prerelease ────────────────────────────────────────────
   #
-  # Build once, reuse: the Windows counterpart of the Attic push above. On
-  # Windows setup-reprobuild has no Nix to substitute from, so before this
+  # Build once, reuse: the Windows counterpart of the `reprobuild-cache` job
+  # above. On Windows setup-reprobuild has no Nix to substitute from, so before this
   # every Windows job compiled the pinned commit from source: 16-19 minutes
   # on win-ci-bare-001, and past the six-hour job limit on the GARM and VM
   # runners (move and js recorder runs, 2026-11-24/25). These three jobs build
