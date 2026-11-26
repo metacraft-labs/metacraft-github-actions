@@ -330,7 +330,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-          path: mga
+          # Named as the repository, the name 37a109c4's sibling-repos pins
+          # (`metacraft-github-actions=dev`) and the step reads from it.
+          path: metacraft-github-actions
       # Default fetch-depth (1) and persist-credentials (true): the
       # consumer's checkout as gosti's own workflow makes it.
       - uses: actions/checkout@v5
@@ -379,7 +381,7 @@ jobs:
           fi
           # The step's environment, as action.yml passes it (legacy layout:
           # the consumer is GITHUB_WORKSPACE, the source inside it).
-          mga="${GITHUB_WORKSPACE}/mga"
+          mga="${GITHUB_WORKSPACE}/metacraft-github-actions"
           # shellcheck disable=SC2016 # expanded by the bash under test
           version="$("${step_bash}" -c 'printf %s "${BASH_VERSION}"')"
           echo "step bash: ${version}"
@@ -408,7 +410,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ws="${GITHUB_WORKSPACE}/mga"
+          ws="${GITHUB_WORKSPACE}/metacraft-github-actions"
           shallow_before="$(git -C "${ws}" rev-parse --is-shallow-repository)"
           mkdir -p "${ws}/.reprobuild-src/.github"
           cp w/gosti/.reprobuild-src/.github/sibling-repos "${ws}/.reprobuild-src/.github/"
