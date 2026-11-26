@@ -170,6 +170,13 @@ and passes trivially when a change touches no pin and none of the readers.
   below, and `pins-gate` passes it only when its `outcome` output is
   `confirmed` or `produced`.
 
+The gate's legs cover x86_64 Linux, macOS (arm64) and Windows x64. The
+`windows-11-arm` (x64 emulation) and `ubuntu-24.04-arm` runners are not part
+of it (manager decision, 2026-11-26). They were covered only by the
+manual-dispatch `validate-tool-candidates.yml` and
+`validate-windows-hook-bootstrap.yml` workflows, which this repository has
+retired, so nothing in CI exercises a pin on them now.
+
 ### When the CodeTracer lock job runs
 
 The job holds a hosted arm64 Mac for half an hour or more, so it does not
