@@ -304,6 +304,124 @@ jobs:
       - name: Every shell script parses under Bash 3.2
         run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-install-release.py Bash32Parse
 
+      - name: The self-sibling ancestry step runs under Bash 3.2
+        run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-self-sibling-ancestry.py
+
+  self-sibling-ancestry-gosti:
+    # The real shape of gosti run 45782702955, which no consumer can exercise
+    # before this repository's `dev` moves (gosti uses setup-dev-env@dev): a
+    # depth-1 `actions/checkout` of gosti's `agents` from github.com, with the
+    # credential that checkout persists, judged against the three pin records
+    # of reprobuild 37a109c4 (whose `.github/sibling-repos` pins
+    # gosti=cf435b3c, and whose repro.lock and flake.lock pin no gosti). The
+    # step script runs as action.yml runs it, from Git Bash on Windows with
+    # the runner's backslashed workspace path and from macOS's /bin/bash 3.2
+    # with only bash and git on PATH, as on the self-hosted macOS runners.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      REPROBUILD_REV: 37a109c4e1cf650e6eb79b11d9fadf6e49e64614
+      GOSTI_PIN: cf435b3ca8abbceaf3db547f86cdc67d03994d1e
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          path: mga
+      # Default fetch-depth (1) and persist-credentials (true): the
+      # consumer's checkout as gosti's own workflow makes it.
+      - uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/gosti
+          ref: agents
+          path: w/gosti
+      - name: Reprobuild 37a109c4's pin records
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="w/gosti/.reprobuild-src"
+          mkdir -p "${src}/.github"
+          for f in .github/sibling-repos repro.lock flake.lock; do
+            curl --fail --silent --show-error --location --retry 3 \
+              --output "${src}/${f}" \
+              "https://raw.githubusercontent.com/metacraft-labs/reprobuild/${REPROBUILD_REV}/${f}"
+          done
+          grep -qx "gosti=${GOSTI_PIN}" "${src}/.github/sibling-repos"
+      - name: Deepen the gosti checkout as setup-reprobuild would
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/bash-and-git"
+          ws="${GITHUB_WORKSPACE}/w/gosti"
+          step_bash=bash
+          step_path="${PATH}"
+          case "${RUNNER_OS}" in
+            Windows) ws="${GITHUB_WORKSPACE}\\w\\gosti" ;;
+            macOS)
+              mkdir -p "${tools}"
+              ln -s /bin/bash "${tools}/bash"
+              ln -s "$(command -v git)" "${tools}/git"
+              step_bash=/bin/bash
+              step_path="${tools}"
+              ;;
+          esac
+          probe() {
+            GIT_NO_LAZY_FETCH=1 git -C "${ws}" merge-base --is-ancestor "${GOSTI_PIN}" HEAD
+          }
+          before="$(git -C "${ws}" rev-parse HEAD)"
+          test "$(git -C "${ws}" rev-parse --is-shallow-repository)" = true
+          if probe; then
+            echo "::error::the depth-1 checkout already shows ${GOSTI_PIN}; this job no longer reproduces the defect"
+            exit 1
+          fi
+          # The step's environment, as action.yml passes it (legacy layout:
+          # the consumer is GITHUB_WORKSPACE, the source inside it).
+          mga="${GITHUB_WORKSPACE}/mga"
+          # shellcheck disable=SC2016 # expanded by the bash under test
+          version="$("${step_bash}" -c 'printf %s "${BASH_VERSION}"')"
+          echo "step bash: ${version}"
+          if [ "${RUNNER_OS}" = macOS ]; then
+            case "${version}" in 3.*) ;; *) echo "::error::not Bash 3.2"; exit 1 ;; esac
+          fi
+          status=0
+          out="$(PATH="${step_path}" GITHUB_WORKSPACE="${ws}" \
+            GITHUB_ACTION_PATH="${mga}/setup-reprobuild" \
+            MCL_CONSUMER_DIRECTORY=. MCL_WORKSPACE_DIRECTORY=. \
+            REPROBUILD_SOURCE_DIRECTORY="${ws}/.reprobuild-src" \
+            "${step_bash}" "${mga}/setup-reprobuild/reveal-consumer-pin-ancestry.sh" 2>&1)" || status=$?
+          printf '%s\n' "${out}"
+          test "${status}" -eq 0
+          case "${out}" in *'::warning::'*) echo "::error::the step warned"; exit 1 ;; esac
+          case "${out}" in *"${GOSTI_PIN} is now visible as an ancestor of HEAD"*) ;;
+            *) echo "::error::the step did not report the pin as revealed"; exit 1 ;;
+          esac
+          probe || { echo "::error::the engine's probe still refuses ${GOSTI_PIN}"; exit 1; }
+          test "$(git -C "${ws}" rev-parse HEAD)" = "${before}"
+          test -z "$(git -C "${ws}" status --porcelain --untracked-files=no)"
+      - name: A consumer the source pins by branch is left alone
+        # This repository's own checkout: 37a109c4 pins
+        # `metacraft-github-actions=dev`, a branch, which the step leaves to
+        # the engine without fetching.
+        shell: bash
+        run: |
+          set -euo pipefail
+          ws="${GITHUB_WORKSPACE}/mga"
+          shallow_before="$(git -C "${ws}" rev-parse --is-shallow-repository)"
+          mkdir -p "${ws}/.reprobuild-src/.github"
+          cp w/gosti/.reprobuild-src/.github/sibling-repos "${ws}/.reprobuild-src/.github/"
+          out="$(GITHUB_WORKSPACE="${ws}" GITHUB_ACTION_PATH="${ws}/setup-reprobuild" \
+            MCL_CONSUMER_DIRECTORY=. MCL_WORKSPACE_DIRECTORY=. \
+            REPROBUILD_SOURCE_DIRECTORY="${ws}/.reprobuild-src" \
+            bash "${ws}/setup-reprobuild/reveal-consumer-pin-ancestry.sh" 2>&1)"
+          printf '%s\n' "${out}"
+          case "${out}" in *"pins 'metacraft-github-actions' at 'dev', not a commit id"*) ;;
+            *) echo "::error::expected the branch-valued pin to be left alone"; exit 1 ;;
+          esac
+          test "$(git -C "${ws}" rev-parse --is-shallow-repository)" = "${shallow_before}"
+
   resolve-sibling-rev:
     runs-on: ubuntu-latest
     steps:
@@ -360,6 +478,12 @@ jobs:
       # build-env-dir files instead of the job's environment.
       - name: Source build exports its build environment only when asked
         run: python3 setup-reprobuild/test-export-build-env.py
+
+      # A depth-1 consumer that the source pins as a sibling (gosti) is
+      # deepened until the engine's ancestry probe can accept it; any other
+      # consumer is left untouched.
+      - name: Source build reveals the pin's ancestry in a self-sibling consumer
+        run: python3 setup-reprobuild/test-self-sibling-ancestry.py
 
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py
