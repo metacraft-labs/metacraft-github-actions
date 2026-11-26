@@ -19,6 +19,17 @@ if [ "$#" -ne 0 ]; then
   fi
   repro=$2
 fi
+# Git exports the repository it is working on to the hooks it runs:
+# GIT_INDEX_FILE always, and GIT_DIR when the commit is made in a linked
+# worktree. The pre-commit hook runs this script, and the tests below build
+# scratch repositories with `git -C <tmp>`, which honours an inherited GIT_DIR
+# over its -C directory. On 2026-11-26 a commit from a worktree of this repo
+# sent tools/test-check-pins.py's scratch commits back into this repository's
+# own pre-commit hook, recursing, and its scratch `git init` wrote
+# `core.worktree` into the main checkout's config. Without these variables git
+# finds each repository from its working directory, as it does outside a hook.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX \
+  GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 shellcheck -S warning clone-siblings/resolve-sibling-rev.sh clone-siblings/resolve-sibling-rev-test.sh clone-siblings/clone-siblings.sh clone-siblings/clone-siblings-step-test.sh setup-dev-env/decide-sibling-strategy.sh setup-dev-env/provision-siblings-from-lock.sh setup-dev-env/reconcile-locked-sibling.sh setup-dev-env/sibling-strategy-step-test.sh setup-dev-env/decide-store-root.sh setup-dev-env/store-root-step-test.sh setup-dev-env/decide-tool-provisioning.sh setup-dev-env/tool-provisioning-step-test.sh setup-dev-env/decide-nix-install.sh setup-dev-env/nix-install-step-test.sh setup-dev-env/ensure-host-decompressors.sh setup-dev-env/ensure-host-decompressors-step-test.sh mirror-artifacts-s3/mirror.sh mirror-artifacts-s3/mirror-step-test.sh .github/assert-no-persisted-credential.sh
 shellcheck -S warning publish-workspace-lock/anchor-workspace-lock.sh publish-workspace-lock/publish-workspace-lock.sh publish-workspace-lock/anchor-workspace-lock-test.sh publish-workspace-lock/publish-workspace-lock-step-test.sh
 shellcheck -S warning refresh-workspace-lock/refresh-workspace-lock.sh refresh-workspace-lock/refresh-workspace-lock-test.sh
