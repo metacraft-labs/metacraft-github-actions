@@ -74,6 +74,40 @@ empty: the source build then uses the entries the pinned revision's own
 `repro-version` (a release tag) remain as explicit overrides, for testing a
 change that is not pinned yet. There is no branch, `dev` or `latest` default.
 
+#### Which Reprobuild was installed
+
+A workflow that checks the engine it got reads these outputs instead of
+writing a revision of its own:
+
+| Output                 | Value                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `repro-commit`         | Full SHA of the installed `repro`'s Reprobuild commit                          |
+| `repro-version`        | What `repro --version` reports                                                 |
+| `repro-origin`         | `pin` (pins/reprobuild.json) or `override` (`repro-version`/`repro-build-pin`) |
+| `repro-install-source` | `source`, `package`, `cache`, `pin-release` or `release`                       |
+
+`repro-commit` is set on every install route. A source build (Linux/macOS Nix,
+or the Windows env.ps1 build) reports its checkout's HEAD. The caller's
+package, the binary cache and the Windows `pin-<commit>` prerelease are
+admitted only for a full commit SHA, which they report. A release reports
+the pin's `rev` for a `release` pin, and for a `repro-version` override the
+commit its tag names, resolved with `git ls-remote` against the Reprobuild
+repository. When the commit cannot be named, the step "Report the installed
+Reprobuild (reprobuild)" fails the action instead of leaving the output empty
+(`report-installed-repro.sh`). All four are empty only when this job installed
+no `repro`: another flavor without the repro-lock strategy.
+
+```yaml
+- id: dev-env
+  uses: metacraft-labs/metacraft-github-actions/setup-dev-env@dev
+  with:
+    env-flavor: reprobuild
+- name: The engine is the pinned one
+  env:
+    REPRO_COMMIT: ${{ steps.dev-env.outputs.repro-commit }}
+  run: test "$(git -C .reprobuild-src rev-parse HEAD)" = "$REPRO_COMMIT"
+```
+
 A Linux or macOS leg that already builds the pinned engine as a Nix package
 (`nix build github:metacraft-labs/reprobuild/<pin>#reprobuild`, for example
 to record its derivation and image hashes) passes that store path as

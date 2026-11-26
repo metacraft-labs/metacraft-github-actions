@@ -31,9 +31,12 @@ name: pins
 #                       (not a gate)
 #   setup-reprobuild    the same changes: the action installs the pin with no
 #                       repro-build-pin on Linux, macOS and Windows, and an
-#                       explicit override installs the override
+#                       explicit override installs the override; on Windows
+#                       the pinned engine also monitors a real compiler and
+#                       the program it built
 #   resolver-windows    the same changes: the Windows pin reader
-#                       (ConvertFrom-Json) on a real Windows runner
+#                       (ConvertFrom-Json) and setup-dev-env's
+#                       installed-Reprobuild report, on a real Windows runner
 #   windows-pin-release a push to agents or dev, the schedule, or a dispatch
 #                       on one of them, when the prerelease `pin-<rev>` for
 #                       the pinned Reprobuild commit is missing or incomplete:
@@ -169,7 +172,7 @@ jobs:
 
           pins=false reprobuild=false codetracer=false
           if matches "^pins/|^flake\.nix$|^tools/check-pins\.py$|^tools/update-pin\.sh$|$workflow"; then pins=true; fi
-          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
+          if matches "^pins/reprobuild\.json$|^pins/pin\.schema\.json$|^pins/default\.nix$|^flake\.nix$|^setup-reprobuild/|^setup-dev-env/action\.yml$|^setup-dev-env/report-installed-repro\.sh$|^setup-dev-env/test-repro-commit-output\.py$|^tools/check-reprobuild-fits-workspace\.sh$|^tools/test-check-reprobuild-fits-workspace\.py$|^tools/workspace-manifest-branches\.py$|^tools/test-workspace-manifest-branches\.py$|$workflow"; then reprobuild=true; fi
           case "$EVENT" in
             pull_request)
               if matches "$ct_pattern"; then codetracer=true; fi
@@ -220,6 +223,11 @@ jobs:
       - name: The pin resolver through Git Bash and the native PowerShell reader
         shell: bash
         run: REQUIRE_PWSH=1 python setup-reprobuild/test-resolve-reprobuild-pin.py
+      - name: setup-dev-env's installed-Reprobuild report through Git Bash
+        # report-installed-repro.sh runs under Git Bash on Windows jobs, and
+        # resolves a release override's tag with Git for Windows.
+        shell: bash
+        run: python setup-dev-env/test-repro-commit-output.py -v
 
   remote:
     # One leg per owner the pins name, each with a CI token provider app
@@ -549,6 +557,70 @@ jobs:
             *) exit 1 ;;
           esac
           test "$(repro --version | tr -d '\r')" = "repro $VERSION"
+
+      # The pinned engine's Windows monitor runs real processes: a C compiler
+      # and the program it built, each under `repro internal io monitor`, with
+      # the child's exit code passed through, its real file I/O done, and a
+      # trace written for both. Formerly validate-windows-hook-bootstrap.yml,
+      # which ran it for one hand-picked engine and hook revision; here it
+      # runs for whatever the pin names, by whichever route installed it.
+      # The compiler is the source build's REPRO_BOOTSTRAP_CC when that route
+      # exported one, else the runner image's MinGW gcc.
+      - name: The pinned engine monitors a real compiler and its program (Windows)
+        if: ${{ matrix.case == 'pin' && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $dir = Join-Path $env:RUNNER_TEMP 'monitor-smoke'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $cc = $env:REPRO_BOOTSTRAP_CC
+          if (-not $cc) { $cc = (Get-Command gcc.exe -ErrorAction SilentlyContinue).Source }
+          if (-not $cc -or -not (Test-Path -LiteralPath $cc)) {
+            throw 'No C compiler: neither REPRO_BOOTSTRAP_CC nor gcc.exe on PATH'
+          }
+          Write-Host "compiler: $cc"
+          @'
+          /* A real compiler, process and file boundary; nothing is stubbed. */
+          #include <stdio.h>
+          #include <string.h>
+          int main(int argc, char **argv) {
+            char input[64];
+            if (argc != 3) return 2;
+            FILE *in = fopen(argv[1], "rb");
+            if (!in || !fgets(input, sizeof(input), in)) return 3;
+            fclose(in);
+            if (strcmp(input, "monitor-probe\n") != 0) return 4;
+            FILE *out = fopen(argv[2], "wb");
+            if (!out) return 5;
+            if (fputs("observed input\n", out) < 0 || fclose(out)) return 6;
+            return 7;
+          }
+          '@ | Set-Content "$dir/probe.c"
+          [IO.File]::WriteAllText("$dir/input.txt", "monitor-probe`n")
+          & repro internal io monitor --depfile "$dir/compile.iomon" -- $cc "$dir/probe.c" -o "$dir/probe.exe"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$dir/probe.exe")) {
+            throw "The monitored compiler failed (exit $LASTEXITCODE)"
+          }
+          # 7 is the probe's success code: a monitor that reports its own
+          # status instead of the child's fails here.
+          & repro internal io monitor --depfile "$dir/execute.iomon" -- "$dir/probe.exe" "$dir/input.txt" "$dir/output.txt"
+          $status = $LASTEXITCODE
+          Write-Host "monitored program exit code: $status"
+          if ($status -ne 7) { throw "The monitored program's exit code was not preserved (got $status, not 7)" }
+          if ([IO.File]::ReadAllText("$dir/output.txt") -cne "observed input`n") {
+            throw 'The monitored program did not read and write its real files'
+          }
+          foreach ($trace in @('compile.iomon', 'execute.iomon')) {
+            if (-not (Test-Path "$dir/$trace") -or (Get-Item "$dir/$trace").Length -eq 0) {
+              throw "The monitor wrote no trace: $trace"
+            }
+            Write-Host "${trace}: $((Get-Item "$dir/$trace").Length) bytes"
+          }
+          Write-Host 'The pinned engine monitors a real compiler and its program.'
+          # The runner's pwsh wrapper turns a leftover non-zero $LASTEXITCODE
+          # (still the probe's 7 here) into a failed step.
+          exit 0
 
   # ── The Windows pin prerelease ────────────────────────────────────────────
   #

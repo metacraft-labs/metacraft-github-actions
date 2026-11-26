@@ -159,13 +159,23 @@ and passes trivially when a change touches no pin and none of the readers.
   Reprobuild release. It is not published from pull requests and is not part
   of the gate.
 - It runs `setup-reprobuild` on Linux, macOS and Windows with no override,
-  and with a release and a source-revision override.
+  and with a release and a source-revision override. On Windows the pinned
+  engine then runs a C compiler and the program it built under
+  `repro internal io monitor`, and must pass the program's exit code through,
+  let it do its real file I/O and write a trace for both.
 - For the CodeTracer pin it calls `.github/workflows/codetracer-mac-lock.yml`,
   which solves and checks CodeTracer's aarch64-darwin lock at the pinned
   revision on a hosted arm64 Mac (see "The CodeTracer pin and its Apple
   Silicon lock" in the repository README). It runs only under the rule
   below, and `pins-gate` passes it only when its `outcome` output is
   `confirmed` or `produced`.
+
+The gate's legs cover x86_64 Linux, macOS (arm64) and Windows x64. The
+`windows-11-arm` (x64 emulation) and `ubuntu-24.04-arm` runners are not part
+of it (manager decision, 2026-11-26). They were covered only by the
+manual-dispatch `validate-tool-candidates.yml` and
+`validate-windows-hook-bootstrap.yml` workflows, which this repository has
+retired, so nothing in CI exercises a pin on them now.
 
 ### When the CodeTracer lock job runs
 
