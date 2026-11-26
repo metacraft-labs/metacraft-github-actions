@@ -38,7 +38,7 @@ shellcheck -S warning git-auth/scoped-git-auth.sh git-auth/git-credential-job-to
 shellcheck -S warning .github/assert-composite-run-size.sh .github/assert-no-url-embedded-credential.sh .github/assert-action-archive-size.sh .github/assert-action-archive-size-test.sh .github/assert-no-expression-in-manifest-prose.sh .github/assert-no-expression-in-manifest-prose-test.sh .github/assert-workflow-triggers-mainline.sh .github/assert-workflow-triggers-mainline-test.sh .github/assert-workflow-triggers-discovery-test.sh
 shellcheck -S warning tools/lint.sh .envrc
 shellcheck -S warning setup-dev-env/record-windows-sdk.sh
-shellcheck -S warning tools/update-pin.sh tools/check-reprobuild-fits-workspace.sh setup-reprobuild/resolve-reprobuild-pin.sh setup-reprobuild/check-installed-repro.sh setup-dev-env/report-installed-repro.sh setup-reprobuild/substitute-repro-package.sh setup-reprobuild/install-pin-release.sh setup-reprobuild/reveal-consumer-pin-ancestry.sh
+shellcheck -S warning tools/update-pin.sh tools/check-reprobuild-fits-workspace.sh setup-reprobuild/resolve-reprobuild-pin.sh setup-reprobuild/check-installed-repro.sh setup-dev-env/report-installed-repro.sh setup-reprobuild/substitute-repro-package.sh setup-reprobuild/install-pin-release.sh setup-reprobuild/reveal-sibling-pin-ancestry.sh
 python3 - <<'PYTHON'
 import pathlib, subprocess
 files = set(subprocess.check_output(["git", "ls-files", "--", "*.py"], text=True).splitlines())
@@ -54,7 +54,8 @@ python3 -I tools/test-check-pins.py
 python3 -I tools/test-workspace-manifest-branches.py
 python3 -I tools/check-pins.py
 python3 -I setup-reprobuild/test-resolve-reprobuild-pin.py
-python3 -I setup-reprobuild/test-self-sibling-ancestry.py
+python3 -I setup-reprobuild/test-sibling-pin-ancestry.py
+python3 -I setup-reprobuild/test-check-judged-siblings.py
 python3 setup-dev-env/test-locked-sibling-reconciliation.py
 python3 setup-dev-env/test-windows-sdk-receipt.py
 python3 setup-dev-env/test-frozen-sibling-source.py

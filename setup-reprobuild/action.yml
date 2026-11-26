@@ -40,10 +40,12 @@ description: >
         this source path invokes the canonical `reprobuild-provision`
         dependency action, after cloning the selected Reprobuild source and
         before compiling it. Verified release installation does not clone or
-        build SDK source dependencies. When the selected source pins the
-        consumer itself as a sibling (gosti), this path also deepens a shallow
-        consumer checkout until the pin shows as an ancestor of its HEAD, the
-        test the source-built engine applies (reveal-consumer-pin-ancestry.sh).
+        build SDK source dependencies. For each workspace sibling the
+        source-built engine judges and the selected source pins -- the
+        consumer itself (gosti), or a sibling cloned next to it
+        (nim-stackable-hooks for io-mon) -- this path also deepens a shallow
+        checkout until the pin shows as an ancestor of its HEAD, the test the
+        engine applies (reveal-sibling-pin-ancestry.sh).
   Afterwards the installed CLI must report the pinned version, and a source
   build must be at the selected commit.
 
@@ -577,19 +579,23 @@ runs:
         io-mon-ref: ${{ inputs.io-mon-ref }}
         stackable-hooks-pin: ${{ inputs.stackable-hooks-pin }}
 
-    # A consumer that the selected source pins as a sibling (gosti, pinned by
-    # reprobuild's .github/sibling-repos) is judged by the source-built engine
-    # with `git merge-base --is-ancestor <pin> HEAD`, which a depth-1 checkout
-    # cannot answer. Deepen only that consumer's history, by commit id; a
-    # consumer the source does not pin is left untouched. See the script.
-    - name: Reveal the pin's ancestry in a consumer the source pins
+    # The source-built engine judges each workspace sibling it compiles
+    # against -- the consumer itself when the source pins it (gosti), a
+    # sibling clone-siblings or the provisioner above put next to it
+    # (nim-stackable-hooks for io-mon) -- with
+    # `git merge-base --is-ancestor <pin> HEAD`, which a depth-1 checkout
+    # cannot answer. Deepen only those checkouts' history, by commit id; a
+    # sibling the source does not pin is left untouched. setup-dev-env runs
+    # the same script again after the siblings it provisions later in the
+    # job. See the script.
+    - name: Reveal the pin's ancestry in the siblings the source pins
       if: ${{ steps.decide.outputs.need-source == 'true' }}
       shell: bash
       env:
         MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
         MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
         REPROBUILD_SOURCE_DIRECTORY: ${{ steps.roots.outputs.workspace-directory }}/.reprobuild-src
-      run: bash "${GITHUB_ACTION_PATH}/reveal-consumer-pin-ancestry.sh"
+      run: bash "${GITHUB_ACTION_PATH}/reveal-sibling-pin-ancestry.sh"
 
     # Skipped when the binary-cache attempt above already set up Nix in this
     # job, with the same inputs: the source build after a cache miss uses
