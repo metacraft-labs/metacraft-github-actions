@@ -1430,6 +1430,29 @@ runs:
         script: |
           require(process.env.GHA_NIX_AUTH_MODULE).refreshNix();
 
+    # A repro built from source judges every workspace sibling by the
+    # revision its `.reprobuild-src` pins, with
+    # `git merge-base --is-ancestor <pin> HEAD`, and a depth-1 sibling cannot
+    # answer that: io-mon's shallow nim-stackable-hooks at ec6b02d4, eleven
+    # commits ahead of reprobuild 37a109c4's pin c34e3252, was refused as
+    # stale (io-mon run 45869479858). setup-reprobuild runs the same script
+    # before its build, but on the repro.lock route the siblings are
+    # provisioned after it, so this runs once every route has put its
+    # siblings in place, before the first `repro exec`. It runs this
+    # checkout's script, not the pinned setup-reprobuild's, and after
+    # `Configure Git authentication`, whose job-scoped credential the fetches
+    # of private siblings need. A sibling already showing its pin is not
+    # fetched again.
+    - name: Reveal the pin's ancestry in the siblings the Reprobuild source pins
+      if: ${{ steps.repro-cli.outputs.install-source == 'source' }}
+      working-directory: ${{ steps.roots.outputs.consumer-directory }}
+      shell: bash
+      env:
+        MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
+        MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
+        REPROBUILD_SOURCE_DIRECTORY: ${{ steps.roots.outputs.workspace-directory }}/.reprobuild-src
+      run: bash "${GITHUB_ACTION_PATH}/../setup-reprobuild/reveal-sibling-pin-ancestry.sh"
+
     - name: Verify Reprobuild development-environment execution
       if: ${{ inputs.env-flavor == 'reprobuild' }}
       working-directory: ${{ steps.roots.outputs.consumer-directory }}

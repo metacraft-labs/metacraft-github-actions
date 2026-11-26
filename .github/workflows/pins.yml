@@ -17,7 +17,10 @@ name: pins
 #
 # What runs, and when:
 #   local               always: schema of every pin, the checker's and the
-#                       resolver's contract tests (stock runner, no secrets)
+#                       resolver's contract tests, and the sibling names
+#                       setup-reprobuild deepens against the ones the pinned
+#                       engine judges (stock runner, no secrets; reads the
+#                       public Reprobuild source at the pin)
 #   remote              a pin changed: each rev exists in its repository,
 #                       the fetched tree matches narHash, every named package
 #                       exists, and rev qualifies as its `kind`; plus a
@@ -210,6 +213,18 @@ jobs:
         # pwsh is on every hosted runner; REQUIRE_PWSH makes the Windows
         # reader's cases run here too instead of skipping.
         run: REQUIRE_PWSH=1 python3 -I setup-reprobuild/test-resolve-reprobuild-pin.py
+      # reveal-sibling-pin-ancestry.sh deepens only the shallow siblings
+      # whose names the source-built engine judges against a pin, from a list
+      # copied out of the engine. Read the names from the pinned source
+      # itself, so a pin bump whose engine judges another sibling (or judges
+      # somewhere this check cannot read) fails here, before it merges,
+      # instead of a consumer's `repro exec` after it lands. Reprobuild is
+      # public: a blobless, sparse, depth-1 fetch of its Nim sources, no
+      # token.
+      - name: The siblings setup-reprobuild deepens are the ones the pinned engine judges
+        run: |
+          python3 -I setup-reprobuild/test-check-judged-siblings.py
+          python3 -I setup-reprobuild/check-judged-siblings.py --fetch --work "$RUNNER_TEMP/judged-siblings"
 
   resolver-windows:
     needs: changes
