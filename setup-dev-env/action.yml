@@ -455,6 +455,34 @@ outputs:
       `[A-Za-z0-9._-]`. Also printed as ` host_id=<id>` at the end of the
       `setup-dev-env: runquota endpoint:` log line.
     value: ${{ steps.runquota-endpoint.outputs.runquota-host-id }}
+  repro-commit:
+    description: >
+      The Reprobuild commit (full SHA) of the `repro` CLI this action
+      installed, under the reprobuild flavor or the repro-lock sibling
+      strategy, by every route: a source build (Linux/macOS Nix or the Windows
+      env.ps1 build), the caller's package, the binary cache, the Windows
+      `pin-<commit>` prerelease, or a release archive. It is the pin's `rev`
+      unless the caller overrode the selection. Compare a `.reprobuild-src`
+      checkout with this, never with a literal revision. The step that sets
+      it fails the action when it cannot name the commit
+      (report-installed-repro.sh). Empty only when no `repro` was installed.
+    value: ${{ steps.repro-report.outputs.commit }}
+  repro-version:
+    description: >
+      The version the installed `repro --version` reports. Empty when no
+      `repro` was installed.
+    value: ${{ steps.repro-report.outputs.version }}
+  repro-origin:
+    description: >
+      `pin` when the installed Reprobuild is the one pins/reprobuild.json
+      names, `override` when the caller chose it with repro-version or
+      repro-build-pin. Empty when no `repro` was installed.
+    value: ${{ steps.repro-report.outputs.origin }}
+  repro-install-source:
+    description: >
+      setup-reprobuild's install route: `source`, `package`, `cache`,
+      `pin-release` or `release`. Empty when no `repro` was installed.
+    value: ${{ steps.repro-report.outputs.install-source }}
 
 runs:
   using: "composite"
@@ -1155,7 +1183,7 @@ runs:
       if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
       # The leaf provisions SDK source dependencies only after selecting its
       # source constructor. A verified release must not pay for those clones.
-      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@515be3fa95c8b9c6ff66acc59ab394eedcc92d53
+      uses: metacraft-labs/metacraft-github-actions/setup-reprobuild@e1007aab6672518420e6abea711fe9d6606f1be5
       with:
         consumer-directory: ${{ inputs.consumer-directory }}
         workspace-directory: ${{ inputs.workspace-directory }}
@@ -1188,6 +1216,26 @@ runs:
         SOURCE_DIR: ${{ steps.repro-cli.outputs.install-source == 'source' && format('{0}/.reprobuild-src', steps.roots.outputs.workspace-directory) || '' }}
         REPRO_BIN_DIR: ${{ steps.repro-cli.outputs.repro-bin-dir }}
       run: bash "${GITHUB_ACTION_PATH}/../setup-reprobuild/check-installed-repro.sh"
+
+    # Name what was installed, for the `repro-*` outputs. Consumers compare
+    # their `.reprobuild-src` checkout with `repro-commit` instead of a literal
+    # revision, so this step fails rather than report an empty commit.
+    # setup-reprobuild's own `origin` is not used: this action always hands it
+    # an explicit build ref, so it reports every selection as an override.
+    - name: Report the installed Reprobuild (reprobuild)
+      id: repro-report
+      if: ${{ inputs.env-flavor == 'reprobuild' || steps.sibling-strategy.outputs.strategy == 'repro-lock' }}
+      shell: bash
+      env:
+        INSTALL_SOURCE: ${{ steps.repro-cli.outputs.install-source }}
+        ORIGIN: ${{ steps.repro-pin.outputs.origin }}
+        PIN_COMMIT: ${{ steps.repro-pin.outputs.pin-commit }}
+        PIN_KIND: ${{ steps.repro-pin.outputs.pin-kind }}
+        BUILD_REF: ${{ steps.repro-pin.outputs.build-ref }}
+        RELEASE_VERSION: ${{ steps.repro-pin.outputs.release-version }}
+        CHECKED_VERSION: ${{ steps.repro-check.outputs.version }}
+        CHECKED_COMMIT: ${{ steps.repro-check.outputs.commit }}
+      run: bash "${GITHUB_ACTION_PATH}/report-installed-repro.sh"
 
     # ------------------------------------------------------------------
     # sibling-strategy: repro-lock — the consumer half
