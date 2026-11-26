@@ -280,6 +280,48 @@ def gate_script(workflow):
     return textwrap.dedent(body) + "\n"
 
 
+class TokensOutliveLongBuilds(unittest.TestCase):
+    """An installation token expires one hour after it is minted. In the jobs
+    whose build can take longer, every step after the build must use the token
+    minted after it, `steps.token_after_build`, and never the one minted
+    before. Run 45687602690 failed because a step used the earlier token after
+    a 65-minute build."""
+
+    # job -> (the long build step's name, the fresh token's mint step's name)
+    JOBS = {
+        "reprobuild-package": (
+            "Section 0: the pinned package builds",
+            "Mint a fresh read token for the steps after the build",
+        ),
+        "windows-pin-release-build": (
+            "Build the pinned commit from source",
+            "Mint a fresh read token for the steps after the build",
+        ),
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = WORKFLOW.read_text()
+
+    def test_steps_after_the_build_use_the_token_minted_after_it(self):
+        for job, (build, mint) in self.JOBS.items():
+            with self.subTest(job=job):
+                text = workflow_job(self.workflow, job)
+                # A name with a colon is quoted in the YAML, so match the name
+                # itself rather than the whole `- name:` line.
+                build_at = text.index(build)
+                mint_at = text.index(mint)
+                self.assertLess(
+                    build_at, mint_at, f"{job}: the fresh token is minted before the build")
+                after = text[mint_at:]
+                self.assertNotIn(
+                    "steps.token.outputs.token", after,
+                    f"{job}: a step after the build uses the token minted before it")
+                self.assertIn(
+                    "steps.token_after_build.outputs.token", after,
+                    f"{job}: no step uses the fresh token")
+
+
 class PinsGate(unittest.TestCase):
     """The `pins-gate` step's own Python, run on the `needs` context Actions
     would hand it. The script is executed as written in pins.yml, so a change

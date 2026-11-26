@@ -397,6 +397,19 @@ jobs:
           echo "Pushed $PACKAGE to $ATTIC_CACHE"
           echo "Pushed the pinned Reprobuild package \`$PACKAGE\` to \`$ATTIC_CACHE\`." >> "$GITHUB_STEP_SUMMARY"
 
+      # An installation token expires one hour after it is minted, and the
+      # package build above can take longer than that on its own: on
+      # 2026-11-25 (run 45687602690) the build ran 19:41-20:46 and the next
+      # step's `git ls-remote` then failed with `could not read Username`.
+      # Every step from here on uses this token, minted after the build.
+      - name: Mint a fresh read token for the steps after the build
+        id: token_after_build
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+
       # Section 0b reads the manifests on every repro-workspace branch people
       # use. The workspace root is migrating from `dev`/`agents` to a single
       # mainline `latest`, so the set is whichever of `latest`, `dev` and
@@ -407,7 +420,7 @@ jobs:
       - name: Which repro-workspace branches carry manifests
         id: branches
         env:
-          TOKEN: ${{ steps.token.outputs.token }}
+          TOKEN: ${{ steps.token_after_build.outputs.token }}
         run: |
           set -euo pipefail
           # The token reaches git through process-scoped configuration, never
@@ -427,7 +440,7 @@ jobs:
           repository: metacraft-labs/repro-workspace
           ref: latest
           path: .workspaces/latest
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ steps.token_after_build.outputs.token }}
           persist-credentials: false
 
       - name: Check out the workspace manifests (dev)
@@ -437,7 +450,7 @@ jobs:
           repository: metacraft-labs/repro-workspace
           ref: dev
           path: .workspaces/dev
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ steps.token_after_build.outputs.token }}
           persist-credentials: false
 
       - name: Check out the workspace manifests (agents)
@@ -447,7 +460,7 @@ jobs:
           repository: metacraft-labs/repro-workspace
           ref: agents
           path: .workspaces/agents
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ steps.token_after_build.outputs.token }}
           persist-credentials: false
 
       - name: "Section 0b: the binary fits the workspace, with its negative controls"
@@ -756,6 +769,18 @@ jobs:
           test "$COMMIT" = "$REV"
           test "$INSTALLED_VERSION" = "$VERSION"
 
+      # The source build above can outlast the one-hour installation token
+      # minted before it (this job allows 300 minutes), so the steps after
+      # it get a token minted here.
+      - name: Mint a fresh read token for the steps after the build
+        id: token_after_build
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CI_TOKEN_PROVIDER_APP_ID || vars.CI_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.CI_TOKEN_PROVIDER_PRIVATE_KEY }}
+          owner: metacraft-labs
+          permission-contents: read
+
       # stage_release_catalog.sh (called by the packaging script) ships the
       # reprobuild-packages catalog at the revision the commit's repro.lock
       # pins, from a checkout beside it. The consumers' source build does not
@@ -763,7 +788,7 @@ jobs:
       - name: Clone the reprobuild-packages catalog the pinned commit locks
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ steps.token_after_build.outputs.token }}
         run: |
           set -euo pipefail
           lock="$GITHUB_WORKSPACE/.reprobuild-src/repro.lock"
