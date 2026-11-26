@@ -624,5 +624,260 @@ class ChangesJob(unittest.TestCase):
         self.assertIn("          DISPATCH_CODETRACER: ${{ inputs.codetracer-mac-lock }}\n", job)
 
 
+
+def step_script(workflow, name):
+    """The shell a pins.yml step called `name` runs, as the workflow holds it."""
+    step = workflow_step(workflow, name)
+    body = step[step.index("        run: |\n") + len("        run: |\n"):]
+    return textwrap.dedent(body)
+
+
+# A stand-in for the few `nix` commands the reprobuild-cache job runs. It
+# answers from $FAKE_NIX: `system` (the runner's system), `ref` (the flake
+# reference `pins` evaluates to), `cached` (the store paths the cache holds,
+# one per line). Every call is logged to `calls`, with the XDG_CONFIG_HOME it
+# saw (nix reads its user nix.conf from there).
+FAKE_NIX = r"""#!/usr/bin/env python3
+import os, sys
+d = os.environ["FAKE_NIX"]
+args = sys.argv[1:]
+with open(os.path.join(d, "calls"), "a") as log:
+    log.write(" ".join(args) + " XDG_CONFIG_HOME=" + os.environ.get("XDG_CONFIG_HOME", "") + "\n")
+read = lambda name: open(os.path.join(d, name)).read().strip()
+if args[:2] == ["eval", "--raw"]:
+    if args[2:] == ["--impure", "--expr", "builtins.currentSystem"]:
+        print(read("system"), end="")
+    elif args[2:] == ["--no-write-lock-file", ".#pins.reprobuild.flakeRef"]:
+        print(read("ref"), end="")
+    elif len(args) == 3 and args[2].endswith(".outPath"):
+        attr = args[2].split("#packages.", 1)[1].split(".")[1]
+        print(f"/nix/store/{'a' * 32}-{attr}", end="")
+    else:
+        sys.exit(f"fake nix: unexpected eval {args}")
+elif args[:2] == ["path-info", "--store"] and len(args) == 4:
+    cached = read("cached").split() if os.path.exists(os.path.join(d, "cached")) else []
+    if args[3] not in cached:
+        print(f"error: path '{args[3]}' is not valid", file=sys.stderr)
+        sys.exit(1)
+    print(args[3])
+elif args[:1] == ["build"] and args[-1] == "nixpkgs#attic-client":
+    print(os.path.join(d, "attic-client"))
+else:
+    sys.exit(f"fake nix: unexpected {args}")
+"""
+
+# A stand-in attic: logs each call with its XDG_CONFIG_HOME, and `login`
+# writes the token where the real client does, $XDG_CONFIG_HOME/attic/config.toml.
+FAKE_ATTIC = r"""#!/usr/bin/env python3
+import os, sys
+config = os.environ.get("XDG_CONFIG_HOME", "")
+with open(os.path.join(os.environ["FAKE_NIX"], "attic-calls"), "a") as log:
+    log.write(" ".join(sys.argv[1:]) + " XDG_CONFIG_HOME=" + config + "\n")
+if sys.argv[1:2] == ["login"]:
+    os.makedirs(os.path.join(config, "attic"), exist_ok=True)
+    with open(os.path.join(config, "attic", "config.toml"), "w") as f:
+        f.write("token = " + repr(sys.argv[-1]) + "\n")
+"""
+
+
+class ReprobuildCacheJob(unittest.TestCase):
+    """The `reprobuild-cache` job publishes the pinned outputs to the
+    organisation's Attic cache from runners that reach it. The hosted
+    `reprobuild-package` job used to push instead; cache.metacraft-labs.com is
+    a NetBird overlay address hosted runners cannot reach, so every push timed
+    out (runs 45667796580, 45879841961) and, being continue-on-error, failed
+    nothing. Its steps' shell runs here as written, against a stand-in nix."""
+
+    PLAN = "Which pinned outputs the cache lacks"
+    PUSH = "Push the missing outputs to the organisation cache"
+    VERIFY = "The cache holds every pinned output"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = WORKFLOW.read_text()
+        # workflow_job keeps the comment block that heads the next job.
+        job = workflow_job(cls.workflow, "reprobuild-cache")
+        cls.job = job[:job.find("\n  # ")] if "\n  # " in job else job
+        cls.rev = json.loads((ROOT / "pins" / "reprobuild.json").read_text())["rev"]
+
+    def setUp(self):
+        tmp = tempfile.mkdtemp(prefix="pins-cache-")
+        self.addCleanup(shutil.rmtree, tmp)
+        self.tmp = pathlib.Path(tmp)
+        self.nix = self.tmp / "nix-state"
+        for d in (self.nix, self.tmp / "bin", self.tmp / "runner", self.nix / "attic-client" / "bin"):
+            d.mkdir(parents=True)
+        fakes = (
+            (self.tmp / "bin" / "nix", FAKE_NIX),
+            (self.nix / "attic-client" / "bin" / "attic", FAKE_ATTIC),
+        )
+        for path, text in fakes:
+            path.write_text(text)
+            path.chmod(0o755)
+        (self.nix / "system").write_text("x86_64-linux\n")
+        (self.nix / "ref").write_text(
+            f"github:metacraft-labs/reprobuild/{self.rev}?narHash=sha256-x\n")
+
+    @staticmethod
+    def out(attr):
+        return f"/nix/store/{'a' * 32}-{attr}"
+
+    def cache(self, *attrs):
+        (self.nix / "cached").write_text("".join(self.out(a) + "\n" for a in attrs))
+
+    def run_step(self, name, **env):
+        script = self.tmp / "step.sh"
+        script.write_text(step_script(self.workflow, name))
+        output, summary = self.tmp / "runner" / "output", self.tmp / "runner" / "summary"
+        output.write_text("")
+        env = dict(
+            os.environ, FAKE_NIX=str(self.nix), GITHUB_OUTPUT=str(output),
+            GITHUB_STEP_SUMMARY=str(summary), RUNNER_TEMP=str(self.tmp / "runner"),
+            ATTIC_SUBSTITUTER="https://cache.example/c",
+            PATH=f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}", **env)
+        done = subprocess.run(["bash", "--noprofile", "--norc", "-e", str(script)],
+                              cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+        outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        return done.returncode, done.stdout + done.stderr, outputs
+
+    def plan(self, attrs="reprobuild repro-binary-cache", system="x86_64-linux"):
+        return self.run_step(self.PLAN, SYSTEM=system, ATTRS=attrs)
+
+    # -- the plan ----------------------------------------------------------
+
+    def test_nothing_is_missing_when_the_cache_holds_every_output(self):
+        self.cache("reprobuild", "repro-binary-cache")
+        code, log, outputs = self.plan()
+        self.assertEqual(code, 0, log)
+        self.assertEqual(outputs["missing"], "")
+        self.assertTrue(outputs["ref"].startswith(f"github:metacraft-labs/reprobuild/{self.rev}?"))
+
+    def test_only_the_outputs_the_cache_lacks_are_missing(self):
+        self.cache("reprobuild")
+        code, log, outputs = self.plan()
+        self.assertEqual(code, 0, log)
+        self.assertEqual(outputs["missing"], "repro-binary-cache")
+        self.cache()
+        code, log, outputs = self.plan()
+        self.assertEqual(outputs["missing"], "reprobuild repro-binary-cache")
+        planned = (self.tmp / "runner" / "pin-cache-outs").read_text().split("\n")
+        self.assertEqual(planned[:2], [
+            f"reprobuild {self.out('reprobuild')}",
+            f"repro-binary-cache {self.out('repro-binary-cache')}",
+        ])
+
+    def test_a_leg_on_the_wrong_system_fails(self):
+        code, log, _ = self.plan(system="aarch64-darwin")
+        self.assertEqual(code, 1, log)
+        self.assertIn("this leg publishes aarch64-darwin but its runner is x86_64-linux", log)
+
+    def test_a_flake_reference_that_is_not_the_pinned_rev_fails(self):
+        (self.nix / "ref").write_text("github:metacraft-labs/reprobuild/" + "0" * 40 + "?narHash=x\n")
+        code, log, _ = self.plan()
+        self.assertEqual(code, 1, log)
+        self.assertIn("unexpected flakeRef", log)
+
+    # -- the push ----------------------------------------------------------
+
+    def test_only_the_missing_outputs_are_pushed_and_attic_config_stays_in_the_job(self):
+        self.cache("reprobuild")
+        self.assertEqual(self.plan()[0], 0)
+        code, log, _ = self.run_step(
+            self.PUSH, MISSING="repro-binary-cache", ATTIC_TOKEN="t0ken",
+            ATTIC_CACHE="the-cache", ATTIC_ENDPOINT="https://cache.example/")
+        self.assertEqual(code, 0, log)
+        calls = (self.nix / "attic-calls").read_text().splitlines()
+        config = f"XDG_CONFIG_HOME={self.tmp / 'runner' / 'attic-config'}"
+        self.assertEqual(calls, [
+            f"login --set-default pins https://cache.example/ t0ken {config}",
+            f"push the-cache {self.out('repro-binary-cache')} {config}",
+        ])
+        # The token does not outlive the step on a persistent runner.
+        self.assertFalse((self.tmp / "runner" / "attic-config").exists())
+        # nix keeps the user nix.conf setup-nix wrote: only attic is pointed
+        # at the job's attic configuration.
+        calls = (self.nix / "calls").read_text().splitlines()
+        nix_build = [c for c in calls if c.startswith("build ")]
+        self.assertEqual(len(nix_build), 1, nix_build)
+        self.assertNotIn("attic-config", nix_build[0])
+
+    def test_a_failed_push_still_removes_the_attic_configuration(self):
+        (self.nix / "attic-client" / "bin" / "attic").write_text(
+            FAKE_ATTIC + 'if sys.argv[1:2] == ["push"]:\n    sys.exit(3)\n')
+        self.cache("reprobuild")
+        self.assertEqual(self.plan()[0], 0)
+        code, log, _ = self.run_step(
+            self.PUSH, MISSING="repro-binary-cache", ATTIC_TOKEN="t0ken",
+            ATTIC_CACHE="the-cache", ATTIC_ENDPOINT="https://cache.example/")
+        self.assertEqual(code, 3, log)
+        self.assertFalse((self.tmp / "runner" / "attic-config").exists())
+
+    # -- the verification --------------------------------------------------
+
+    def test_the_job_passes_only_when_the_cache_holds_every_planned_output(self):
+        self.cache()
+        self.assertEqual(self.plan()[0], 0)
+        code, log, _ = self.run_step(self.VERIFY, SYSTEM="x86_64-linux")
+        self.assertEqual(code, 1, log)
+        self.assertIn("does not hold reprobuild", log)
+        self.cache("reprobuild")
+        code, log, _ = self.run_step(self.VERIFY, SYSTEM="x86_64-linux")
+        self.assertEqual(code, 1, log)
+        self.assertIn("does not hold repro-binary-cache", log)
+        self.cache("reprobuild", "repro-binary-cache")
+        code, log, _ = self.run_step(self.VERIFY, SYSTEM="x86_64-linux")
+        self.assertEqual(code, 0, log)
+        summary = (self.tmp / "runner" / "summary").read_text()
+        self.assertIn(self.out("repro-binary-cache"), summary)
+
+    def test_an_empty_plan_fails_the_verification(self):
+        code, log, _ = self.run_step(self.VERIFY, SYSTEM="x86_64-linux")
+        self.assertEqual(code, 1, log)
+        self.assertIn("no pinned outputs were planned", log)
+
+    # -- the job's shape ---------------------------------------------------
+
+    def test_it_runs_after_a_landed_reprobuild_change_never_on_a_pull_request(self):
+        self.assertIn(
+            "    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/agents'"
+            " || github.ref == 'refs/heads/dev') && needs.changes.outputs.reprobuild == 'true' }}\n",
+            self.job)
+        self.assertIn("    needs: [changes, local]\n", self.job)
+
+    def test_each_leg_runs_on_a_self_hosted_runner_and_publishes_what_consumers_use(self):
+        self.assertIn("    runs-on: ${{ matrix.runner }}\n", self.job)
+        legs = {
+            "x86_64-linux": ("[self-hosted, linux, x64]", "reprobuild repro-binary-cache"),
+            "aarch64-darwin": ("[self-hosted, macos, arm64]", "reprobuild"),
+        }
+        for system, (runner, attrs) in legs.items():
+            with self.subTest(system):
+                self.assertIn(
+                    f"          - system: {system}\n            runner: {runner}\n"
+                    f"            attrs: {attrs}\n", self.job)
+        for hosted in ("ubuntu-", "macos-1", "windows-20"):
+            self.assertNotIn(hosted, self.job)
+
+    def test_a_failure_is_visible_and_the_gate_does_not_wait_for_it(self):
+        self.assertNotIn("continue-on-error:", self.job)
+        gate = workflow_job(self.workflow, "pins-gate")
+        self.assertNotIn("reprobuild-cache", gate)
+        self.assertNotIn("reprobuild-cache", gate_script(self.workflow))
+
+    def test_the_build_is_memory_bounded(self):
+        build = step_script(self.workflow, "Build or substitute the missing outputs")
+        self.assertIn("nix build --no-link --print-out-paths --max-jobs 1 --cores 4 ", build)
+
+    def test_the_cache_is_read_with_a_failing_preflight_and_no_watch_store(self):
+        self.assertIn("          substituter-preflight: fail\n", self.job)
+        self.assertIn("          attic-token: ${{ secrets.ATTIC_TOKEN }}\n", self.job)
+        self.assertNotIn("attic-cache:", self.job)
+
+    def test_no_hosted_job_pushes_to_the_cache(self):
+        package = workflow_job(self.workflow, "reprobuild-package")
+        for word in ("attic push", "ATTIC_TOKEN", "continue-on-error:"):
+            self.assertNotIn(word, package)
+
+
 if __name__ == "__main__":
     unittest.main()
