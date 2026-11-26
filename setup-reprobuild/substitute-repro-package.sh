@@ -7,14 +7,12 @@
 # The selected commit is built once, and every later job reuses that build.
 # Reprobuild's release pipeline pushes `github:metacraft-labs/reprobuild/<rev>#reprobuild`
 # for x86_64-linux to the organisation's Attic cache (its `publish-nix-cache`
-# job), and this repository's `pins` workflow (its `reprobuild-cache` job, on
-# self-hosted runners that reach the cache) pushes the pinned revision's
-# package for x86_64-linux and aarch64-darwin when the pin changes on agents or
-# dev. A job whose Nix trusts and reaches that cache then only has to download
-# the package; a hosted runner reaches no such cache and builds from source.
-# Before this step, the source route compiled the engine in Reprobuild's dev
-# shell (`just build`) on every Linux job, for about 30-50 minutes, whether or
-# not the cache already held the package.
+# job), and this repository's `pins` workflow pushes the pinned revision's
+# package for x86_64-linux and aarch64-darwin when the pin changes (given the
+# repository's Attic credentials). A job whose Nix trusts that cache then only
+# has to download the package. Before this step, the source route compiled the
+# engine in Reprobuild's dev shell (`just build`) on every Linux job, for
+# about 30-50 minutes, whether or not the cache already held the package.
 #
 # The package is still a build of the selected source revision: its store path
 # is a function of that revision and its locked inputs, and the admission below
