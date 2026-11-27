@@ -44,7 +44,7 @@ The Reprobuild pin must carry both `version` and `kind`, because
 `setup-reprobuild` installs by them. The first one was v0.2.34, commit
 `d1bf1f065aca01b90c3bbdddc57d14e977f49e1a`; the second was v0.2.36, commit
 `37a109c4e1cf650e6eb79b11d9fadf6e49e64614`. The current one is commit
-`c018221c650e61c4bd24c632ea9fe8d9450cab14` on reprobuild `agents`, kind
+`e6c41d0ab7b5f85cb41059064320c787bc14ca6c` on reprobuild `agents`, kind
 `agents-commit`, version 0.2.38 (what `reprobuild.nimble`,
 `nix/pkgs/by-name/re/reprobuild/package.nix` and `repro_core.nim` report at
 that commit).

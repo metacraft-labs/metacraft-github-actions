@@ -3,8 +3,8 @@
   "tool": "reprobuild",
   "owner": "metacraft-labs",
   "repo": "reprobuild",
-  "rev": "c018221c650e61c4bd24c632ea9fe8d9450cab14",
-  "narHash": "sha256-m817VFLwia0MxVfRsKYBmqXk7Gq8FjYhnz1fbMuBf3w=",
+  "rev": "e6c41d0ab7b5f85cb41059064320c787bc14ca6c",
+  "narHash": "sha256-kHDYDw8mfx+UbbAxLzXBsWwL+9ZIsOgvuU8UIFoEwTA=",
   "version": "0.2.38",
   "kind": "agents-commit",
   "attrs": {
