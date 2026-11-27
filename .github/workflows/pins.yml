@@ -734,7 +734,9 @@ jobs:
           # Through the flake output `pins`, the way devops-modules reads it,
           # checked against the JSON file the setup actions read.
           ref="$(nix eval --raw --no-write-lock-file .#pins.reprobuild.flakeRef)"
-          rev="$(python3 -I -c 'import json; print(json.load(open("pins/reprobuild.json"))["rev"])')"
+          # Nix reads the JSON: the self-hosted macOS runners have no python3
+          # on PATH (run 45938970667 died here with exit 127).
+          rev="$(nix eval --raw --impure --expr "(builtins.fromJSON (builtins.readFile \"$PWD/pins/reprobuild.json\")).rev")"
           case "$ref" in "github:metacraft-labs/reprobuild/$rev?narHash="*) ;; *) echo "::error::unexpected flakeRef $ref for rev $rev"; exit 1 ;; esac
           outs="$RUNNER_TEMP/pin-cache-outs"
           : > "$outs"

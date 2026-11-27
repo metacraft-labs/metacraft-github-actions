@@ -649,6 +649,12 @@ if args[:2] == ["eval", "--raw"]:
         print(read("system"), end="")
     elif args[2:] == ["--no-write-lock-file", ".#pins.reprobuild.flakeRef"]:
         print(read("ref"), end="")
+    elif (len(args) == 5 and args[2:4] == ["--impure", "--expr"]
+          and args[4].startswith('(builtins.fromJSON (builtins.readFile "')
+          and args[4].endswith('")).rev')):
+        import json
+        path = args[4][len('(builtins.fromJSON (builtins.readFile "'):-len('")).rev')]
+        print(json.load(open(path))["rev"], end="")
     elif len(args) == 3 and args[2].endswith(".outPath"):
         attr = args[2].split("#packages.", 1)[1].split(".")[1]
         print(f"/nix/store/{'a' * 32}-{attr}", end="")
@@ -770,6 +776,13 @@ class ReprobuildCacheJob(unittest.TestCase):
         code, log, _ = self.plan(system="aarch64-darwin")
         self.assertEqual(code, 1, log)
         self.assertIn("this leg publishes aarch64-darwin but its runner is x86_64-linux", log)
+
+    def test_the_plan_reads_the_pin_without_python(self):
+        # The self-hosted macOS runners have no python3 on PATH: run
+        # 45938970667's aarch64-darwin leg died in the plan with exit 127.
+        code = [line for line in self.job.splitlines()
+                if not line.lstrip().startswith("#")]
+        self.assertEqual([line for line in code if "python" in line], [])
 
     def test_a_flake_reference_that_is_not_the_pinned_rev_fails(self):
         (self.nix / "ref").write_text("github:metacraft-labs/reprobuild/" + "0" * 40 + "?narHash=x\n")
