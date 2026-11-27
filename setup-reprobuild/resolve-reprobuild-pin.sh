@@ -30,7 +30,12 @@
 #   build-ref         the source revision to build when no release is
 #                     installed; empty only for an override that names a
 #                     release, whose fallback builds the release it resolved
-#   from-source       `true` when the selection is a source build
+#   from-source       `true` when the selection is a source build, which
+#                     every commit selection is
+#   source-requested  `true` when the caller asked for a source build
+#                     (FROM_SOURCE is the literal `true`). It keeps a prebuilt
+#                     of the selected commit, Windows' pin prerelease, out;
+#                     setup-dev-env forwards it as the leaf's from-source
 #   expected-version  what `repro --version` must report; empty for an override
 #   expected-commit   the commit a source build must have checked out; empty
 #                     unless the build ref is a full commit SHA
@@ -112,6 +117,8 @@ tag="v${version}"
 build_pin="${REPRO_BUILD_PIN:-}"
 requested_release="${REPRO_VERSION:-}"
 from_source="${FROM_SOURCE:-false}"
+source_requested=false
+[ "${from_source}" = true ] && source_requested=true
 
 if [ -n "${build_pin}" ] || [ -n "${requested_release}" ]; then
   origin=override
@@ -150,6 +157,7 @@ expected_commit=""
   printf 'release-version=%s\n' "${release_version}"
   printf 'build-ref=%s\n' "${build_ref}"
   printf 'from-source=%s\n' "${from_source}"
+  printf 'source-requested=%s\n' "${source_requested}"
   printf 'expected-version=%s\n' "${expected_version}"
   printf 'expected-commit=%s\n' "${expected_commit}"
 } >> "${GITHUB_OUTPUT}"

@@ -96,15 +96,20 @@ archive. On Linux a `dev-commit` or `agents-commit` pin is first asked of the
 binary caches the job's Nix trusts: when one holds the package
 `github:<owner>/<repo>/<rev>#reprobuild`, it is downloaded instead of built
 (`nix build --max-jobs 0`, which never compiles), and a miss builds from source
-as before. The `pins` workflow pushes that package for each pinned `rev` (see
-"The gate"). On Windows, where there is no Nix, such a pin is first installed
+as before. The `pins` workflow pushes that package for each pinned `rev` to the
+organisation's Attic cache (see "The pinned package in the organisation
+cache"); only a runner that reaches that cache, which hosted runners do not,
+downloads it. On Windows, where there is no Nix, such a pin is first installed
 from the prerelease `pin-<rev>` of this repository when it is published: a
 release-style bundle, `reprobuild-<version>-windows-x86_64.zip` with its
 `SHA256SUMS`, that the `pins` workflow builds from source at `rev` and packages
 with that commit's own `scripts/release/package_windows_release.ps1`. It is
 installed through the same verified path as a release (`install-pin-release.sh`
 and `install-release.sh`); a missing prerelease builds from source as before,
-and one that fails verification fails the job. Afterwards the installed `repro --version` must report `version`, and
+and one that fails verification fails the job. A caller that passes
+`from-source: true` (setup-dev-env: `repro-from-source: "true"`) skips the
+prerelease and gets the source build of the same `rev`, for a job that runs
+`repro` from the engine source checkout. Afterwards the installed `repro --version` must report `version`, and
 a source build must be at `rev`. `repro-build-pin` and `repro-version` remain
 as explicit overrides only.
 
@@ -140,11 +145,11 @@ and passes trivially when a change touches no pin and none of the readers.
   `tools/workspace-manifest-branches.py`) and
   answers the managed-hook contract of the hooks it generates
   (`tools/check-reprobuild-fits-workspace.sh`).
-- The same job pushes the package it built to the organisation's Attic cache
-  (`secrets.ATTIC_TOKEN`, `vars.ATTIC_CACHE`, `vars.ATTIC_ENDPOINT`), so that
-  `setup-reprobuild` on Linux downloads the pin instead of compiling it. The
-  push is not part of the gate: missing credentials or a failed push are
-  annotated and leave `pins-gate` green.
+- On a push to `agents` or `dev` that changes the Reprobuild pin or its
+  readers, on the schedule, and on a dispatch from one of them, the
+  `reprobuild-cache` job publishes the pinned outputs to the organisation's
+  Attic cache from self-hosted runners (see "The pinned package in the
+  organisation cache"). It is not part of the gate.
 - On a push to `agents` or `dev`, on the schedule, and on a dispatch from one
   of them, the `windows-pin-release-*` jobs publish the Windows bundle of a
   `dev-commit` or `agents-commit` pin as the prerelease `pin-<rev>` of this
@@ -176,6 +181,66 @@ of it (manager decision, 2026-11-26). They were covered only by the
 manual-dispatch `validate-tool-candidates.yml` and
 `validate-windows-hook-bootstrap.yml` workflows, which this repository has
 retired, so nothing in CI exercises a pin on them now.
+
+### The pinned package in the organisation cache
+
+The `reprobuild-cache` job puts the pinned Reprobuild outputs that consumers
+install into the organisation's Attic cache, so that they download it instead
+of compiling it:
+
+| Leg              | Runner                        | Outputs                            | Consumers                                                                                                                          |
+| ---------------- | ----------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `x86_64-linux`   | `[self-hosted, linux, x64]`   | `reprobuild`, `repro-binary-cache` | `setup-reprobuild` on Linux (`#reprobuild`); devops-modules' `checks/repro-*.nix` (`reprobuild`, `repro-binary-cache`), Linux only |
+| `aarch64-darwin` | `[self-hosted, macos, arm64]` | `reprobuild`                       | `setup-reprobuild` on macOS                                                                                                        |
+
+`default` and `repro` are the same derivation as `reprobuild`. The outputs are
+read from the flake output `pins` (`pins.reprobuild.flakeRef`), which is the
+reference devops-modules evaluates, so their store paths are the ones its
+checks ask for.
+
+It runs on self-hosted runners because `cache.metacraft-labs.com` resolves to
+a NetBird overlay address that hosted runners cannot reach. Until 2026-11-26
+the hosted `reprobuild-package` job pushed the package it had built; every
+push timed out (`Connection timed out (os error 110)`; see runs 45667796580
+and 45879841961) and, being `continue-on-error`, left the pin out of the cache
+without failing anything.
+
+Each leg:
+
+1. fails unless `secrets.ATTIC_TOKEN` and `vars.ATTIC_CACHE`,
+   `vars.ATTIC_ENDPOINT`, `vars.ATTIC_SUBSTITUTER` and
+   `vars.ATTIC_TRUSTED_PUBLIC_KEY` are set, and unless `setup-nix`'s
+   substituter preflight (`fail` mode) can read the cache with the token;
+2. evaluates each output's store path and asks the cache for it
+   (`nix path-info --store "$ATTIC_SUBSTITUTER"`);
+3. builds or substitutes only the outputs the cache lacks, one derivation at a
+   time on four cores (`--max-jobs 1 --cores 4`), since the self-hosted Linux
+   runners have 10–20 GiB memory caps;
+4. pushes those outputs with `attic push` (which sends their closure, less
+   what the upstream caches already hold), with attic's configuration in the
+   job's temporary directory rather than the runner's persistent `HOME`,
+   deleted when the step ends, and seen by attic alone (nix keeps reading the
+   user `nix.conf` that `setup-nix` wrote);
+5. fails unless the cache then holds every output, and lists them in the job
+   summary.
+
+It never runs on a pull request: the cache is shared state, filled only from
+the branches the pin is declared on, after the change landed. It runs on a
+push only when `changes` says the Reprobuild pin or its readers changed; the
+schedule and a dispatch always run it. A leg that finds every output in the
+cache builds and pushes nothing, so re-running the job, the weekly schedule or
+a dispatch completes a publish that failed. It is not in `pins-gate`'s
+`needs`: the gate does not depend on the cache being reachable, and a failure
+here is a red job on the branch, not a blocked pull request.
+
+To check by hand that the cache holds a pinned output, from a host that
+reaches it and has the cache's token in its Nix netrc:
+
+```sh
+ref="$(nix eval --raw .#pins.reprobuild.flakeRef)"
+nix path-info --store https://cache.metacraft-labs.com/metacraft-private-infrastructure \
+  "$(nix eval --raw "$ref#packages.x86_64-linux.repro-binary-cache.outPath")"
+```
 
 ### When the CodeTracer lock job runs
 

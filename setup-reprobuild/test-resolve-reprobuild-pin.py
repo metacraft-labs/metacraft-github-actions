@@ -75,7 +75,8 @@ class ResolvePin(unittest.TestCase):
                     'origin': 'pin', 'pin-commit': PIN['rev'],
                     'pin-version': PIN['version'], 'pin-kind': PIN['kind'],
                     'release-version': '', 'build-ref': PIN['rev'],
-                    'from-source': 'true', 'expected-version': PIN['version'],
+                    'from-source': 'true', 'source-requested': 'false',
+                    'expected-version': PIN['version'],
                     'expected-commit': PIN['rev']})
 
     def test_a_release_pin_installs_its_release_and_falls_back_to_its_commit(self):
@@ -107,6 +108,53 @@ class ResolvePin(unittest.TestCase):
                 self.assertEqual(out['from-source'], source)
                 self.assertEqual(out['expected-commit'], commit)
                 self.assertEqual(out['expected-version'], '')
+
+    def test_source_requested_reports_the_callers_request_not_the_route(self):
+        # `from-source` says the selection is a source build, which every
+        # commit selection is. `source-requested` says the caller asked for
+        # one, which is what keeps a prebuilt of that commit (Windows'
+        # pin prerelease) out. Only the literal `true` asks, as for the
+        # selection itself.
+        self.write_pin({**PIN, 'kind': 'release'})
+        cases = [
+            ({}, 'false', 'false'),
+            (dict(FROM_SOURCE='true'), 'true', 'true'),
+            (dict(FROM_SOURCE='false'), 'false', 'false'),
+            (dict(FROM_SOURCE='True'), 'false', 'false'),
+            (dict(REPRO_BUILD_PIN=OTHER), 'true', 'false'),
+            (dict(REPRO_BUILD_PIN=OTHER, FROM_SOURCE='true'), 'true', 'true'),
+            (dict(REPRO_VERSION='0.2.31', FROM_SOURCE='true'), 'true', 'true'),
+        ]
+        for env, source, requested in cases:
+            with self.subTest(env=env):
+                result, out = self.resolve(**env)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(out['from-source'], source)
+                self.assertEqual(out['source-requested'], requested)
+
+    def test_forwarding_source_requested_selects_what_the_parent_selected(self):
+        # setup-dev-env resolves once and hands the leaf release-version,
+        # build-ref and source-requested as its repro-version,
+        # repro-build-pin and from-source; the leaf resolves again from
+        # those. Both resolutions must agree for every caller request.
+        for kind in ('dev-commit', 'release'):
+            self.write_pin({**PIN, 'kind': kind})
+            for env in ({}, dict(FROM_SOURCE='true'), dict(REPRO_BUILD_PIN=OTHER),
+                        dict(REPRO_BUILD_PIN=OTHER, FROM_SOURCE='true'),
+                        dict(REPRO_VERSION='0.2.31'),
+                        dict(REPRO_VERSION='0.2.31', FROM_SOURCE='true'),
+                        dict(REPRO_VERSION='0.2.31', REPRO_BUILD_PIN=OTHER)):
+                with self.subTest(kind=kind, env=env):
+                    result, parent = self.resolve(**env)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    result, leaf = self.resolve(
+                        REPRO_VERSION=parent['release-version'],
+                        REPRO_BUILD_PIN=parent['build-ref'],
+                        FROM_SOURCE=parent['source-requested'])
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    for key in ('release-version', 'build-ref', 'from-source',
+                                'source-requested', 'expected-commit'):
+                        self.assertEqual(leaf[key], parent[key], key)
 
     def test_a_source_build_of_latest_names_no_revision(self):
         result, out = self.resolve(REPRO_VERSION='latest', FROM_SOURCE='true')

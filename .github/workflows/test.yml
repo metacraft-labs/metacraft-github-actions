@@ -304,8 +304,8 @@ jobs:
       - name: Every shell script parses under Bash 3.2
         run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-install-release.py Bash32Parse
 
-      - name: The self-sibling ancestry step runs under Bash 3.2
-        run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-self-sibling-ancestry.py
+      - name: The sibling pin ancestry step runs under Bash 3.2
+        run: BASH32="${RUNNER_TEMP}/bash-3.2.57/bash" python3 setup-reprobuild/test-sibling-pin-ancestry.py
 
   self-sibling-ancestry-gosti:
     # The real shape of gosti run 45782702955, which no consumer can exercise
@@ -393,20 +393,20 @@ jobs:
             GITHUB_ACTION_PATH="${mga}/setup-reprobuild" \
             MCL_CONSUMER_DIRECTORY=. MCL_WORKSPACE_DIRECTORY=. \
             REPROBUILD_SOURCE_DIRECTORY="${ws}/.reprobuild-src" \
-            "${step_bash}" "${mga}/setup-reprobuild/reveal-consumer-pin-ancestry.sh" 2>&1)" || status=$?
+            "${step_bash}" "${mga}/setup-reprobuild/reveal-sibling-pin-ancestry.sh" 2>&1)" || status=$?
           printf '%s\n' "${out}"
           test "${status}" -eq 0
           case "${out}" in *'::warning::'*) echo "::error::the step warned"; exit 1 ;; esac
-          case "${out}" in *"${GOSTI_PIN} is now visible as an ancestor of HEAD"*) ;;
+          case "${out}" in *"${GOSTI_PIN} is now visible as an ancestor of gosti's HEAD"*) ;;
             *) echo "::error::the step did not report the pin as revealed"; exit 1 ;;
           esac
           probe || { echo "::error::the engine's probe still refuses ${GOSTI_PIN}"; exit 1; }
           test "$(git -C "${ws}" rev-parse HEAD)" = "${before}"
           test -z "$(git -C "${ws}" status --porcelain --untracked-files=no)"
-      - name: A consumer the source pins by branch is left alone
+      - name: A checkout the engine does not judge is left alone
         # This repository's own checkout: 37a109c4 pins
-        # `metacraft-github-actions=dev`, a branch, which the step leaves to
-        # the engine without fetching.
+        # `metacraft-github-actions=dev`, but no engine judges a checkout of
+        # that name, so the step neither fetches nor reports it.
         shell: bash
         run: |
           set -euo pipefail
@@ -417,12 +417,131 @@ jobs:
           out="$(GITHUB_WORKSPACE="${ws}" GITHUB_ACTION_PATH="${ws}/setup-reprobuild" \
             MCL_CONSUMER_DIRECTORY=. MCL_WORKSPACE_DIRECTORY=. \
             REPROBUILD_SOURCE_DIRECTORY="${ws}/.reprobuild-src" \
-            bash "${ws}/setup-reprobuild/reveal-consumer-pin-ancestry.sh" 2>&1)"
+            bash "${ws}/setup-reprobuild/reveal-sibling-pin-ancestry.sh" 2>&1)"
           printf '%s\n' "${out}"
-          case "${out}" in *"pins 'metacraft-github-actions' at 'dev', not a commit id"*) ;;
-            *) echo "::error::expected the branch-valued pin to be left alone"; exit 1 ;;
+          case "${out}" in *metacraft-github-actions*)
+            echo "::error::the step reported a checkout the engine does not judge"; exit 1 ;;
           esac
           test "$(git -C "${ws}" rev-parse --is-shallow-repository)" = "${shallow_before}"
+
+  sibling-ancestry-io-mon:
+    # The real shape of io-mon runs 45869475954 and 45869479858: io-mon
+    # `agents` at 3bfa85d7 checked out at depth 1, and next to it the depth-1
+    # clone of nim-stackable-hooks that clone-siblings made at io-mon's own
+    # lock revision ec6b02d4, judged against the pin records of reprobuild
+    # 37a109c4 (repro.lock pins nim-stackable-hooks at c34e3252, eleven
+    # commits behind ec6b02d4). The sibling is cloned as
+    # git-auth/authenticated-clone.sh clones it: `git init`, `origin`, a
+    # depth-1 fetch of the revision, no persisted credential. Both the step
+    # setup-reprobuild runs and the one setup-dev-env runs are exercised,
+    # each followed by the engine's own probe (reprobuild
+    # `observeSiblingCheckout`).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      REPROBUILD_REV: 37a109c4e1cf650e6eb79b11d9fadf6e49e64614
+      IO_MON_REV: 3bfa85d7dd3c971a4e969830ab1c45854d09330e
+      HOOKS_REV: ec6b02d45180735d08611c5cece842d57f941966
+      HOOKS_PIN: c34e3252d413361a0f250d8921e00c119d30e114
+      IO_MON_PIN: 1365943692eedfb0699ce90e59c4602d90317561
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          path: metacraft-github-actions
+      # Default fetch-depth (1) and persist-credentials (true): the
+      # consumer's checkout as io-mon's own workflow makes it.
+      - uses: actions/checkout@v5
+        with:
+          repository: metacraft-labs/io-mon
+          ref: ${{ env.IO_MON_REV }}
+          path: w/io-mon
+      - name: Reprobuild 37a109c4's pin records, and the shallow sibling
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="w/io-mon/.reprobuild-src"
+          mkdir -p "${src}/.github"
+          for f in .github/sibling-repos repro.lock flake.lock; do
+            curl --fail --silent --show-error --location --retry 3 \
+              --output "${src}/${f}" \
+              "https://raw.githubusercontent.com/metacraft-labs/reprobuild/${REPROBUILD_REV}/${f}"
+          done
+          grep -q "{ name = \"nim-stackable-hooks\", .*revision = \"${HOOKS_PIN}\"" "${src}/repro.lock"
+          hooks="w/nim-stackable-hooks"
+          git init -q "${hooks}"
+          git -C "${hooks}" remote add origin https://github.com/metacraft-labs/nim-stackable-hooks.git
+          git -C "${hooks}" fetch -q --depth 1 origin "${HOOKS_REV}"
+          git -C "${hooks}" checkout -q --detach FETCH_HEAD
+      - name: The engine's probe refuses the depth-1 sibling
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C w/nim-stackable-hooks rev-parse --is-shallow-repository)" = true
+          if GIT_NO_LAZY_FETCH=1 git -C w/nim-stackable-hooks merge-base --is-ancestor "${HOOKS_PIN}" HEAD; then
+            echo "::error::the depth-1 sibling already shows ${HOOKS_PIN}; this job no longer reproduces the defect"
+            exit 1
+          fi
+      - name: Deepen the siblings as setup-reprobuild, then setup-dev-env, would
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/bash-and-git"
+          ws="${GITHUB_WORKSPACE}/w/io-mon"
+          step_bash=bash
+          step_path="${PATH}"
+          case "${RUNNER_OS}" in
+            Windows) ws="${GITHUB_WORKSPACE}\\w\\io-mon" ;;
+            macOS)
+              mkdir -p "${tools}"
+              ln -s /bin/bash "${tools}/bash"
+              ln -s "$(command -v git)" "${tools}/git"
+              step_bash=/bin/bash
+              step_path="${tools}"
+              ;;
+          esac
+          hooks="${GITHUB_WORKSPACE}/w/nim-stackable-hooks"
+          consumer="${GITHUB_WORKSPACE}/w/io-mon"
+          probe() { # <checkout> <pin>
+            GIT_NO_LAZY_FETCH=1 git -C "$1" merge-base --is-ancestor "$2" HEAD
+          }
+          hooks_before="$(git -C "${hooks}" rev-parse HEAD)"
+          consumer_before="$(git -C "${consumer}" rev-parse HEAD)"
+          mga="${GITHUB_WORKSPACE}/metacraft-github-actions"
+          # The step's environment, as both action.yml files pass it (legacy
+          # layout: the consumer is GITHUB_WORKSPACE, the source inside it).
+          # setup-reprobuild's step first; setup-dev-env's then finds every
+          # pin already visible and fetches nothing.
+          for action in setup-reprobuild setup-dev-env; do
+            script="${mga}/${action}/../setup-reprobuild/reveal-sibling-pin-ancestry.sh"
+            status=0
+            out="$(PATH="${step_path}" GITHUB_WORKSPACE="${ws}" \
+              GITHUB_ACTION_PATH="${mga}/${action}" \
+              MCL_CONSUMER_DIRECTORY=. MCL_WORKSPACE_DIRECTORY=. \
+              REPROBUILD_SOURCE_DIRECTORY="${ws}/.reprobuild-src" \
+              "${step_bash}" "${script}" 2>&1)" || status=$?
+            echo "--- ${action}"
+            printf '%s\n' "${out}"
+            test "${status}" -eq 0
+            case "${out}" in *'::warning::'*) echo "::error::the step warned"; exit 1 ;; esac
+            if [ "${action}" = setup-reprobuild ]; then
+              case "${out}" in *"${HOOKS_PIN} is now visible as an ancestor of nim-stackable-hooks's HEAD"*) ;;
+                *) echo "::error::the step did not report the sibling's pin as revealed"; exit 1 ;;
+              esac
+            else
+              case "${out}" in *deepening*) echo "::error::the second run fetched again"; exit 1 ;; esac
+            fi
+          done
+          probe "${hooks}" "${HOOKS_PIN}" || { echo "::error::the engine's probe still refuses ${HOOKS_PIN} in nim-stackable-hooks"; exit 1; }
+          probe "${consumer}" "${IO_MON_PIN}" || { echo "::error::the engine's probe refuses ${IO_MON_PIN} in the io-mon consumer"; exit 1; }
+          test "$(git -C "${hooks}" rev-parse HEAD)" = "${hooks_before}"
+          test "$(git -C "${consumer}" rev-parse HEAD)" = "${consumer_before}"
+          test -z "$(git -C "${hooks}" status --porcelain --untracked-files=no)"
+          test -z "$(git -C "${consumer}" status --porcelain --untracked-files=no)"
 
   resolve-sibling-rev:
     runs-on: ubuntu-latest
@@ -481,11 +600,17 @@ jobs:
       - name: Source build exports its build environment only when asked
         run: python3 setup-reprobuild/test-export-build-env.py
 
-      # A depth-1 consumer that the source pins as a sibling (gosti) is
-      # deepened until the engine's ancestry probe can accept it; any other
-      # consumer is left untouched.
-      - name: Source build reveals the pin's ancestry in a self-sibling consumer
-        run: python3 setup-reprobuild/test-self-sibling-ancestry.py
+      # A depth-1 consumer (gosti) or cloned sibling (io-mon's
+      # nim-stackable-hooks) that the source pins is deepened until the
+      # engine's ancestry probe can accept it; any other checkout is left
+      # untouched.
+      - name: Source build reveals the pin's ancestry in the siblings it pins
+        run: python3 setup-reprobuild/test-sibling-pin-ancestry.py
+
+      # The names that step deepens are checked against the pinned engine in
+      # the `pins` workflow; this is the checker's own contract.
+      - name: The judged-sibling list check reads the engine's candidates
+        run: python3 -I setup-reprobuild/test-check-judged-siblings.py
 
       - name: Required development-environment execution contract
         run: python3 setup-dev-env/test-repro-exec.py

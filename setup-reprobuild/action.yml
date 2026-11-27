@@ -25,7 +25,8 @@ description: >
         caches the job's Nix trusts (`nix build --max-jobs 0`, which never
         builds), and admit it as above. A cache miss falls through to 2.
     0w. Windows, the same selection (a full commit SHA, no build-input
-        override) -> install the prerelease `pin-<commit>` of this repository,
+        override) and no `from-source: true` -> install the prerelease
+        `pin-<commit>` of this repository,
         which the `pins` workflow builds from source at that commit and
         packages with reprobuild's own release packaging script
         (install-pin-release.sh, through install-release.sh: SHA256SUMS
@@ -40,10 +41,12 @@ description: >
         this source path invokes the canonical `reprobuild-provision`
         dependency action, after cloning the selected Reprobuild source and
         before compiling it. Verified release installation does not clone or
-        build SDK source dependencies. When the selected source pins the
-        consumer itself as a sibling (gosti), this path also deepens a shallow
-        consumer checkout until the pin shows as an ancestor of its HEAD, the
-        test the source-built engine applies (reveal-consumer-pin-ancestry.sh).
+        build SDK source dependencies. For each workspace sibling the
+        source-built engine judges and the selected source pins -- the
+        consumer itself (gosti), or a sibling cloned next to it
+        (nim-stackable-hooks for io-mon) -- this path also deepens a shallow
+        checkout until the pin shows as an ancestor of its HEAD, the test the
+        engine applies (reveal-sibling-pin-ancestry.sh).
   Afterwards the installed CLI must report the pinned version, and a source
   build must be at the selected commit.
 
@@ -145,6 +148,10 @@ inputs:
       Build the CLI from source, overriding a CLI already on PATH. For
       testing an unreleased reprobuild change, or a platform whose release
       archive is known-bad. Pair with `repro-build-pin` to choose the ref.
+      Only the literal `true` asks. On Windows it also skips the selected
+      commit's pin prerelease, so the CLI runs from a checkout of the engine
+      source (`.reprobuild-src`); on Linux the selected commit's Nix package
+      may still be substituted from a binary cache, being that same build.
     required: false
     default: "false"
   repro-package:
@@ -400,15 +407,20 @@ runs:
     # runners) engine compile with a verified download. The same selection
     # rule as the cache: a full commit SHA, no release, no caller package, and
     # none of the inputs that build a different engine (runquota-ref,
-    # io-mon-ref, stackable-hooks-pin). setup-dev-env forwards the pin as
-    # repro-build-pin, so the version comes from expected-version when this
+    # io-mon-ref, stackable-hooks-pin). Unlike the cache, it also yields to a
+    # caller's `from-source: true` (source-requested, the literal request,
+    # not the resolver's from-source, which is true for every commit): a
+    # bundle is not a source checkout, and a consumer that drives the engine
+    # from `.reprobuild-src` with runquota beside it needs the checkout. The
+    # source route then builds the same commit. setup-dev-env forwards the
+    # pin as repro-build-pin, so the version comes from expected-version when this
     # action read the pin itself and from the prerelease's SHA256SUMS
     # otherwise; the version check after `Decide install path` still holds it
     # to the pin. A miss is announced and takes the source route; a
     # prerelease that fails verification fails the step.
     - name: Install the selected commit's pin prerelease (Windows)
       id: pin-release
-      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
+      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && steps.pin.outputs.source-requested != 'true' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
       shell: bash
       env:
         REPRO_BUILD_PIN: ${{ steps.pin.outputs.expected-commit }}
@@ -577,19 +589,23 @@ runs:
         io-mon-ref: ${{ inputs.io-mon-ref }}
         stackable-hooks-pin: ${{ inputs.stackable-hooks-pin }}
 
-    # A consumer that the selected source pins as a sibling (gosti, pinned by
-    # reprobuild's .github/sibling-repos) is judged by the source-built engine
-    # with `git merge-base --is-ancestor <pin> HEAD`, which a depth-1 checkout
-    # cannot answer. Deepen only that consumer's history, by commit id; a
-    # consumer the source does not pin is left untouched. See the script.
-    - name: Reveal the pin's ancestry in a consumer the source pins
+    # The source-built engine judges each workspace sibling it compiles
+    # against -- the consumer itself when the source pins it (gosti), a
+    # sibling clone-siblings or the provisioner above put next to it
+    # (nim-stackable-hooks for io-mon) -- with
+    # `git merge-base --is-ancestor <pin> HEAD`, which a depth-1 checkout
+    # cannot answer. Deepen only those checkouts' history, by commit id; a
+    # sibling the source does not pin is left untouched. setup-dev-env runs
+    # the same script again after the siblings it provisions later in the
+    # job. See the script.
+    - name: Reveal the pin's ancestry in the siblings the source pins
       if: ${{ steps.decide.outputs.need-source == 'true' }}
       shell: bash
       env:
         MCL_CONSUMER_DIRECTORY: ${{ inputs.consumer-directory }}
         MCL_WORKSPACE_DIRECTORY: ${{ inputs.workspace-directory }}
         REPROBUILD_SOURCE_DIRECTORY: ${{ steps.roots.outputs.workspace-directory }}/.reprobuild-src
-      run: bash "${GITHUB_ACTION_PATH}/reveal-consumer-pin-ancestry.sh"
+      run: bash "${GITHUB_ACTION_PATH}/reveal-sibling-pin-ancestry.sh"
 
     # Skipped when the binary-cache attempt above already set up Nix in this
     # job, with the same inputs: the source build after a cache miss uses
