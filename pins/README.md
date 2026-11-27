@@ -42,10 +42,19 @@ be pinned": `rev` must be immutable and published, which means one of
 
 The Reprobuild pin must carry both `version` and `kind`, because
 `setup-reprobuild` installs by them. The first one was v0.2.34, commit
-`d1bf1f065aca01b90c3bbdddc57d14e977f49e1a`. The current one is v0.2.36,
-commit `37a109c4e1cf650e6eb79b11d9fadf6e49e64614`: a commit on reprobuild
-`agents` (the tag `v0.2.36` has no GitHub release, so it is `agents-commit`,
-not `release`).
+`d1bf1f065aca01b90c3bbdddc57d14e977f49e1a`; the second was v0.2.36, commit
+`37a109c4e1cf650e6eb79b11d9fadf6e49e64614`. The current one is commit
+`e6c41d0ab7b5f85cb41059064320c787bc14ca6c` on reprobuild `agents`, kind
+`agents-commit`, version 0.2.38 (what `reprobuild.nimble`,
+`nix/pkgs/by-name/re/reprobuild/package.nix` and `repro_core.nim` report at
+that commit).
+
+**The Reprobuild pin follows the tip of reprobuild `agents`** (operator,
+2026-11-27). A bump takes the `agents` tip at the time the bump starts and
+pins exactly that commit, even if `agents` moves while the bump is in review;
+`kind` is `agents-commit` and `version` is what that commit's tree reports.
+This replaces pinning a fixed release tag: a tag is not a reason to stop at
+an older commit, and no bump waits for one.
 
 ## Reading a pin
 
@@ -125,6 +134,16 @@ A bump is a deploy for every consumer that follows the pin, so it needs a
 review by the consuming repository's owners. Bump commits and pull requests
 name the revision and its kind, for example "v0.2.34 (commit on agents; tag
 without a release)".
+
+A Reprobuild bump also needs an entry for the new `rev` in every consumer
+table keyed by the pinned revision (the Windows review bindings, the
+evm-recorder hook-factory reviewed table, and any like them), because those
+tables fail closed on a `rev` they do not list. Per the manager's decision of
+2026-11-27, a file byte-identical to the one reviewed at the previous pin is
+recorded as a carry-forward, "carried forward from reviewed rev `<X>`,
+byte-identical (verified by `<who>`, `<date>`)"; a file that differs needs a
+review by its owner, recorded with who reviewed what. Hashes are never copied
+forward without that byte comparison.
 
 ## The gate
 
