@@ -25,6 +25,7 @@ import io
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -57,6 +58,31 @@ def step_body(name, action=ACTION):
 
 def condition(name):
     return next(line for line in step_lines(name) if line.startswith('      if: '))
+
+
+def evaluate(test, context):
+    """Evaluate a step's `if:` against `context`, a map from expression
+    references (`runner.os`, `inputs.from-source`, ...) to their values.
+
+    Only the shape these conditions use is accepted: `${{ a && b && ... }}`
+    of `<reference> == '<literal>'` or `!=` clauses. Anything else is a
+    failure, not a guess, so a condition rewritten into another shape makes
+    the caller's assertion fail instead of passing vacuously. GitHub compares
+    strings case-insensitively
+    (https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#operators),
+    and so does this. A reference missing from `context` is a KeyError."""
+    match = re.fullmatch(r'      if: \$\{\{ (.*) \}\}', test)
+    if match is None:
+        raise ValueError(f'not a plain expression condition: {test!r}')
+    result = True
+    for clause in match.group(1).split(' && '):
+        parsed = re.fullmatch(r"([a-z][a-z0-9_.-]*) (==|!=) '([^']*)'", clause.strip())
+        if parsed is None:
+            raise ValueError(f'unsupported clause: {clause!r}')
+        reference, operator, literal = parsed.groups()
+        equal = context[reference].lower() == literal.lower()
+        result = result and (equal if operator == '==' else not equal)
+    return result
 
 
 class PinPrerelease(unittest.TestCase):
@@ -317,6 +343,42 @@ class Wiring(unittest.TestCase):
         # Linux and macOS are untouched by it.
         self.assertNotIn("'Linux'", test)
         self.assertNotIn("'macOS'", test)
+
+    # The context in which the step runs today: a Windows job installing a
+    # pinned commit with no build-input override and no source request.
+    TAKEN = {
+        'runner.os': 'Windows',
+        'inputs.repro-package': '',
+        'steps.pin.outputs.release-version': '',
+        'steps.pin.outputs.expected-commit': SHA,
+        'steps.pin.outputs.source-requested': 'false',
+        'inputs.runquota-ref': '',
+        'inputs.io-mon-ref': '',
+        'inputs.stackable-hooks-pin': '',
+    }
+
+    def test_a_commit_pin_without_a_source_request_takes_the_prerelease(self):
+        self.assertTrue(evaluate(condition(STEP), self.TAKEN))
+
+    def test_a_source_request_skips_the_prerelease_for_the_source_build(self):
+        # from-source: true means a source build, at the same pinned commit:
+        # a consumer that drives the engine from its source checkout (with
+        # runquota next to it) cannot use a bundle. The decision then finds
+        # no PIN_RELEASE_BIN_DIR and builds `build-ref`.
+        self.assertFalse(evaluate(condition(STEP),
+                                  {**self.TAKEN, 'steps.pin.outputs.source-requested': 'true'}))
+        result, output = self.decide()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('install-source=source', output)
+
+    def test_the_source_request_is_the_callers_not_the_selection_kind(self):
+        # steps.pin.outputs.from-source is `true` for every commit selection,
+        # the very case this route serves; gating on it would retire the
+        # route for every caller. The input itself would let a non-literal
+        # `True` skip the route while the resolver treats it as false.
+        test = condition(STEP)
+        self.assertNotIn('steps.pin.outputs.from-source', test)
+        self.assertNotIn('inputs.from-source', test)
 
     def test_the_step_asks_for_the_selected_commit(self):
         step = '\n'.join(step_lines(STEP))

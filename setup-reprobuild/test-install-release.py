@@ -177,9 +177,13 @@ class ReleaseSelection(unittest.TestCase):
         self.assertRegex(step, r'(?m)^      uses: metacraft-labs/'
                         r'metacraft-github-actions/setup-reprobuild@[0-9a-f]{40}$')
         # The revision is the parent's own pin selection, never the raw inputs.
+        # from-source carries the caller's source request, not the resolver's
+        # `from-source` (true for every commit selection): the leaf reads it
+        # to keep a prebuilt of the commit out, and would otherwise skip
+        # Windows' pin prerelease for every caller.
         for child, output in [('repro-version', 'release-version'),
                               ('repro-build-pin', 'build-ref'),
-                              ('from-source', 'from-source')]:
+                              ('from-source', 'source-requested')]:
             self.assertIn('        ' + child + ': ${{ steps.repro-pin.outputs.' + output + ' }}\n', step)
         for child, source in [('sibling-owner', 'token-owner'),
                               ('runquota-ref', 'repro-runquota-pin'),

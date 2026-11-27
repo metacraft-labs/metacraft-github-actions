@@ -25,7 +25,8 @@ description: >
         caches the job's Nix trusts (`nix build --max-jobs 0`, which never
         builds), and admit it as above. A cache miss falls through to 2.
     0w. Windows, the same selection (a full commit SHA, no build-input
-        override) -> install the prerelease `pin-<commit>` of this repository,
+        override) and no `from-source: true` -> install the prerelease
+        `pin-<commit>` of this repository,
         which the `pins` workflow builds from source at that commit and
         packages with reprobuild's own release packaging script
         (install-pin-release.sh, through install-release.sh: SHA256SUMS
@@ -147,6 +148,10 @@ inputs:
       Build the CLI from source, overriding a CLI already on PATH. For
       testing an unreleased reprobuild change, or a platform whose release
       archive is known-bad. Pair with `repro-build-pin` to choose the ref.
+      Only the literal `true` asks. On Windows it also skips the selected
+      commit's pin prerelease, so the CLI runs from a checkout of the engine
+      source (`.reprobuild-src`); on Linux the selected commit's Nix package
+      may still be substituted from a binary cache, being that same build.
     required: false
     default: "false"
   repro-package:
@@ -402,15 +407,20 @@ runs:
     # runners) engine compile with a verified download. The same selection
     # rule as the cache: a full commit SHA, no release, no caller package, and
     # none of the inputs that build a different engine (runquota-ref,
-    # io-mon-ref, stackable-hooks-pin). setup-dev-env forwards the pin as
-    # repro-build-pin, so the version comes from expected-version when this
+    # io-mon-ref, stackable-hooks-pin). Unlike the cache, it also yields to a
+    # caller's `from-source: true` (source-requested, the literal request,
+    # not the resolver's from-source, which is true for every commit): a
+    # bundle is not a source checkout, and a consumer that drives the engine
+    # from `.reprobuild-src` with runquota beside it needs the checkout. The
+    # source route then builds the same commit. setup-dev-env forwards the
+    # pin as repro-build-pin, so the version comes from expected-version when this
     # action read the pin itself and from the prerelease's SHA256SUMS
     # otherwise; the version check after `Decide install path` still holds it
     # to the pin. A miss is announced and takes the source route; a
     # prerelease that fails verification fails the step.
     - name: Install the selected commit's pin prerelease (Windows)
       id: pin-release
-      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
+      if: ${{ runner.os == 'Windows' && inputs.repro-package == '' && steps.pin.outputs.release-version == '' && steps.pin.outputs.expected-commit != '' && steps.pin.outputs.source-requested != 'true' && inputs.runquota-ref == '' && inputs.io-mon-ref == '' && inputs.stackable-hooks-pin == '' }}
       shell: bash
       env:
         REPRO_BUILD_PIN: ${{ steps.pin.outputs.expected-commit }}

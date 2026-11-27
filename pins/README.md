@@ -106,7 +106,10 @@ release-style bundle, `reprobuild-<version>-windows-x86_64.zip` with its
 with that commit's own `scripts/release/package_windows_release.ps1`. It is
 installed through the same verified path as a release (`install-pin-release.sh`
 and `install-release.sh`); a missing prerelease builds from source as before,
-and one that fails verification fails the job. Afterwards the installed `repro --version` must report `version`, and
+and one that fails verification fails the job. A caller that passes
+`from-source: true` (setup-dev-env: `repro-from-source: "true"`) skips the
+prerelease and gets the source build of the same `rev`, for a job that runs
+`repro` from the engine source checkout. Afterwards the installed `repro --version` must report `version`, and
 a source build must be at `rev`. `repro-build-pin` and `repro-version` remain
 as explicit overrides only.
 
