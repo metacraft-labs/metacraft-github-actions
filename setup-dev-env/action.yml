@@ -281,7 +281,9 @@ inputs:
       Build repro from source even when the selection is a release
       (reprobuild flavor or repro-lock sibling strategy only). A pinned
       commit is built from source, or on Linux substituted from a binary
-      cache (`substituters`) that holds that commit's Nix package.
+      cache (`substituters`) that holds that commit's Nix package. On
+      Windows, `true` also skips the pinned commit's prerelease bundle, so
+      `repro` runs from the engine source checkout; the default installs it.
     required: false
     default: "false"
   repro-build-pin:
@@ -1161,9 +1163,13 @@ runs:
     # setup-reprobuild named below is a fixed older commit of this repository,
     # so its own pin file is not the one the caller selected with `uses:`.
     # A pinned commit is forwarded as a source build of that commit, which
-    # every setup-reprobuild revision honours. That commit must still carry
-    # pins/reprobuild.json and no revision default of its own, so that nothing
-    # but this selection can choose the revision; setup-reprobuild's
+    # every setup-reprobuild revision honours. from-source forwards the
+    # caller's request (source-requested), not whether the selection is a
+    # source build: the leaf resolves the same selection from either, and
+    # reads the request to keep a prebuilt of the commit out on Windows.
+    # That commit must still carry pins/reprobuild.json and no revision
+    # default of its own, so that nothing but this selection can choose
+    # the revision; setup-reprobuild's
     # test-install-release.py checks it against this repository's history.
     # It must also run the same setup-reprobuild as this checkout, or a fix
     # to that action never reaches callers of this one; the same test fails
@@ -1195,7 +1201,7 @@ runs:
         attic-endpoint: ${{ inputs.attic-endpoint }}
         repro-version: ${{ steps.repro-pin.outputs.release-version }}
         repro-build-pin: ${{ steps.repro-pin.outputs.build-ref }}
-        from-source: ${{ steps.repro-pin.outputs.from-source }}
+        from-source: ${{ steps.repro-pin.outputs.source-requested }}
         repro-package: ${{ inputs.repro-package }}
         io-mon-pin: ${{ inputs.repro-posix-io-mon-pin }}
         sibling-owner: ${{ inputs.token-owner }}
